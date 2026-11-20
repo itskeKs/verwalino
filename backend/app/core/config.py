@@ -116,8 +116,22 @@ class Settings(BaseSettings):
     declaration_max_recheck_calls: int = 2
     declaration_provider_batch_pages: int = 20
     declaration_provider_batch_chars: int = 80_000
-    declaration_max_input_tokens: int = 500_000
-    declaration_max_output_tokens: int = 60_000
+    # Per-import token limits (input, output), sized for the 200 scanned pages the page limit permits
+    # (declaration_ocr_max_pages_per_import) now that reading costs tokens per page (issue #499, ADR 0017). Derivation
+    # for 200 dense scanned A4 pages (1,489 x 2,105 pixels at 180 dpi, about 4,000 characters each), as reported:
+    # * reading, one call per page: about 5,000 input (image 3,000 on OpenAI's patch models, 4,100 by Anthropic's
+    #   formula, plus about 700 for prompt, schema and wrapper) and about 2,000 output (the transcript as JSON,
+    #   1,000 to 1,900 for prose to table pages) -> 1,000,000 in, 400,000 out.
+    # * extraction, three passes (inventory, core, rules) over every transcript page: 12 batches of at most 19
+    #   pages and 80,000 characters, one boundary page repeated per batch, so 211 page sends per pass at about
+    #   1,500 input each, plus about 5,600 for prompt and schema per batch round -> 1,017,000 in, 54,000 out;
+    #   reconciliation up to 40,000 in, 6,000 out. Extraction thus keeps the former 60,000 output limit as its share.
+    # * total 2,060,000 in, 460,000 out. A reservation settles to the reported usage after its call, so the
+    #   peak is that plus ONE outstanding worst-case reservation, up to 200,000 input (an 80,000 character batch
+    #   counted twice, bytes as tokens, on a compatible endpoint) -> 2,200,000. Round numbers with at most 25 %
+    #   headroom. The cost limit above stays the money guard; dearer models reach it first.
+    declaration_max_input_tokens: int = 2_500_000
+    declaration_max_output_tokens: int = 500_000
     declaration_provider_max_output_tokens_per_call: int = 12_000
     declaration_max_candidates: int = 5_000
     # --- Declaration import / background worker ---

@@ -22,8 +22,10 @@ from sqlalchemy import func, select
 from app.core.config import settings
 from app.core.db import get_worker_tenant_session as get_tenant_session
 from app.declarations.fake_provider import FakeDocumentReadingProvider
-from app.declarations.pipeline import DeclarationPipeline
+from app.declarations.pipeline import DeclarationPipeline, PipelineFailure, _Ledger
+from app.declarations.preflight import PdfPreflight
 from app.declarations.provider import ProviderFailure, ProviderUsage
+from app.declarations.provider_runtime import CompatibleDeclarationProvider
 from app.declarations.schemas import ReadingBlock
 from app.models.declaration_candidate import DeclarationCandidate, DeclarationCandidateEvidence
 from app.models.declaration_import import (
@@ -293,6 +295,134 @@ async def test_the_reading_models_price_counts_against_the_monthly_limit(
         assert (item.status, item.error_code) == ("FAILED", "ORGANIZATION_AI_BUDGET_EXCEEDED") and reader.reads == []
     else:
         assert (item.status, item.error_code) == ("NEEDS_REVIEW", None) and len(reader.reads) == 1
+
+
+# ---- the per-import token limits fit the permitted 200 scanned pages --------------------------------------------------
+
+# What a dense scanned A4 page costs in a declaration import, by the derivation beside the limits in
+# app/core/config.py. Usage is reported without a price: the cost limit stays the money guard and is not under test.
+DENSE_PAGE_CHARS = 4_000  # a dense page; 80,000 characters per request leave 19 to 20 of them in a batch
+READ_PAGE_USAGE = ProviderUsage(5_000, 2_000, Decimal("0"), 1)  # image 3,000 to 4,100 + prompt/schema; the transcript
+PASS_INPUT_PER_PAGE = 1_500  # one dense transcript page, in each of the three passes over all pages
+PASS_CALL_OVERHEAD = {"inventory": 1_000, "extract_core": 2_300, "extract_rules": 2_300}  # prompt and schema per call
+PASS_OUTPUT_PER_CALL = 1_500
+RECONCILE_USAGE = ProviderUsage(40_000, 6_000, Decimal("0"), 1)  # a full 80,000-character payload
+A4_AT_180_DPI = (1_489, 2_105)  # a scanned A4 page at the worker's resolution
+
+
+def _flat_png(size: tuple[int, int]) -> bytes:
+    out = io.BytesIO()
+    Image.new("L", size, 255).save(out, "PNG")
+    return out.getvalue()
+
+
+class _FlatRenderPreflight(PdfPreflight):
+    """The real preflight with one cheap render: every page is the same flat A4 image at the worker's resolution."""
+
+    page_png = _flat_png(A4_AT_180_DPI)
+
+    def render_page_for_reading(self, pdf_bytes, page, *, budget):
+        return self.page_png
+
+
+class _WorstCaseReading(FakeDocumentReadingProvider):
+    """Reports the usage of a dense page and reserves like the transport with the largest worst case."""
+
+    def __init__(self, estimate, transcripts) -> None:
+        super().__init__(transcripts=transcripts, usage=READ_PAGE_USAGE)
+        self.estimate_reservation = estimate
+
+
+class _DenseDeclaration(_RecordingProvider):
+    """Reports the usage of the three passes over dense transcripts, and reserves like the largest transport."""
+
+    def __init__(self, document_key: str, estimate) -> None:
+        super().__init__(document_key)
+        self.estimate_reservation = estimate
+        self.reported_input = self.reported_output = 0
+
+    def _report(self, usage: ProviderUsage) -> None:
+        self._usage = usage
+        self.reported_input += usage.input_tokens
+        self.reported_output += usage.output_tokens
+
+    def _bill(self, method: str, documents) -> None:
+        pages = sum(len(document.pages) for document in documents)
+        self._report(ProviderUsage(pages * PASS_INPUT_PER_PAGE + PASS_CALL_OVERHEAD[method], PASS_OUTPUT_PER_CALL, Decimal("0"), 1))
+
+    async def inventory(self, documents, *, max_output_tokens):
+        self._bill("inventory", documents)
+        return await super().inventory(documents, max_output_tokens=max_output_tokens)
+
+    async def extract_core(self, documents, *, max_output_tokens):
+        self._bill("extract_core", documents)
+        return await super().extract_core(documents, max_output_tokens=max_output_tokens)
+
+    async def extract_rules(self, documents, *, max_output_tokens):
+        self._bill("extract_rules", documents)
+        return await super().extract_rules(documents, max_output_tokens=max_output_tokens)
+
+    async def reconcile(self, inventory, core, rules, *, max_output_tokens):
+        self._report(RECONCILE_USAGE)
+        return await super().reconcile(inventory, core, rules, max_output_tokens=max_output_tokens)
+
+
+@pytest.fixture
+async def worst_case_estimate():
+    """The real reservation estimator of a compatible endpoint: it publishes no image formula and counts every UTF-8
+    byte as a token, so it reserves the most of all transports."""
+    transport = CompatibleDeclarationProvider(EffectiveAiSettings(
+        provider="openai_compatible", api_key=SecretStr("synthetic-key"), model="local-vl", base_url="http://localhost:11434/v1"))
+    yield transport.estimate_reservation
+    await transport._client.close()
+
+
+async def test_a_declaration_of_the_permitted_200_scanned_pages_fits_the_import_token_limits(
+    seed_data, worst_case_estimate
+) -> None:
+    pages = settings.declaration_ocr_max_pages_per_import
+    assert pages == 200
+    lease, key, store = await _seed_pipeline_import(seed_data, _scan(pages))
+    filler = "Die Kosten der Instandhaltung des gemeinschaftlichen Eigentums tragen die Eigentümer nach Miteigentumsanteilen. "
+    transcripts = {
+        (key, number): [ReadingBlock(kind="TEXT", text=((f"Teilungserklärung {number} " if number == 1 else f"Seite {number} ") + filler * 40)[:DENSE_PAGE_CHARS])]
+        for number in range(1, pages + 1)
+    }
+    reader = _WorstCaseReading(worst_case_estimate, transcripts)
+    declaration = _DenseDeclaration(key, worst_case_estimate)
+    extraction = ModelRecording(declaration, EXTRACTION_MODEL)
+
+    await DeclarationImportWorker(_pipeline(extraction, reader, store, preflight=_FlatRenderPreflight()))._run_claimed(lease)
+
+    item = await _item(lease)
+    assert item.error_code is None
+    assert item.status == "NEEDS_REVIEW"
+    assert len(reader.reads) == pages
+    reading_input, reading_output = pages * READ_PAGE_USAGE.input_tokens, pages * READ_PAGE_USAGE.output_tokens
+    # Every reservation settled to the reported usage; this import is far past the limits of the Tesseract era
+    # (500,000 input, 60,000 output tokens).
+    assert item.input_tokens == reading_input + declaration.reported_input
+    assert item.output_tokens == reading_output + declaration.reported_output
+    assert item.input_tokens > 1_900_000 and item.output_tokens > 450_000
+
+
+def test_an_import_far_beyond_the_permitted_pages_still_stops_at_the_import_token_limits() -> None:
+    ledger = _Ledger(0, 0, Decimal("0"), 0, settings.declaration_max_input_tokens, settings.declaration_max_output_tokens,
+                     settings.declaration_max_cost_usd, settings)
+    # One page's part of the passes: 3 x 211/200 x 1,500 input tokens plus 12 x 5,600 for prompt and schema, over 200.
+    extraction_share = ProviderUsage(5_083, 300, Decimal("0"), 1)
+    completed = 0
+    with pytest.raises(PipelineFailure) as stopped:
+        for _ in range(2 * settings.declaration_ocr_max_pages_per_import):
+            for usage in (READ_PAGE_USAGE, extraction_share):
+                reservation = ledger.reserve("", reserved_input_tokens=2 * usage.input_tokens, model="unpriced-model")
+                ledger.charge_reservation(reservation)
+                # A call cannot report more output than its reservation allows (max_output_tokens).
+                reported = ProviderUsage(usage.input_tokens, min(usage.output_tokens, reservation.output_tokens), Decimal("0"), 1)
+                ledger.settle_reservation(reported, reservation)
+            completed += 1
+    assert stopped.value.code == "IMPORT_TOKEN_BUDGET_EXCEEDED"
+    assert settings.declaration_ocr_max_pages_per_import <= completed < 2 * settings.declaration_ocr_max_pages_per_import
 
 
 # ---- resume ---------------------------------------------------------------------------------------------------------

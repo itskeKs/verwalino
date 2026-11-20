@@ -2672,7 +2672,8 @@ document storage). The image keeps Tesseract for the invoice and inbox workers u
 read with a model too (#500, #501, #502). The reading model must accept image input: otherwise
 the job ends with `PROVIDER_IMAGE_INPUT_UNSUPPORTED` and the import screen says so in German;
 the original is kept and nothing is applied. Reading and extraction are both metered and count
-together against the per-import limits (`HV_DECLARATION_MAX_*`, unchanged) and the organization's
+together against the per-import limits (`HV_DECLARATION_MAX_*`; the token limits default to 2,500,000 input
+and 500,000 output, sized for the 200 scanned pages the page limit permits) and the organization's
 monthly limit. The `HV_DECLARATION_OCR_*` keys keep their names and now bound the page rendering.
 
 **Version defaults.** The extraction prompt version is `declaration-v4` and the harness version

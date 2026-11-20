@@ -85,7 +85,7 @@ for the reading model.
 | pages / pixels read per import | 200 / 400,000,000 |
 | precheck deadline | 600 seconds |
 | provider pages / characters per batch | 20 / 80,000 |
-| input / output tokens per import | 500,000 / 60,000 |
+| input / output tokens per import | 2,500,000 / 500,000 |
 | output tokens per provider call | 12,000 |
 | recheck pages / recheck calls | 12 / 2 |
 | candidates / estimated import cost | 5,000 / 1.00 USD |
@@ -133,7 +133,10 @@ provider, endpoint, timeout and key. One page is one request; a failed page is r
   cost limits and the organization's monthly limit (`IMPORT_TOKEN_BUDGET_EXCEEDED`,
   `IMPORT_COST_BUDGET_EXCEEDED`, `ORGANIZATION_AI_BUDGET_EXCEEDED`). A failed call keeps the
   usage the provider reported; when it reported none, the reservation stays recorded. An
-  unpriced model is not limited and shown as „kein Preis bekannt“.
+  unpriced model is not limited and shown as „kein Preis bekannt“. The token limits (2,500,000
+  input, 500,000 output) are sized for the 200 dense scanned pages the page limit permits, with the
+  derivation beside them in `app/core/config.py`; the cost limit of 1.00 USD stays the money guard
+  and is reached first on a dearer model.
 - **Resume.** Each finished page transcript is saved with the call's settled usage in one
   transaction (`declaration_page_reading`, migration 0196; working data of the import, written by
   the worker only, removed with the import and its organization, not exported). A resumed job
