@@ -10,7 +10,9 @@ import base64
 from hashlib import sha256
 import io
 import json
+import math
 import re
+import struct
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -86,10 +88,59 @@ _LUNA_SHORT_CONTEXT_MAX_INPUT_TOKENS = 272_000
 # OpenAI notes that final billing may differ by one token due to rounding, so
 # reserve the upper boundary instead of the nominal estimate.
 _VERIFIED_HIGH_IMAGE_INPUT_TOKENS = 3_001
+# Image input reservation for the reading stage, from the pixel dimensions of the page image (never from its
+# base64 length). Documented formulas, verified 2026-11-20:
+# * OpenAI, https://developers.openai.com/api/docs/guides/images-vision ("Calculating costs"): the two
+#   models above reserve the verified high-detail cap; every other OpenAI model reserves the larger of the
+#   documented families' worst cases: tile-based (fit 2048 x 2048, shortest side at most 768, 512 px tiles,
+#   at most 2,833 + 5,667 per tile, the gpt-4o-mini row) and patch-based (ceil(w/32) x ceil(h/32) patches, the
+#   30,000 patch hard cap, the largest listed multiplier 2.46).
+# * Anthropic, https://platform.claude.com/docs/en/build-with-claude/vision ("Resolution and token cost"):
+#   ceil(w/28) x ceil(h/28) visual tokens, at most 4,784 per image (the high-resolution tier's cap).
+# * Compatible endpoints publish no formula: one token per 14 x 14 pixel patch, the finest patch of the common
+#   vision encoders, which no model spends more tokens than; at the 4 million pixel bound of the render step
+#   that is 20,409 tokens.
+_OPENAI_TILE_BASE_TOKENS, _OPENAI_TILE_TOKENS, _OPENAI_MAX_PATCHES, _OPENAI_MAX_PATCH_MULTIPLIER = 2_833, 5_667, 30_000, Decimal("2.46")
+_ANTHROPIC_MAX_IMAGE_TOKENS = 4_784
+_COMPATIBLE_IMAGE_PATCH_PIXELS = 14
+_KNOWN_PATCH_BUDGET_MODELS = frozenset({"gpt-5.4-mini", "gpt-5.6-luna"})
+
+
+def reserved_image_tokens(provider: str, model: str, width: int, height: int) -> int:
+    """Conservative input tokens of one image of ``width`` x ``height`` pixels at high detail."""
+    if provider == "anthropic":
+        return min(-(-width // 28) * -(-height // 28), _ANTHROPIC_MAX_IMAGE_TOKENS)
+    if provider == "openai":
+        if model in _KNOWN_PATCH_BUDGET_MODELS:
+            return _VERIFIED_HIGH_IMAGE_INPUT_TOKENS
+        scale = min(1.0, 2048 / max(width, height))
+        fitted_width, fitted_height = width * scale, height * scale
+        shortest = min(fitted_width, fitted_height)
+        if shortest > 768:
+            fitted_width, fitted_height = fitted_width * 768 / shortest, fitted_height * 768 / shortest
+        tiles = math.ceil(fitted_width / 512) * math.ceil(fitted_height / 512)
+        tile_bound = _OPENAI_TILE_BASE_TOKENS + _OPENAI_TILE_TOKENS * tiles
+        patches = min(_OPENAI_MAX_PATCHES, -(-width // 32) * -(-height // 32))
+        return max(tile_bound, math.ceil(patches * _OPENAI_MAX_PATCH_MULTIPLIER))
+    return -(-width // _COMPATIBLE_IMAGE_PATCH_PIXELS) * -(-height // _COMPATIBLE_IMAGE_PATCH_PIXELS)
+
+
+def png_dimensions(data_url: str) -> tuple[int, int]:
+    """Width and height from the header of a PNG data URL: 24 bytes are read, the image is not decoded."""
+    try:
+        header = base64.b64decode(data_url.split(",", 1)[1][:32])
+        if header[:8] != _PNG_SIGNATURE or header[12:16] != b"IHDR":
+            raise ValueError("not a PNG header")
+        width, height = struct.unpack(">II", header[16:24])
+    except Exception:
+        raise ProviderFailure(
+            "OPENAI_IMAGE_INPUT_INVALID", False, "Image input must be a valid PNG data URL."
+        ) from None
+    return width, height
 _PNG_DATA_URL = re.compile(r"^data:image/png;base64,([A-Za-z0-9+/]*={0,2})$")
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _STATIC_HARNESS = (
-    "declaration-responses-v3|structured-output-kind-anyof|store=false|"
+    "declaration-responses-v4|structured-output-kind-anyof|store=false|"
     "no-previous-response-id|fixed-pass-manager"
 )
 _SAFE_RESPONSE_IDENTIFIER = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
@@ -429,19 +480,11 @@ class OpenAiDeclarationProvider:
         batch, and a failed page can be read again alone. The page identity comes from the caller, never from
         the model. ``model`` must be the model this provider is configured for: no other model is asked.
         """
-        if page.media_type != READING_IMAGE_MEDIA_TYPE:
-            raise ProviderFailure(
-                "OPENAI_IMAGE_INPUT_INVALID", False, "Image input must be a valid PNG data URL."
-            )
-        encoded = base64.b64encode(page.data).decode("ascii")
         result = await self._run(
             pass_id=READING_PASS_ID,
             model=model,
             prompt=PAGE_READING_PROMPT,
-            content_blocks=[
-                {"type": "input_text", "text": f"pdf_page={page.pdf_page}"},
-                {"type": "input_image", "image_url": f"data:{READING_IMAGE_MEDIA_TYPE};base64,{encoded}", "detail": "high"},
-            ],
+            content_blocks=self._reading_content_blocks(page),
             output_type=PageReadingOutput,
             max_output_tokens=max_output_tokens,
         )
@@ -450,11 +493,24 @@ class OpenAiDeclarationProvider:
         )
         return replace(result, output=transcript)
 
+    @staticmethod
+    def _reading_content_blocks(page: PageImage) -> list[dict[str, str]]:
+        if page.media_type != READING_IMAGE_MEDIA_TYPE:
+            raise ProviderFailure(
+                "OPENAI_IMAGE_INPUT_INVALID", False, "Image input must be a valid PNG data URL."
+            )
+        encoded = base64.b64encode(page.data).decode("ascii")
+        return [
+            {"type": "input_text", "text": f"pdf_page={page.pdf_page}"},
+            {"type": "input_image", "image_url": f"data:{READING_IMAGE_MEDIA_TYPE};base64,{encoded}", "detail": "high"},
+        ]
+
     def estimate_reservation(
         self,
         method: str,
         *,
         max_output_tokens: int,
+        page: PageImage | None = None,
         documents: Sequence[DocumentInput] = (),
         inventory: DocumentInventoryOutput | None = None,
         core: CoreExtractionOutput | None = None,
@@ -469,6 +525,14 @@ class OpenAiDeclarationProvider:
         repair prompt and vision policy cannot drift from live preflight.
         """
         self._validate_output_allowance(max_output_tokens)
+        if method == "read_page" and page is not None:
+            return self._request_reservation(
+                READING_PASS_ID, self._primary_model,
+                PAGE_READING_PROMPT,
+                self._reading_content_blocks(page),
+                PageReadingOutput,
+                max_output_tokens,
+            )
         if method == "inventory":
             self._reject_unexpected_images(documents)
             return self._request_reservation(
@@ -946,8 +1010,10 @@ class OpenAiDeclarationProvider:
             raise ProviderFailure(
                 "OPENAI_INPUT_ESTIMATE_FAILED", False, "Input token estimation failed."
             ) from error
-        estimated_input = len(encoded) + self._reserved_image_input_tokens(
-            model, input_payload
+        estimated_input = len(encoded) + (
+            self._reserved_reading_image_tokens(model, input_payload)
+            if pass_id == READING_PASS_ID
+            else self._reserved_image_input_tokens(model, input_payload)
         )
         if model == "gpt-5.6-luna" and estimated_input > _LUNA_SHORT_CONTEXT_MAX_INPUT_TOKENS:
             raise ProviderFailure(
@@ -1101,6 +1167,15 @@ class OpenAiDeclarationProvider:
                 if block.get("type") == "input_image":
                     block["image_url"] = "<image-data-url-omitted>"
         return normalized
+
+    def _reserved_reading_image_tokens(self, model: str, input_payload: list[dict[str, Any]]) -> int:
+        """Reading pages reserve from their pixel dimensions, by the formula of this transport's provider."""
+        return sum(
+            reserved_image_tokens(self._price_provider, model, *png_dimensions(block["image_url"]))
+            for message in input_payload
+            for block in message.get("content", [])
+            if block.get("type") == "input_image"
+        )
 
     @staticmethod
     def _reserved_image_input_tokens(

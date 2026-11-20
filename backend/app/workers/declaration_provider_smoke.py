@@ -52,7 +52,7 @@ async def _verify_organization(organization_id):
     effective = await worker_ai_settings(organization_id)
     from app.declarations.openai_models import list_models
     models = await list_models(effective.api_key.get_secret_value(), provider=effective.provider, base_url=effective.base_url)
-    if effective.model not in models:
+    if effective.model not in models or effective.document_model not in models:
         raise ValueError('Configured model is not listed by the selected provider')
 
 

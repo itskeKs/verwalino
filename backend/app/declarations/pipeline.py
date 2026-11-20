@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import time
 import uuid
 from collections import defaultdict
 from contextlib import AbstractAsyncContextManager
@@ -32,14 +33,19 @@ from app.declarations.batching import PageBatch, PageBatcher
 from app.declarations.evidence import EvidenceTextIndex
 from app.declarations.policy import CandidateContext, classify_candidate
 from app.declarations.preflight import (
+    IMAGE_PAGE_SOURCE,
     DocumentIntegrityError,
     ImportPreflightBudget,
+    PageArtifact,
     PdfPreflight,
 )
 from app.declarations.routing import PageRoutingSignal, route_escalation
 from app.declarations.provider import (
+    READING_IMAGE_MEDIA_TYPE,
     DeclarationExtractionProvider,
     DocumentInput,
+    DocumentReadingProvider,
+    PageImage,
     PageInput,
     ProviderCallResult,
     ProviderFailure,
@@ -52,10 +58,13 @@ from app.declarations.schemas import (
     CoreExtractionOutput,
     DocumentInventoryOutput,
     FactPayload,
+    PageTranscript,
+    ReadingBlock,
     ReconciliationOutput,
     RuleExtractionOutput,
     RulePayload,
     TargetedRecheckOutput,
+    transcript_text,
 )
 from app.declarations.validation import (
     ValidationIssue,
@@ -119,7 +128,11 @@ class _Ledger:
         *,
         escalation: bool = False,
         reserved_input_tokens: int | None = None,
+        model: str | None = None,
+        price_provider: str | None = None,
     ) -> _Reservation:
+        # ``model`` and ``price_provider`` name the model of this one call when it is not the ledger's
+        # extraction model: the reading stage reserves at the reading model's price, in the same ledger.
         # Generic providers do not have the OpenAI adapter's request wrappers.
         # Their fallback remains conservative: two possible schema attempts.
         reserved_input = (
@@ -134,7 +147,7 @@ class _Ledger:
             raise PipelineFailure("IMPORT_TOKEN_BUDGET_EXCEEDED")
         if self.input_tokens + reserved_input > self.max_input_tokens:
             raise PipelineFailure("IMPORT_TOKEN_BUDGET_EXCEEDED")
-        price = model_price(self.model or ('gpt-5.4-mini' if escalation else 'gpt-5.6-luna'), self.price_provider)
+        price = model_price(model or self.model or ('gpt-5.4-mini' if escalation else 'gpt-5.6-luna'), price_provider or self.price_provider)
         in_rate = max(price.input, price.cached, price.input * (price.cache_write_multiplier or 1)) if price else Decimal('0')
         out_rate = price.output if price else Decimal('0')
         cost = (Decimal(reserved_input) * in_rate + Decimal(output) * out_rate) / Decimal(1_000_000)
@@ -221,10 +234,25 @@ class _Ledger:
         return self.cost_usd - self.initial_cost_usd
 
 
+@dataclass(frozen=True, slots=True)
+class _SavedReading:
+    """A page transcript to persist in the same transaction as the call's settled usage."""
+
+    document_id: uuid.UUID
+    pdf_page: int
+    model_name: str
+    blocks: list[dict[str, object]]
+
+
 T = TypeVar("T")
 
 
 class DeclarationPipeline:
+    # Without a reading provider (also on a pipeline that was not constructed with one) a page that needs reading
+    # ends the job with DOCUMENT_MODEL_NOT_CONFIGURED.
+    _reading_provider: DocumentReadingProvider | None = None
+    _reading_model: str | None = None
+
     def __init__(
         self,
         provider: DeclarationExtractionProvider,
@@ -233,8 +261,14 @@ class DeclarationPipeline:
         preflight: PdfPreflight | None = None,
         configured: Settings = settings,
         tenant_session_factory: Callable[[uuid.UUID], AbstractAsyncContextManager] = get_worker_tenant_session,
+        reading_provider: DocumentReadingProvider | None = None,
+        reading_model: str | None = None,
     ) -> None:
         self._provider = provider
+        # The reading stage (ADR 0017): pages without a text layer are read by this provider with this model, the
+        # job's reading model identity. Without one a page that needs reading ends the job.
+        self._reading_provider = reading_provider
+        self._reading_model = reading_model
         self._store = store or get_store()
         self._settings = configured
         self._preflight = preflight or PdfPreflight(
@@ -307,7 +341,7 @@ class DeclarationPipeline:
                 preflight_issues,
                 source_pdf_bytes,
                 preflight_budget,
-            ) = await self._preflight_documents(lease, documents)
+            ) = await self._preflight_documents(lease, documents, ledger)
             evidence_index = EvidenceTextIndex.from_pages(page_inputs)
             await self._transition(lease, {"PREFLIGHT"}, "EXTRACTING", {"current_stage": "extracting"})
             batches = self._page_batches(page_inputs)
@@ -438,7 +472,7 @@ class DeclarationPipeline:
                 raise PipelineFailure("LEASE_LOST")
             return item, tuple(await imports.list_documents(lease.import_id))
 
-    async def _preflight_documents(self, lease, documents):
+    async def _preflight_documents(self, lease, documents, ledger: _Ledger):
         budget = self._preflight.new_import_budget()
         pages: list[PageInput] = []
         counts: dict[str, int] = {}
@@ -448,6 +482,8 @@ class DeclarationPipeline:
         # renderer. Never attach source bytes to a page, evidence, ledger or
         # durable model.
         source_pdf_bytes: dict[str, bytes] = {}
+        # Transcripts an earlier run of this import finished; loaded once, when the first page needs reading.
+        saved_readings: dict[tuple[uuid.UUID, int], list[dict[str, object]]] | None = None
         for _link, document in documents:
             key = _document_key(document)
             try:
@@ -470,19 +506,146 @@ class DeclarationPipeline:
             source_pdf_bytes[key] = data
             counts[key] = result.page_count
             ids[key] = document.id
-            pages.extend(
-                PageInput(
-                    document_key=key,
-                    pdf_page=artifact.page_number,
-                    text=artifact.text,
-                    quality=_page_quality(artifact.source),
-                )
-                for artifact in result.pages
-            )
             for artifact in result.pages:
+                text, source = artifact.text, artifact.source
+                if source == IMAGE_PAGE_SOURCE:
+                    if saved_readings is None:
+                        saved_readings = await self._load_page_readings(lease)
+                    text = await self._read_page(
+                        ledger, budget, document, data, artifact, saved_readings
+                    )
+                    source = "READING"
+                pages.append(
+                    PageInput(
+                        document_key=key,
+                        pdf_page=artifact.page_number,
+                        text=text,
+                        quality=_page_quality(source),
+                    )
+                )
                 for code in artifact.issues:
                     issues.append(ValidationIssue(code=code, severity="WARNING", message="Eine PDF-Seite konnte nicht vollständig maschinell gelesen werden."))
         return tuple(pages), counts, ids, tuple(issues), source_pdf_bytes, budget
+
+    async def _load_page_readings(self, lease) -> dict[tuple[uuid.UUID, int], list[dict[str, object]]]:
+        async with self._tenant_session_factory(lease.organization_id) as session:
+            repo = DeclarationImportRepository(session, lease.organization_id)
+            if await repo.lock_current_lease(lease, {"PREFLIGHT"}) is None:
+                raise PipelineFailure("LEASE_LOST")
+            return await repo.load_page_readings(lease.import_id)
+
+    async def _read_page(
+        self,
+        ledger: _Ledger,
+        budget: ImportPreflightBudget,
+        document: PropertyDocument,
+        data: bytes,
+        artifact: PageArtifact,
+        saved_readings: dict[tuple[uuid.UUID, int], list[dict[str, object]]],
+    ) -> str:
+        """The page's text for the extraction passes: a finished transcript is reused, any other page is read.
+
+        A page an earlier run finished costs no request and no charge. A new page is rendered here, one at a
+        time, reserved before the call, metered in the shared ledger and saved with its settled usage. The reading
+        has no fallback: a missing model or a failed call ends the job with its structured code.
+        """
+        saved = saved_readings.get((document.id, artifact.page_number))
+        if saved is not None:
+            return transcript_text([ReadingBlock.model_validate(block) for block in saved])
+        if self._reading_provider is None or not self._reading_model:
+            raise PipelineFailure("DOCUMENT_MODEL_NOT_CONFIGURED")
+        png = await run_bounded_processor(
+            partial(self._preflight.render_page_for_reading, data, artifact, budget=budget)
+        )
+        image = PageImage(
+            document_key=_document_key(document),
+            pdf_page=artifact.page_number,
+            media_type=READING_IMAGE_MEDIA_TYPE,
+            data=png,
+        )
+        transcript = await self._read_one(ledger, budget, image, document.id)
+        return transcript_text(transcript.blocks)
+
+    async def _read_one(
+        self, ledger: _Ledger, budget: ImportPreflightBudget, image: PageImage, document_id: uuid.UUID
+    ) -> PageTranscript:
+        reservation = await self._reserve_reading(ledger, image)
+        started = time.monotonic()
+        try:
+            raw = await self._reading_provider.read_page(
+                image, model=self._reading_model, max_output_tokens=reservation.output_tokens
+            )
+        except ProviderFailure as exc:
+            budget.exclude_wait(time.monotonic() - started)
+            await self._charge_failed_call(ledger, exc, reservation)
+            raise
+        except Exception as exc:
+            await self._checkpoint(ledger)
+            raise PipelineFailure("PROVIDER_UNEXPECTED_FAILURE") from exc
+        budget.exclude_wait(time.monotonic() - started)
+        try:
+            transcript = _unwrap(raw, PageTranscript, ledger, reservation, reservation_already_charged=True)
+            if (transcript.document_key, transcript.pdf_page) != (image.document_key, image.pdf_page):
+                raise PipelineFailure("PROVIDER_RESULT_INVALID")
+        except PipelineFailure:
+            await self._checkpoint(ledger)
+            raise
+        await self._checkpoint(
+            ledger,
+            reading=_SavedReading(
+                document_id=document_id,
+                pdf_page=image.pdf_page,
+                model_name=self._reading_model,
+                blocks=[block.model_dump(mode="json") for block in transcript.blocks],
+            ),
+        )
+        return transcript
+
+    async def _reserve_reading(self, ledger: _Ledger, image: PageImage) -> _Reservation:
+        """Durably reserve one page's reading at the reading model's price before the request leaves."""
+        if ledger.output_allowance() <= 0:
+            raise PipelineFailure("IMPORT_TOKEN_BUDGET_EXCEEDED")
+        estimator = getattr(self._reading_provider, "estimate_reservation", None)
+        if not callable(estimator):
+            raise PipelineFailure("PROVIDER_RESERVATION_ESTIMATE_INVALID")
+        try:
+            estimate = estimator("read_page", max_output_tokens=ledger.output_allowance(), page=image)
+        except ProviderFailure:
+            raise  # A structured provider code (rate, image input, budget) stays the job's code.
+        except Exception as exc:
+            raise PipelineFailure("PROVIDER_RESERVATION_ESTIMATE_INVALID") from exc
+        if not isinstance(estimate, ProviderReservationEstimate):
+            raise PipelineFailure("PROVIDER_RESERVATION_ESTIMATE_INVALID")
+        reservation = ledger.reserve(
+            "",
+            reserved_input_tokens=estimate.input_tokens,
+            model=self._reading_model,
+            price_provider=getattr(self._reading_provider, "_price_provider", "openai"),
+        )
+        ledger.charge_reservation(reservation)
+        await self._checkpoint(ledger)
+        return reservation
+
+    async def _charge_failed_call(
+        self, ledger: _Ledger, exc: ProviderFailure, reservation: _Reservation
+    ) -> None:
+        """Keep the attempt's evidence and the consumed (or, when unknown, the reserved) usage of a failed call."""
+        try:
+            _append_failure_attempt_metadata(ledger, exc)
+            if not exc.usage_complete:
+                ledger.retain_reservation_for_incomplete_usage(
+                    exc.usage if isinstance(exc.usage, ProviderUsage) else None,
+                    exc.attempt_count,
+                    reservation,
+                )
+            elif isinstance(exc.usage, ProviderUsage):
+                ledger.settle_reservation(exc.usage, reservation)
+            elif exc.usage is not None:
+                raise PipelineFailure("PROVIDER_USAGE_INVALID")
+        except PipelineFailure:
+            await self._checkpoint(ledger)
+            raise
+        await self._checkpoint(ledger)
 
     def _render_recheck_pages(
         self,
@@ -1163,6 +1326,9 @@ class DeclarationPipeline:
             from fastapi import HTTPException
             try:
                 await require_organization_ai_budget(session, lease.organization_id, imported.max_cost_usd, model=getattr(self._provider, "_primary_model", None), provider=getattr(self._provider, "_price_provider", "openai"))
+                if self._reading_model:
+                    # The reading model's price counts against the monthly limit as well as the extraction model's.
+                    await require_organization_ai_budget(session, lease.organization_id, imported.max_cost_usd, model=self._reading_model, provider=getattr(self._reading_provider, "_price_provider", "openai"))
             except HTTPException as error:
                 raise PipelineFailure("ORGANIZATION_AI_BUDGET_EXCEEDED") from error
             run = DeclarationExtractionRun(
@@ -1171,6 +1337,7 @@ class DeclarationPipeline:
                 status="RUNNING",
                 provider=type(self._provider).__name__,
                 model_name=getattr(self._provider, "_primary_model", "gpt-5.6-luna"),
+                document_model_name=self._reading_model,
                 prompt_version=self._settings.declaration_prompt_version,
                 schema_version=self._settings.declaration_schema_version,
                 harness_version=getattr(self._provider, "_harness_version", self._settings.declaration_harness_version),
@@ -1182,7 +1349,7 @@ class DeclarationPipeline:
             await session.flush()
             return run.id
 
-    async def _checkpoint(self, ledger: _Ledger) -> None:
+    async def _checkpoint(self, ledger: _Ledger, *, reading: _SavedReading | None = None) -> None:
         lease = getattr(self, "_active_lease", None)
         if lease is None:
             return
@@ -1206,6 +1373,11 @@ class DeclarationPipeline:
                 run.input_tokens = ledger.run_input_tokens
                 run.output_tokens = ledger.run_output_tokens
                 run.estimated_cost_usd = ledger.run_cost_usd
+            if reading is not None:
+                # With the call's settled usage, in one transaction: a page is never paid for without its text.
+                await repo.save_page_reading(
+                    lease.import_id, reading.document_id, reading.pdf_page, reading.model_name, reading.blocks
+                )
             if not await repo.transition_with_lease(
                 lease,
                 {item.status},
@@ -1490,7 +1662,7 @@ def _document_key(document: PropertyDocument) -> str:
 
 
 def _page_quality(source: str) -> float:
-    return {"TEXT_LAYER": 1.0, "OCR": 0.85}.get(source, 0.0)
+    return {"TEXT_LAYER": 1.0, "READING": 0.85}.get(source, 0.0)
 
 
 def _routing_evidence_page_keys(

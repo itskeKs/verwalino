@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from decimal import Decimal
 from datetime import date
 from types import MappingProxyType
@@ -269,3 +271,23 @@ class PageTranscript(StrictModel):
     document_key: str = Field(min_length=1, max_length=120)
     pdf_page: int = Field(ge=1)
     blocks: list[ReadingBlock]
+
+
+def transcript_text(blocks: "Sequence[ReadingBlock]") -> str:
+    """The page text the extraction passes read: a transcript serialized deterministically, block by block.
+
+    A text block is its text. A table is one line per row with the cells joined by `` | `` between the lines
+    ``[table]`` and ``[/table]``. An unreadable block is the marker line; the markers inside text stay as the
+    reading model wrote them, so the extraction model sees every gap.
+    """
+    lines: list[str] = []
+    for block in blocks:
+        if block.kind == "TEXT":
+            lines.append(block.text or "")
+        elif block.kind == "TABLE":
+            lines.append("[table]")
+            lines.extend(" | ".join(row) for row in block.rows or [])
+            lines.append("[/table]")
+        else:
+            lines.append(UNREADABLE_MARKER)
+    return "\n".join(lines)

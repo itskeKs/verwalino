@@ -6,7 +6,7 @@ from pathlib import Path
 from playwright.async_api import expect
 from pytest_bdd import given, when, then
 
-from tests.declaration_fixtures import DeclarationProcessingGate
+from tests.declaration_fixtures import DeclarationProcessingGate, SlowReadingProvider, lindenallee_reading_blocks
 
 ROOT = Path(__file__).resolve().parents[4]
 
@@ -71,33 +71,33 @@ def fictional_provider(document_id):
 
 @when("the worker finishes processing the slow scan on its first attempt")
 def extract_declaration(world, browser_storage, monkeypatch):
-    from pytesseract import image_to_string
     from sqlalchemy import select
     from app.core.db import get_worker_tenant_session
     from app.core.storage import LocalFsDocumentStore
+    from app.declarations.fake_provider import FakeDocumentReadingProvider
     from app.declarations.pipeline import DeclarationPipeline
     from app.models.declaration_import import DeclarationExtractionRun
     from app.workers.declaration_import import DeclarationImportWorker
     import_id = world.data['declaration_import']
     documents = world.act('GET', f'/api/declaration-imports/{import_id}/documents')
     assert documents.status_code == 200, world.describe_response()
-    provider = fictional_provider(documents.json()[0]['id'])
+    document_id = documents.json()[0]['id']
+    provider = fictional_provider(document_id)
     organization_id = uuid.UUID(world.data['declaration_org'])
 
     async def run():
         gate = DeclarationProcessingGate()
 
-        def slow_ocr(*args, **kwargs):
-            gate.hold()
-            return image_to_string(*args, **kwargs)
-
-        monkeypatch.setattr('pytesseract.image_to_string', slow_ocr)
+        # The scan has no text layer: its page is read by the offline reading provider, slowly.
+        reader = SlowReadingProvider(gate, FakeDocumentReadingProvider(
+            transcripts={(document_id, 1): lindenallee_reading_blocks()}))
         worker = DeclarationImportWorker(
-            DeclarationPipeline(provider, store=LocalFsDocumentStore(browser_storage)),
+            DeclarationPipeline(provider, store=LocalFsDocumentStore(browser_storage),
+                                reading_provider=reader, reading_model='gpt-5.4-mini'),
             sleep=gate.release_after_renewal,
         )
         result = await worker.run_once(organization_id=organization_id)
-        assert gate.released_in_time, 'the lease was not renewed while OCR was active'
+        assert gate.released_in_time, 'the lease was not renewed while the page was being read'
         assert result.code == 'PROCESSED'
         async with get_worker_tenant_session(organization_id) as session:
             runs = await session.scalars(select(DeclarationExtractionRun.status).where(

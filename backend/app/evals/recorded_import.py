@@ -14,9 +14,9 @@ from app.core.storage import get_store, make_storage_key
 from app.core.unit_numbers import normalize_unit_number
 from app.declarations.evidence import EvidenceTextIndex, validate_evidence_quote
 from app.declarations.observability import ProviderPassMetadata
-from app.declarations.preflight import PdfPreflight
+from app.declarations.preflight import IMAGE_PAGE_SOURCE, PdfPreflight
 from app.declarations.provider import PageInput
-from app.declarations.schemas import EvidencePayload, IntegerValue, MeaFraction, TextValue
+from app.declarations.schemas import EvidencePayload, IntegerValue, MeaFraction, ReadingBlock, TextValue, transcript_text
 from app.repositories.declaration_evaluation_repo import DeclarationEvaluationRepository, RecordedCaptureUnavailable
 
 _FORMAT_VERSION = 2
@@ -127,10 +127,15 @@ def _score_output(snapshot, gold, source):
     prepared = PdfPreflight(max_pages=1, max_ocr_pages_per_import=1, deadline_seconds=60).run_bytes(
         source, expected_sha256=gold['input_digest'], expected_size=len(source))
     evidence_status = 'PASS'
-    if any(not page.text for page in prepared.pages):
+    # A page without a text layer was read by the reading model: its text is the saved transcript.
+    transcripts = {reading.pdf_page: transcript_text([ReadingBlock.model_validate(block) for block in reading.blocks])
+                   for reading in snapshot.readings}
+    page_texts = {p.page_number: transcripts.get(p.page_number, '') if p.source == IMAGE_PAGE_SOURCE else p.text
+                  for p in prepared.pages}
+    if any(not text for text in page_texts.values()):
         evidence_status = 'UNAVAILABLE'
     else:
-        index = EvidenceTextIndex.from_pages([PageInput(gold['id'], p.page_number, p.text, 1) for p in prepared.pages])
+        index = EvidenceTextIndex.from_pages([PageInput(gold['id'], number, text, 1) for number, text in page_texts.items()])
         by_candidate = Counter()
         candidate_ids = {candidate.id for candidate in snapshot.candidates}
         document_id = snapshot.documents[0].id
@@ -184,9 +189,11 @@ async def capture_recorded_import(*, organization_id, actor_id, import_id, gold,
                                        or c.reviewed_by is not None or c.corrected_value_json is not None for c in snapshot.candidates):
                 raise RecordedCaptureUnavailable('UNTOUCHED_MODEL_PROPOSALS_REQUIRED')
             passes = [_safe_pass(row.safe_metadata) for row in snapshot.passes]
+            # The reading pass has its own model and its own versioned prompt and schema (ADR 0017).
             consistent = run.provider in {'OpenAiDeclarationProvider', 'CompatibleDeclarationProvider', 'AnthropicDeclarationProvider'} and bool(passes) and all(
                 entry['configured_model'] == run.model_name and entry['prompt_version'] == run.prompt_version
-                and entry['schema_version'] == run.schema_version and entry['harness_version'] == run.harness_version for entry in passes)
+                and entry['schema_version'] == run.schema_version and entry['harness_version'] == run.harness_version
+                for entry in passes if entry['pass_id'] != 'read_page')
             if run.status == 'SUCCEEDED':
                 consistent = consistent and all(any(p['pass_id'] == stage and p['failure_class'] is None for p in passes) for stage in _STAGES[:4])
             assertions = [_assertion('provenance', 'contracts_consistent', 'PASS' if consistent else 'FAIL')]
@@ -268,7 +275,8 @@ def validate_recorded_report(report):
     status = {(row['stage'], row['assertion']): row['status'] for row in report['assertions']}
     if any(status[(stage, 'semantics')] != 'UNAVAILABLE' for stage in _STAGES) or status[('final_output', 'terminal_outcome')] != ('PASS' if source['run_status'] == 'SUCCEEDED' else 'FAIL'):
         raise RecordedCaptureUnavailable('INVALID_RECORDED_REPORT')
-    consistent = all(p['configured_model'] == provenance['model'] and all(p[k] == provenance[k] for k in ('prompt_version', 'schema_version', 'harness_version')) for p in provenance['passes'])
+    consistent = all(p['configured_model'] == provenance['model'] and all(p[k] == provenance[k] for k in ('prompt_version', 'schema_version', 'harness_version'))
+                     for p in provenance['passes'] if p['pass_id'] != 'read_page')
     if source['run_status'] == 'SUCCEEDED':
         consistent = consistent and all(any(p['pass_id'] == stage and p['failure_class'] is None for p in provenance['passes']) for stage in _STAGES[:4])
     if status[('provenance', 'contracts_consistent')] != ('PASS' if consistent else 'FAIL'):

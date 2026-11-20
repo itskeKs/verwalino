@@ -2,7 +2,10 @@
 
 The preflight is deliberately separate from provider extraction.  It verifies
 the stored bytes, rejects active PDF content, and produces per-page artifacts
-that can safely be handed to a later extraction pipeline.
+that can safely be handed to a later extraction pipeline. A page without a usable
+text layer is not read here: it is marked ``IMAGE`` with the resolution it will be
+rendered at, and :meth:`PdfPreflight.render_page_for_reading` renders it one page at a
+time for the reading model (issue #499, ADR 0017).
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Callable
 
 from app.core.document_limits import MAX_UPLOAD_BYTES
 
@@ -32,21 +35,22 @@ _ACTIVE_ACTIONS = {
 }
 
 
+# A page without a usable text layer; the reading model reads it (``PdfPreflight.render_page_for_reading``).
+IMAGE_PAGE_SOURCE = "IMAGE"
+# A page image sent to the reading model has at most this many pixels; a larger render is scaled down, never
+# refused. An A4 page at the worker's 180 dpi (1,489 x 2,105 = 3.1 million pixels) passes unchanged. The bound
+# keeps the conservative image reservation of the transports that publish no formula (one token per 14 x 14
+# pixel patch, 20,409 tokens at the bound) far below the import input budget, and every documented provider
+# resizes beyond roughly this size before it reads the image anyway.
+READING_MAX_IMAGE_PIXELS = 4_000_000
+
+
 class DocumentIntegrityError(ValueError):
     """A stable, user-safe failure encountered before provider processing."""
 
     def __init__(self, code: str, detail: str | None = None) -> None:
         self.code = code
         super().__init__(detail or code)
-
-
-class OcrUnavailableError(RuntimeError):
-    """The local OCR runtime is unavailable; this is a page-level condition."""
-
-
-class OcrEngine(Protocol):
-    def extract_page(self, pdf_bytes: bytes, page_number: int) -> str:
-        raise NotImplementedError
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +60,8 @@ class PageArtifact:
     source: str
     rotation: int
     issues: tuple[str, ...] = ()
+    # The resolution an ``IMAGE`` page is rendered at for the reading model; 0 for a page with a text layer.
+    dpi: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,143 +80,16 @@ class ImportPreflightBudget:
     rendered_pixels: int = 0
     temporary_bytes: int = 0
 
+    def exclude_wait(self, seconds: float) -> None:
+        """Take time spent waiting on the model out of the deadline: it bounds local work, not provider latency."""
+        self.started_at += max(0.0, seconds)
+
 
 @dataclass(frozen=True, slots=True)
 class _StructuralPage:
     page_number: int
     width_points: float
     height_points: float
-
-
-class TesseractOcrEngine:
-    """Render and OCR precisely one PDF page without retaining image files."""
-
-    def __init__(
-        self,
-        *,
-        dpi: int = 180,
-        timeout_seconds: int = 30,
-        max_temp_bytes: int = 256 * 1024 * 1024,
-        temporary_root: Path | None = None,
-    ) -> None:
-        self._dpi = dpi
-        self._timeout_seconds = timeout_seconds
-        self._max_temp_bytes = max_temp_bytes
-        self._temporary_root = temporary_root
-        self.last_temp_bytes = 0
-        self.last_rendered_pixels = 0
-
-    def extract_page(self, pdf_bytes: bytes, page_number: int) -> str:
-        return self.extract_page_at_dpi(pdf_bytes, page_number, self._dpi)
-
-    def extract_page_at_dpi(
-        self,
-        pdf_bytes: bytes,
-        page_number: int,
-        dpi: int,
-        *,
-        max_rendered_pixels: int | None = None,
-        deadline_at: float | None = None,
-        monotonic: Callable[[], float] = time.monotonic,
-    ) -> str:
-        temp_root = str(self._temporary_root) if self._temporary_root is not None else None
-        self.last_temp_bytes = 0
-        self.last_rendered_pixels = 0
-        with tempfile.TemporaryDirectory(dir=temp_root, prefix="hv-declaration-ocr-") as directory:
-            try:
-                render_options: dict[str, object] = {}
-                if max_rendered_pixels is not None:
-                    render_options["max_rendered_pixels"] = max_rendered_pixels
-                if deadline_at is not None:
-                    render_options["deadline_at"] = deadline_at
-                    render_options["monotonic"] = monotonic
-                text = self._render_and_recognize(
-                    pdf_bytes, page_number, dpi, directory, **render_options
-                )
-            except BaseException:
-                self.last_temp_bytes = _directory_size(Path(directory))
-                if self.last_temp_bytes > self._max_temp_bytes:
-                    raise DocumentIntegrityError("OCR_TEMP_BYTES_LIMIT_EXCEEDED")
-                raise
-
-            self.last_temp_bytes = _directory_size(Path(directory))
-            if self.last_temp_bytes > self._max_temp_bytes:
-                raise DocumentIntegrityError("OCR_TEMP_BYTES_LIMIT_EXCEEDED")
-            return text
-
-    def _render_and_recognize(
-        self,
-        pdf_bytes: bytes,
-        page_number: int,
-        dpi: int,
-        output_dir: str,
-        *,
-        max_rendered_pixels: int | None = None,
-        deadline_at: float | None = None,
-        monotonic: Callable[[], float] = time.monotonic,
-    ) -> str:
-        try:
-            from pdf2image import convert_from_bytes
-            from pdf2image.exceptions import PDFPopplerTimeoutError, PopplerNotInstalledError
-            import pytesseract
-            from PIL import Image
-        except ImportError as error:  # pragma: no cover - depends on deployment image
-            raise OcrUnavailableError("OCR dependencies are unavailable") from error
-
-        try:
-            render_timeout = self._operation_timeout(deadline_at, monotonic)
-            paths = convert_from_bytes(
-                pdf_bytes,
-                dpi=dpi,
-                first_page=page_number,
-                last_page=page_number,
-                thread_count=1,
-                timeout=render_timeout,
-                output_folder=output_dir,
-                paths_only=True,
-            )
-        except PDFPopplerTimeoutError as error:
-            raise TimeoutError("Poppler rendering timed out") from error
-        except TimeoutError:
-            raise
-        except (PopplerNotInstalledError, FileNotFoundError, OSError) as error:
-            raise OcrUnavailableError("Poppler is unavailable") from error
-
-        if len(paths) != 1:
-            raise RuntimeError("OCR renderer did not return exactly one page")
-
-        with Image.open(paths[0]) as image:
-            self.last_rendered_pixels = image.width * image.height
-            if (
-                max_rendered_pixels is not None
-                and self.last_rendered_pixels > max_rendered_pixels
-            ):
-                raise DocumentIntegrityError("OCR_RENDERED_PIXELS_LIMIT_EXCEEDED")
-            ocr_timeout = self._operation_timeout(deadline_at, monotonic)
-            try:
-                return pytesseract.image_to_string(
-                    image,
-                    lang="deu",
-                    timeout=ocr_timeout,
-                )
-            except pytesseract.TesseractNotFoundError as error:
-                raise OcrUnavailableError("Tesseract is unavailable") from error
-            except RuntimeError as error:
-                if "tesseract process timeout" in str(error).lower():
-                    raise TimeoutError("Tesseract OCR timed out") from error
-                raise
-
-    def _operation_timeout(
-        self,
-        deadline_at: float | None,
-        monotonic: Callable[[], float],
-    ) -> int | float:
-        if deadline_at is None:
-            return self._timeout_seconds
-        remaining = deadline_at - monotonic()
-        if remaining <= 0:
-            raise TimeoutError("OCR operation exceeded the preflight deadline")
-        return min(self._timeout_seconds, remaining)
 
 
 class PdfPreflight:
@@ -229,7 +108,7 @@ class PdfPreflight:
         max_ocr_pages_per_import: int = 200,
         max_pixels_per_import: int = 400_000_000,
         deadline_seconds: int = 600,
-        ocr_engine: OcrEngine | None = None,
+        temporary_root: Path | None = None,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._max_pdf_bytes = max_pdf_bytes
@@ -249,11 +128,7 @@ class PdfPreflight:
         self._max_pixels_per_import = max_pixels_per_import
         self._deadline_seconds = deadline_seconds
         self._monotonic = monotonic
-        self._ocr_engine: OcrEngine = ocr_engine or TesseractOcrEngine(
-            dpi=ocr_dpi,
-            timeout_seconds=ocr_timeout_seconds,
-            max_temp_bytes=max_temp_bytes,
-        )
+        self._temporary_root = temporary_root
 
     def new_import_budget(self) -> ImportPreflightBudget:
         return ImportPreflightBudget(started_at=self._monotonic())
@@ -291,12 +166,7 @@ class PdfPreflight:
         page = structural_pages[page_number - 1]
         dpi, estimated_pixels = self._safe_vision_dpi(page)
         self._reserve_vision_budget(budget, estimated_pixels)
-        temp_root = (
-            str(self._ocr_engine._temporary_root)
-            if isinstance(self._ocr_engine, TesseractOcrEngine)
-            and self._ocr_engine._temporary_root is not None
-            else None
-        )
+        temp_root = str(self._temporary_root) if self._temporary_root is not None else None
         counted_temp_bytes = 0
         try:
             from pdf2image import convert_from_bytes
@@ -355,6 +225,78 @@ class PdfPreflight:
                 except Exception as error:
                     raise DocumentIntegrityError("VISION_RENDER_UNAVAILABLE") from error
 
+    def render_page_for_reading(
+        self,
+        pdf_bytes: bytes,
+        page: PageArtifact,
+        *,
+        budget: ImportPreflightBudget,
+    ) -> bytes:
+        """Render exactly one ``IMAGE`` page to PNG bytes for the reading model.
+
+        The page was validated and its count and pixel bounds reserved by :meth:`run_bytes`; this accounts the
+        actual temporary bytes and rendered pixels against the import's budget and the shared deadline. No
+        image file outlives the call and only this one page is in memory. A render above
+        ``READING_MAX_IMAGE_PIXELS`` is scaled down deterministically instead of failing.
+        """
+        if (
+            not isinstance(pdf_bytes, bytes)
+            or page.source != IMAGE_PAGE_SOURCE
+            or isinstance(page.dpi, bool)
+            or not isinstance(page.dpi, int)
+            or page.dpi < 1
+        ):
+            raise DocumentIntegrityError("PAGE_RENDER_UNAVAILABLE")
+        self._ensure_deadline(budget)
+        if budget.temporary_bytes >= self._max_temp_bytes:
+            raise DocumentIntegrityError("OCR_IMPORT_TEMP_BYTES_LIMIT_EXCEEDED")
+        try:
+            from pdf2image import convert_from_bytes
+            from pdf2image.exceptions import PDFPopplerTimeoutError
+            from PIL import Image
+        except ImportError as error:  # pragma: no cover - depends on deployment image
+            raise DocumentIntegrityError("PAGE_RENDER_UNAVAILABLE") from error
+
+        temp_root = str(self._temporary_root) if self._temporary_root is not None else None
+        try:
+            with tempfile.TemporaryDirectory(dir=temp_root, prefix="hv-declaration-page-") as directory:
+                paths = convert_from_bytes(
+                    pdf_bytes,
+                    dpi=page.dpi,
+                    first_page=page.page_number,
+                    last_page=page.page_number,
+                    thread_count=1,
+                    timeout=self._vision_operation_timeout(budget),
+                    output_folder=directory,
+                    paths_only=True,
+                )
+                temporary_bytes = _directory_size(Path(directory))
+                if temporary_bytes > self._max_temp_bytes:
+                    raise DocumentIntegrityError("OCR_TEMP_BYTES_LIMIT_EXCEEDED")
+                budget.temporary_bytes += temporary_bytes
+                if budget.temporary_bytes > self._max_temp_bytes:
+                    raise DocumentIntegrityError("OCR_IMPORT_TEMP_BYTES_LIMIT_EXCEEDED")
+                if len(paths) != 1:
+                    raise DocumentIntegrityError("PAGE_RENDER_UNAVAILABLE")
+                with Image.open(paths[0]) as image:
+                    rendered_pixels = image.width * image.height
+                    if rendered_pixels > self._max_pixels_per_page:
+                        raise DocumentIntegrityError("OCR_RENDERED_PIXELS_LIMIT_EXCEEDED")
+                    budget.rendered_pixels += rendered_pixels
+                    if budget.rendered_pixels > self._max_pixels_per_import:
+                        raise DocumentIntegrityError("OCR_IMPORT_RENDERED_PIXEL_LIMIT_EXCEEDED")
+                    encoded = io.BytesIO()
+                    _fit_pixels(image, READING_MAX_IMAGE_PIXELS).save(encoded, format="PNG")
+        except DocumentIntegrityError:
+            raise
+        except (PDFPopplerTimeoutError, TimeoutError, subprocess.TimeoutExpired) as error:
+            raise DocumentIntegrityError("PAGE_RENDER_TIMEOUT") from error
+        except Exception as error:
+            # Poppler missing, an unreadable render or a full disk: one stable code, no detail.
+            raise DocumentIntegrityError("PAGE_RENDER_UNAVAILABLE") from error
+        self._ensure_deadline(budget)
+        return encoded.getvalue()
+
     def run_bytes(
         self,
         data: bytes,
@@ -398,63 +340,19 @@ class PdfPreflight:
                 )
                 continue
 
+            # No text layer: the page is read later, one rendered page at a time. The page count and pixel
+            # bounds are reserved now, so that an import over them stops before the first model call.
             dpi, estimated_pixels = self._safe_ocr_dpi(structural_page)
             self._reserve_ocr_budget(active_budget, estimated_pixels)
-            try:
-                if isinstance(self._ocr_engine, TesseractOcrEngine):
-                    ocr_text = self._ocr_engine.extract_page_at_dpi(
-                        data,
-                        structural_page.page_number,
-                        dpi,
-                        max_rendered_pixels=self._max_pixels_per_page,
-                        deadline_at=active_budget.started_at + self._deadline_seconds,
-                        monotonic=self._monotonic,
-                    )
-                else:
-                    ocr_text = self._ocr_engine.extract_page(data, structural_page.page_number)
-            except OcrUnavailableError:
-                pages.append(
-                    PageArtifact(
-                        page_number=structural_page.page_number,
-                        text="",
-                        source="UNAVAILABLE",
-                        rotation=rotation,
-                        issues=("OCR_UNAVAILABLE",),
-                    )
+            pages.append(
+                PageArtifact(
+                    page_number=structural_page.page_number,
+                    text="",
+                    source=IMAGE_PAGE_SOURCE,
+                    rotation=rotation,
+                    dpi=dpi,
                 )
-            except (TimeoutError, subprocess.TimeoutExpired):
-                pages.append(
-                    PageArtifact(
-                        page_number=structural_page.page_number,
-                        text="",
-                        source="FAILED",
-                        rotation=rotation,
-                        issues=("OCR_TIMEOUT",),
-                    )
-                )
-            except DocumentIntegrityError:
-                raise
-            except Exception:
-                pages.append(
-                    PageArtifact(
-                        page_number=structural_page.page_number,
-                        text="",
-                        source="FAILED",
-                        rotation=rotation,
-                        issues=("OCR_FAILED",),
-                    )
-                )
-            else:
-                pages.append(
-                    PageArtifact(
-                        page_number=structural_page.page_number,
-                        text=ocr_text,
-                        source="OCR",
-                        rotation=rotation,
-                    )
-                )
-
-            self._account_actual_ocr_resources(active_budget, estimated_pixels)
+            )
             self._ensure_deadline(active_budget)
 
         self._ensure_deadline(active_budget)
@@ -595,24 +493,6 @@ class PdfPreflight:
             raise DocumentIntegrityError("PREFLIGHT_DEADLINE_EXCEEDED")
         return min(self._vision_timeout_seconds, remaining)
 
-    def _account_actual_ocr_resources(
-        self, budget: ImportPreflightBudget, estimated_pixels: int
-    ) -> None:
-        temporary_bytes = _nonnegative_int(getattr(self._ocr_engine, "last_temp_bytes", 0))
-        budget.temporary_bytes += temporary_bytes
-        if budget.temporary_bytes > self._max_temp_bytes:
-            raise DocumentIntegrityError("OCR_IMPORT_TEMP_BYTES_LIMIT_EXCEEDED")
-
-        rendered_value = getattr(self._ocr_engine, "last_rendered_pixels", None)
-        rendered_pixels = (
-            estimated_pixels if rendered_value is None else _nonnegative_int(rendered_value)
-        )
-        if rendered_pixels > self._max_pixels_per_page:
-            raise DocumentIntegrityError("OCR_RENDERED_PIXELS_LIMIT_EXCEEDED")
-        budget.rendered_pixels += rendered_pixels
-        if budget.rendered_pixels > self._max_pixels_per_import:
-            raise DocumentIntegrityError("OCR_IMPORT_RENDERED_PIXEL_LIMIT_EXCEEDED")
-
     def _ensure_deadline(self, budget: ImportPreflightBudget) -> None:
         if self._monotonic() - budget.started_at > self._deadline_seconds:
             raise DocumentIntegrityError("PREFLIGHT_DEADLINE_EXCEEDED")
@@ -668,6 +548,18 @@ def _pixel_count(width_points: float, height_points: float, dpi: int) -> int:
     width = math.ceil(width_points * dpi / 72)
     height = math.ceil(height_points * dpi / 72)
     return width * height
+
+
+def _fit_pixels(image, max_pixels: int):
+    """The image itself when it has at most ``max_pixels``, else the same picture scaled down to fit them."""
+    pixels = image.width * image.height
+    if pixels <= max_pixels:
+        return image
+    from PIL import Image
+
+    scale = math.sqrt(max_pixels / pixels)
+    size = (max(1, math.floor(image.width * scale)), max(1, math.floor(image.height * scale)))
+    return image.resize(size, Image.LANCZOS)
 
 
 def _directory_size(directory: Path) -> int:

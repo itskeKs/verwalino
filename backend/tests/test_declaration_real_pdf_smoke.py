@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from decimal import Decimal
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -148,6 +149,9 @@ async def test_bounded_adapter_preserves_actual_recheck_router_evidence(monkeypa
     entry = _synthetic_manifest_entry(tmp_path, case_id="case-live-01")
     provider = _synthetic_pipeline_provider(entry.case_id, invented_quote=True)
     def create_recording_provider(effective, **_kwargs):
+        if effective.model == "synthetic-reading-model":
+            # The reading transport of the evaluation: this text-layer PDF never asks it for a page.
+            return SimpleNamespace(_client=None)
         provider._primary_model = effective.model
         provider._configured_rates = lambda _configured: {}
         return provider
@@ -155,7 +159,7 @@ async def test_bounded_adapter_preserves_actual_recheck_router_evidence(monkeypa
     adapter = BoundedProductionDeclarationPipelineAdapter(
         capability=module._LiveEvaluationCapability(module._LIVE_CAPABILITY_SEAL,
             _effective=__import__('app.services.ai_settings_service',fromlist=['EffectiveAiSettings']).EffectiveAiSettings(
-                api_key=__import__('pydantic').SecretStr('synthetic-eval-key'), model='gpt-5.6-luna', import_enabled=True))
+                api_key=__import__('pydantic').SecretStr('synthetic-eval-key'), model='gpt-5.6-luna', document_model='synthetic-reading-model', import_enabled=True))
     )
 
     report = await adapter.evaluate((entry,))

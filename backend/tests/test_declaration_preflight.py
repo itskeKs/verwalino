@@ -11,14 +11,13 @@ import pytest
 from PIL import Image
 from pdf2image.exceptions import PDFInfoNotInstalledError, PDFPopplerTimeoutError
 import pdf2image
-import pytesseract
 
 from app.core.config import Settings
 from app.declarations.preflight import (
+    READING_MAX_IMAGE_PIXELS,
     DocumentIntegrityError,
-    OcrUnavailableError,
+    PageArtifact,
     PdfPreflight,
-    TesseractOcrEngine,
 )
 from tests.declaration_fixtures import make_text_pdf, mutate_pdf
 
@@ -30,25 +29,6 @@ def _integrity(data: bytes) -> dict[str, int | str]:
     }
 
 
-class RecordingOcrEngine:
-    def __init__(self, text: str = "erkannter OCR-Text") -> None:
-        self.calls: list[int] = []
-        self.text = text
-
-    def extract_page(self, pdf_bytes: bytes, page_number: int) -> str:
-        self.calls.append(page_number)
-        return self.text
-
-
-class UnavailableOcrEngine:
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def extract_page(self, pdf_bytes: bytes, page_number: int) -> str:
-        self.calls += 1
-        raise OcrUnavailableError("tesseract is unavailable")
-
-
 class FakeClock:
     def __init__(self) -> None:
         self.value = 0.0
@@ -57,28 +37,42 @@ class FakeClock:
         return self.value
 
 
-class AdvancingOcrEngine(RecordingOcrEngine):
-    def __init__(self, clock: FakeClock, seconds_per_page: float) -> None:
-        super().__init__()
-        self._clock = clock
-        self._seconds_per_page = seconds_per_page
+class Renderer:
+    """Poppler stand-in: records each rendered page and writes the image the test chose."""
 
-    def extract_page(self, pdf_bytes: bytes, page_number: int) -> str:
-        text = super().extract_page(pdf_bytes, page_number)
-        self._clock.value += self._seconds_per_page
-        return text
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+        self.size = (1, 1)
+        self.extra_bytes = 0
+        self.fail: Exception | None = None
+        self.after = None
+
+    def __call__(self, pdf_bytes: bytes, **kwargs: object) -> list[str]:
+        self.calls.append(kwargs)
+        folder = Path(str(kwargs["output_folder"]))
+        if self.extra_bytes:
+            (folder / "extra.bin").write_bytes(b"x" * self.extra_bytes)
+        if self.fail is not None:
+            raise self.fail
+        path = folder / "page.png"
+        Image.new("RGB", self.size).save(path)
+        if self.after is not None:
+            self.after()
+        return [str(path)]
 
 
-class TempReportingOcrEngine(RecordingOcrEngine):
-    def __init__(self, temp_bytes: int) -> None:
-        super().__init__()
-        self.last_temp_bytes = temp_bytes
+@pytest.fixture
+def renderer(monkeypatch: pytest.MonkeyPatch) -> Renderer:
+    value = Renderer()
+    monkeypatch.setattr(pdf2image, "convert_from_bytes", value)
+    return value
 
 
-class RenderedPixelReportingOcrEngine(RecordingOcrEngine):
-    def __init__(self, rendered_pixels: int) -> None:
-        super().__init__()
-        self.last_rendered_pixels = rendered_pixels
+def _image_page(preflight: PdfPreflight, data: bytes, budget=None) -> PageArtifact:
+    """The first page of a scan: marked for reading by the preflight, not yet rendered."""
+    result = preflight.run_bytes(data, budget=budget, **_integrity(data))
+    assert result.pages[0].source == "IMAGE"
+    return result.pages[0]
 
 
 def test_extracts_text_per_page_without_ocr() -> None:
@@ -128,8 +122,7 @@ def test_render_page_data_url_rejects_out_of_range_page_before_poppler() -> None
 
 def test_render_page_data_url_counts_encoded_bytes_and_cleans_its_temp_directory(tmp_path: Path) -> None:
     data = make_text_pdf("Sichere Textseite für den temporären Renderpfad.")
-    engine = TesseractOcrEngine(temporary_root=tmp_path)
-    preflight = PdfPreflight(ocr_engine=engine)
+    preflight = PdfPreflight(temporary_root=tmp_path)
     budget = preflight.new_import_budget()
 
     preflight.render_page_data_url(data, 1, budget=budget)
@@ -212,26 +205,24 @@ def test_size_mismatch_stops_before_pdf_safety_parser(monkeypatch: pytest.Monkey
     assert error.value.code == "STORAGE_INTEGRITY_MISMATCH"
 
 
-def test_page_limit_is_enforced_before_text_or_ocr() -> None:
+def test_page_limit_is_enforced_before_text_or_ocr(renderer: Renderer) -> None:
     data = make_text_pdf("1", "2")
-    engine = RecordingOcrEngine()
 
     with pytest.raises(DocumentIntegrityError) as error:
-        PdfPreflight(max_pages=1, ocr_engine=engine).run_bytes(data, **_integrity(data))
+        PdfPreflight(max_pages=1).run_bytes(data, **_integrity(data))
 
     assert error.value.code == "PDF_PAGE_LIMIT_EXCEEDED"
-    assert engine.calls == []
+    assert renderer.calls == []
 
 
-def test_pdf_zip_polyglot_is_rejected_before_ocr() -> None:
+def test_pdf_zip_polyglot_is_rejected_before_ocr(renderer: Renderer) -> None:
     data = make_text_pdf("Beleg") + b"PK\x03\x04foreign-payload"
-    engine = RecordingOcrEngine()
 
     with pytest.raises(DocumentIntegrityError) as error:
-        PdfPreflight(ocr_engine=engine).run_bytes(data, **_integrity(data))
+        PdfPreflight().run_bytes(data, **_integrity(data))
 
     assert error.value.code == "PDF_TRAILING_PAYLOAD"
-    assert engine.calls == []
+    assert renderer.calls == []
 
 
 def test_pdf_eof_allows_pdf_whitespace_and_nul() -> None:
@@ -313,19 +304,18 @@ def test_pdf_eof_allows_pdf_whitespace_and_nul() -> None:
     ],
 )
 def test_unsafe_pdf_objects_are_rejected_before_ocr(
-    mutate: object, expected_code: str
+    mutate: object, expected_code: str, renderer: Renderer
 ) -> None:
     data = mutate_pdf(make_text_pdf("kurz"), mutate)  # type: ignore[arg-type]
-    engine = RecordingOcrEngine()
 
     with pytest.raises(DocumentIntegrityError) as error:
-        PdfPreflight(ocr_engine=engine).run_bytes(data, **_integrity(data))
+        PdfPreflight().run_bytes(data, **_integrity(data))
 
     assert error.value.code == expected_code
-    assert engine.calls == []
+    assert renderer.calls == []
 
 
-def test_file_attachment_annotation_is_rejected_before_ocr() -> None:
+def test_file_attachment_annotation_is_rejected_before_ocr(renderer: Renderer) -> None:
     def add_attachment(pdf: pikepdf.Pdf) -> None:
         embedded_file = pikepdf.Stream(pdf, b"untrusted attachment")
         embedded_file["/Type"] = pikepdf.Name.EmbeddedFile
@@ -345,307 +335,66 @@ def test_file_attachment_annotation_is_rejected_before_ocr() -> None:
         )
 
     data = mutate_pdf(make_text_pdf("kurz"), add_attachment)
-    engine = RecordingOcrEngine()
 
     with pytest.raises(DocumentIntegrityError) as error:
-        PdfPreflight(ocr_engine=engine).run_bytes(data, **_integrity(data))
+        PdfPreflight().run_bytes(data, **_integrity(data))
 
     assert error.value.code == "PDF_EMBEDDED_FILES_FORBIDDEN"
-    assert engine.calls == []
+    assert renderer.calls == []
 
 
-def test_large_media_box_is_rejected_before_ocr() -> None:
+def test_large_media_box_is_rejected_before_ocr(renderer: Renderer) -> None:
     data = mutate_pdf(
         make_text_pdf("kurz"),
         lambda pdf: pdf.pages[0].obj.__setitem__(
             "/MediaBox", pikepdf.Array([0, 0, 10_000_000, 10_000_000])
         ),
     )
-    engine = RecordingOcrEngine()
 
     with pytest.raises(DocumentIntegrityError) as error:
-        PdfPreflight(
-            ocr_engine=engine,
-            max_pixels_per_page=20_000_000,
-        ).run_bytes(data, **_integrity(data))
+        PdfPreflight(max_pixels_per_page=20_000_000).run_bytes(data, **_integrity(data))
 
     assert error.value.code == "OCR_PAGE_DIMENSIONS_UNSAFE"
-    assert engine.calls == []
+    assert renderer.calls == []
 
 
-def test_large_media_box_lowers_default_tesseract_dpi(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    data = mutate_pdf(
-        make_text_pdf("kurz"),
-        lambda pdf: pdf.pages[0].obj.__setitem__(
-            "/MediaBox", pikepdf.Array([0, 0, 1_000, 1_000])
-        ),
-    )
-    engine = TesseractOcrEngine()
-    rendered_dpis: list[int] = []
-
-    def render(
-        pdf_bytes: bytes, page_number: int, dpi: int, output_dir: str, **kwargs: object
-    ) -> str:
-        rendered_dpis.append(dpi)
-        return "OCR"
-
-    monkeypatch.setattr(engine, "_render_and_recognize", render)
-    result = PdfPreflight(
-        ocr_engine=engine,
-        max_pixels_per_page=1_100_000,
-    ).run_bytes(data, **_integrity(data))
-
-    assert result.pages[0].source == "OCR"
-    assert rendered_dpis == [75]
-
-
-def test_user_unit_is_included_in_ocr_dimension_guard() -> None:
+def test_user_unit_is_included_in_ocr_dimension_guard(renderer: Renderer) -> None:
     data = mutate_pdf(
         make_text_pdf("kurz"),
         lambda pdf: pdf.pages[0].obj.__setitem__("/UserUnit", 100),
     )
-    engine = RecordingOcrEngine()
 
     with pytest.raises(DocumentIntegrityError) as error:
-        PdfPreflight(ocr_engine=engine).run_bytes(data, **_integrity(data))
+        PdfPreflight().run_bytes(data, **_integrity(data))
 
     assert error.value.code == "OCR_PAGE_DIMENSIONS_UNSAFE"
-    assert engine.calls == []
+    assert renderer.calls == []
 
 
-def test_encrypted_pdf_is_rejected_before_ocr() -> None:
+def test_encrypted_pdf_is_rejected_before_ocr(renderer: Renderer) -> None:
     encrypted = io.BytesIO()
     with pikepdf.open(io.BytesIO(make_text_pdf("kurz")), attempt_recovery=False) as pdf:
         pdf.save(encrypted, encryption=pikepdf.Encryption(owner="owner", user="user", R=4))
     data = encrypted.getvalue()
-    engine = RecordingOcrEngine()
 
     with pytest.raises(DocumentIntegrityError) as error:
-        PdfPreflight(ocr_engine=engine).run_bytes(data, **_integrity(data))
+        PdfPreflight().run_bytes(data, **_integrity(data))
 
     assert error.value.code == "PDF_ENCRYPTED_FORBIDDEN"
-    assert engine.calls == []
+    assert renderer.calls == []
 
 
-def test_import_ocr_page_budget_stops_before_next_renderer() -> None:
-    first = make_text_pdf("kurz")
-    second = make_text_pdf("auch kurz")
-    engine = RecordingOcrEngine()
-    preflight = PdfPreflight(ocr_engine=engine, max_ocr_pages_per_import=1)
-    budget = preflight.new_import_budget()
-
-    preflight.run_bytes(first, budget=budget, **_integrity(first))
-    with pytest.raises(DocumentIntegrityError) as error:
-        preflight.run_bytes(second, budget=budget, **_integrity(second))
-
-    assert error.value.code == "OCR_IMPORT_PAGE_LIMIT_EXCEEDED"
-    assert engine.calls == [1]
-
-
-def test_import_pixel_budget_stops_before_next_renderer() -> None:
-    first = make_text_pdf("kurz")
-    second = make_text_pdf("auch kurz")
-    engine = RecordingOcrEngine()
-    preflight = PdfPreflight(
-        ocr_engine=engine,
-        max_pixels_per_import=4_000_000,
-    )
-    budget = preflight.new_import_budget()
-
-    preflight.run_bytes(first, budget=budget, **_integrity(first))
-    with pytest.raises(DocumentIntegrityError) as error:
-        preflight.run_bytes(second, budget=budget, **_integrity(second))
-
-    assert error.value.code == "OCR_IMPORT_PIXEL_LIMIT_EXCEEDED"
-    assert engine.calls == [1]
-
-
-def test_import_deadline_stops_before_next_renderer() -> None:
-    data = make_text_pdf("kurz", "auch kurz")
-    clock = FakeClock()
-    engine = AdvancingOcrEngine(clock, seconds_per_page=11)
+def test_broken_pdf_has_stable_error_without_provider_invocation(renderer: Renderer) -> None:
 
     with pytest.raises(DocumentIntegrityError) as error:
-        PdfPreflight(
-            ocr_engine=engine,
-            deadline_seconds=10,
-            monotonic=clock,
-        ).run_bytes(data, **_integrity(data))
-
-    assert error.value.code == "PREFLIGHT_DEADLINE_EXCEEDED"
-    assert engine.calls == [1]
-
-
-def test_import_deadline_is_enforced_after_final_ocr_attempt() -> None:
-    data = make_text_pdf("kurz")
-    clock = FakeClock()
-    engine = AdvancingOcrEngine(clock, seconds_per_page=11)
-
-    with pytest.raises(DocumentIntegrityError) as error:
-        PdfPreflight(
-            ocr_engine=engine,
-            deadline_seconds=10,
-            monotonic=clock,
-        ).run_bytes(data, **_integrity(data))
-
-    assert error.value.code == "PREFLIGHT_DEADLINE_EXCEEDED"
-    assert engine.calls == [1]
-
-
-def test_import_temp_budget_stops_before_next_renderer_at_cap() -> None:
-    first = make_text_pdf("kurz")
-    second = make_text_pdf("auch kurz")
-    engine = TempReportingOcrEngine(temp_bytes=10)
-    preflight = PdfPreflight(ocr_engine=engine, max_temp_bytes=10)
-    budget = preflight.new_import_budget()
-
-    preflight.run_bytes(first, budget=budget, **_integrity(first))
-    with pytest.raises(DocumentIntegrityError) as error:
-        preflight.run_bytes(second, budget=budget, **_integrity(second))
-
-    assert error.value.code == "OCR_IMPORT_TEMP_BYTES_LIMIT_EXCEEDED"
-    assert engine.calls == [1]
-
-
-def test_import_temp_budget_rejects_after_actual_usage_exceeds_cap() -> None:
-    first = make_text_pdf("kurz")
-    second = make_text_pdf("auch kurz")
-    engine = TempReportingOcrEngine(temp_bytes=6)
-    preflight = PdfPreflight(ocr_engine=engine, max_temp_bytes=10)
-    budget = preflight.new_import_budget()
-
-    preflight.run_bytes(first, budget=budget, **_integrity(first))
-    with pytest.raises(DocumentIntegrityError) as error:
-        preflight.run_bytes(second, budget=budget, **_integrity(second))
-
-    assert error.value.code == "OCR_IMPORT_TEMP_BYTES_LIMIT_EXCEEDED"
-    assert engine.calls == [1, 1]
-    assert budget.temporary_bytes == 12
-
-
-def test_actual_rendered_pixels_fail_closed_before_result(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
-    data = make_text_pdf("kurz")
-    engine = TesseractOcrEngine(temporary_root=tmp_path)
-
-    ocr_calls = 0
-
-    def render_oversized(*args: object, **kwargs: object) -> list[str]:
-        image_path = Path(str(kwargs["output_folder"])) / "oversized.png"
-        Image.new("RGB", (2_000, 2_000)).save(image_path)
-        return [str(image_path)]
-
-    def fail_if_ocr_called(*args: object, **kwargs: object) -> str:
-        nonlocal ocr_calls
-        ocr_calls += 1
-        raise AssertionError("Tesseract must not run for an oversized raster")
-
-    monkeypatch.setattr(pdf2image, "convert_from_bytes", render_oversized)
-    monkeypatch.setattr(pytesseract, "image_to_string", fail_if_ocr_called)
-
-    with pytest.raises(DocumentIntegrityError) as error:
-        PdfPreflight(
-            ocr_engine=engine,
-            ocr_dpi=72,
-            max_pixels_per_page=1_000_000,
-        ).run_bytes(data, **_integrity(data))
-
-    assert error.value.code == "OCR_RENDERED_PIXELS_LIMIT_EXCEEDED"
-    assert engine.last_rendered_pixels == 4_000_000
-    assert ocr_calls == 0
-
-
-def test_actual_rendered_pixels_reduce_remaining_import_capacity(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
-    first = make_text_pdf("kurz")
-    second = make_text_pdf("auch kurz")
-    engine = TesseractOcrEngine(temporary_root=tmp_path)
-    rendered_pages: list[int] = []
-
-    def render_larger_than_estimate(*args: object, **kwargs: object) -> list[str]:
-        rendered_pages.append(1)
-        image_path = Path(str(kwargs["output_folder"])) / "rendered.png"
-        Image.new("RGB", (800, 800)).save(image_path)
-        return [str(image_path)]
-
-    monkeypatch.setattr(pdf2image, "convert_from_bytes", render_larger_than_estimate)
-    monkeypatch.setattr(pytesseract, "image_to_string", lambda *args, **kwargs: "OCR")
-    preflight = PdfPreflight(
-        ocr_engine=engine,
-        ocr_dpi=72,
-        max_pixels_per_page=1_000_000,
-        max_pixels_per_import=1_000_000,
-    )
-    budget = preflight.new_import_budget()
-
-    preflight.run_bytes(first, budget=budget, **_integrity(first))
-    with pytest.raises(DocumentIntegrityError) as error:
-        preflight.run_bytes(second, budget=budget, **_integrity(second))
-
-    assert error.value.code == "OCR_IMPORT_PIXEL_LIMIT_EXCEEDED"
-    assert budget.rendered_pixels == 640_000
-    assert rendered_pages == [1]
-
-
-@pytest.mark.parametrize(
-    ("exception", "issue"),
-    [
-        (PDFPopplerTimeoutError("timeout"), "OCR_TIMEOUT"),
-        (RuntimeError("Tesseract process timeout"), "OCR_TIMEOUT"),
-        (PDFInfoNotInstalledError("missing poppler"), "OCR_UNAVAILABLE"),
-    ],
-)
-def test_real_ocr_runtime_exceptions_map_to_stable_page_issues(
-    monkeypatch: pytest.MonkeyPatch,
-    exception: Exception,
-    issue: str,
-) -> None:
-    data = make_text_pdf("kurz")
-    engine = TesseractOcrEngine()
-
-    if isinstance(exception, RuntimeError):
-        def render_one_pixel(*args: object, **kwargs: object) -> list[str]:
-            image_path = Path(str(kwargs["output_folder"])) / "one-pixel.png"
-            Image.new("RGB", (1, 1)).save(image_path)
-            return [str(image_path)]
-
-        monkeypatch.setattr(pdf2image, "convert_from_bytes", render_one_pixel)
-        monkeypatch.setattr(pytesseract, "image_to_string", lambda *args, **kwargs: (_ for _ in ()).throw(exception))
-    else:
-        monkeypatch.setattr(pdf2image, "convert_from_bytes", lambda *args, **kwargs: (_ for _ in ()).throw(exception))
-
-    result = PdfPreflight(ocr_engine=engine).run_bytes(data, **_integrity(data))
-
-    assert result.pages[0].issues == (issue,)
-
-
-def test_ocr_unavailable_becomes_explicit_page_issue() -> None:
-    data = make_text_pdf("kurz")
-    engine = UnavailableOcrEngine()
-
-    result = PdfPreflight(ocr_engine=engine).run_bytes(data, **_integrity(data))
-
-    assert result.pages[0].source == "UNAVAILABLE"
-    assert result.pages[0].issues == ("OCR_UNAVAILABLE",)
-    assert engine.calls == 1
-
-
-def test_broken_pdf_has_stable_error_without_provider_invocation() -> None:
-    engine = RecordingOcrEngine()
-
-    with pytest.raises(DocumentIntegrityError) as error:
-        PdfPreflight(ocr_engine=engine).run_bytes(
+        PdfPreflight().run_bytes(
             b"%PDF-broken",
             expected_sha256=hashlib.sha256(b"%PDF-broken").hexdigest(),
             expected_size=len(b"%PDF-broken"),
         )
 
     assert error.value.code == "PDF_UNREADABLE"
-    assert engine.calls == []
+    assert renderer.calls == []
 
 
 def test_import_deadline_covers_text_layer_preflight() -> None:
@@ -680,28 +429,6 @@ def test_import_deadline_is_checked_after_text_layer_extraction(
     assert error.value.code == "PREFLIGHT_DEADLINE_EXCEEDED"
 
 
-def test_tesseract_temp_byte_limit_is_enforced_when_renderer_errors(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
-    data = make_text_pdf("kurz")
-    root = tmp_path / "ocr-temp"
-    root.mkdir()
-    engine = TesseractOcrEngine(timeout_seconds=1, max_temp_bytes=1, temporary_root=root)
-
-    def render(
-        pdf_bytes: bytes, page_number: int, dpi: int, output_dir: str, **kwargs: object
-    ) -> str:
-        (Path(output_dir) / "oversized.png").write_bytes(b"too large")
-        raise RuntimeError("renderer failed")
-
-    monkeypatch.setattr(engine, "_render_and_recognize", render)
-    with pytest.raises(DocumentIntegrityError) as error:
-        engine.extract_page(data, 1)
-
-    assert error.value.code == "OCR_TEMP_BYTES_LIMIT_EXCEEDED"
-    assert list(root.iterdir()) == []
-
-
 def test_settings_have_declaration_preflight_defaults() -> None:
     settings = Settings()
 
@@ -719,87 +446,238 @@ def test_settings_have_declaration_preflight_defaults() -> None:
     assert settings.declaration_preflight_deadline_seconds == 600
 
 
-def test_tesseract_engine_removes_page_temp_directory_after_success_timeout_and_error(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
+
+
+# ---- pages without a text layer are read by the reading model (issue #499, ADR 0017) ---------------------------
+
+
+def test_a_page_without_a_text_layer_is_marked_for_reading_and_not_rendered(renderer: Renderer) -> None:
     data = make_text_pdf("kurz")
-    root = tmp_path / "ocr-temp"
-    root.mkdir()
-    engine = TesseractOcrEngine(timeout_seconds=1, temporary_root=root)
 
-    # The engine's renderer is deliberately injectable only at construction time;
-    # each branch writes a disposable page file and must leave the root empty.
-    for outcome in ("erkannt", TimeoutError("timeout"), RuntimeError("renderer failed")):
-        def render(
-            pdf_bytes: bytes, page_number: int, dpi: int, output_dir: str, **kwargs: object
-        ) -> str:
-            page = Path(output_dir) / "placeholder.png"
-            page.write_bytes(b"rendered")
-            if isinstance(outcome, BaseException):
-                raise outcome
-            return outcome
+    result = PdfPreflight().run_bytes(data, **_integrity(data))
 
-        monkeypatch.setattr(engine, "_render_and_recognize", render)
-        if isinstance(outcome, BaseException):
-            with pytest.raises(type(outcome)):
-                engine.extract_page(data, 1)
-        else:
-            assert engine.extract_page(data, 1) == outcome
-        assert list(root.iterdir()) == []
+    assert [(page.source, page.text, page.dpi) for page in result.pages] == [("IMAGE", "", 180)]
+    assert renderer.calls == []
 
 
-def test_tesseract_operations_use_remaining_preflight_deadline(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
-    data = make_text_pdf("kurz")
-    clock = FakeClock()
-    engine = TesseractOcrEngine(timeout_seconds=30, temporary_root=tmp_path)
-    render_timeouts: list[float] = []
-    ocr_timeouts: list[float] = []
-
-    def render(*args: object, **kwargs: object) -> list[str]:
-        render_timeouts.append(float(kwargs["timeout"]))
-        image_path = Path(str(kwargs["output_folder"])) / "one-pixel.png"
-        Image.new("RGB", (1, 1)).save(image_path)
-        clock.value = 9
-        return [str(image_path)]
-
-    def recognize(*args: object, **kwargs: object) -> str:
-        ocr_timeouts.append(float(kwargs["timeout"]))
-        return "OCR"
-
-    monkeypatch.setattr(pdf2image, "convert_from_bytes", render)
-    monkeypatch.setattr(pytesseract, "image_to_string", recognize)
-
-    assert (
-        engine.extract_page_at_dpi(
-            data,
-            1,
-            72,
-            deadline_at=10,
-            monotonic=clock,
-        )
-        == "OCR"
+def test_large_media_box_lowers_the_reading_dpi(renderer: Renderer) -> None:
+    data = mutate_pdf(
+        make_text_pdf("kurz"),
+        lambda pdf: pdf.pages[0].obj.__setitem__("/MediaBox", pikepdf.Array([0, 0, 1_000, 1_000])),
     )
-    assert render_timeouts == [10]
-    assert ocr_timeouts == [1]
+
+    result = PdfPreflight(max_pixels_per_page=1_100_000).run_bytes(data, **_integrity(data))
+
+    assert (result.pages[0].source, result.pages[0].dpi) == ("IMAGE", 75)
+    assert renderer.calls == []
 
 
-def test_tesseract_does_not_start_renderer_at_exhausted_deadline(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
+def test_import_page_budget_stops_before_the_next_page_is_reserved(renderer: Renderer) -> None:
+    first, second = make_text_pdf("kurz"), make_text_pdf("auch kurz")
+    preflight = PdfPreflight(max_ocr_pages_per_import=1)
+    budget = preflight.new_import_budget()
+
+    preflight.run_bytes(first, budget=budget, **_integrity(first))
+    with pytest.raises(DocumentIntegrityError) as error:
+        preflight.run_bytes(second, budget=budget, **_integrity(second))
+
+    assert error.value.code == "OCR_IMPORT_PAGE_LIMIT_EXCEEDED"
+    assert renderer.calls == []
+
+
+def test_import_pixel_budget_stops_before_the_next_page_is_reserved(renderer: Renderer) -> None:
+    first, second = make_text_pdf("kurz"), make_text_pdf("auch kurz")
+    preflight = PdfPreflight(max_pixels_per_import=4_000_000)
+    budget = preflight.new_import_budget()
+
+    preflight.run_bytes(first, budget=budget, **_integrity(first))
+    with pytest.raises(DocumentIntegrityError) as error:
+        preflight.run_bytes(second, budget=budget, **_integrity(second))
+
+    assert error.value.code == "OCR_IMPORT_PIXEL_LIMIT_EXCEEDED"
+    assert renderer.calls == []
+
+
+def test_a_page_is_rendered_to_png_at_its_dpi_with_its_resources_accounted(
+    renderer: Renderer, tmp_path: Path
 ) -> None:
     data = make_text_pdf("kurz")
+    renderer.size = (800, 600)
+    renderer.extra_bytes = 7
+    preflight = PdfPreflight(temporary_root=tmp_path)
+    budget = preflight.new_import_budget()
+    page = _image_page(preflight, data, budget)
+
+    png = preflight.render_page_for_reading(data, page, budget=budget)
+
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")
+    assert Image.open(io.BytesIO(png)).size == (800, 600)
+    assert (renderer.calls[0]["dpi"], renderer.calls[0]["first_page"], renderer.calls[0]["last_page"]) == (180, 1, 1)
+    assert budget.rendered_pixels == 480_000 and budget.temporary_bytes >= 7
+    assert list(tmp_path.iterdir()) == [], "no image file outlives the call"
+
+
+def test_an_oversized_render_is_scaled_down_not_refused(renderer: Renderer) -> None:
+    data = make_text_pdf("kurz")
+    renderer.size = (3_000, 2_000)  # 6 million pixels
+    preflight = PdfPreflight()
+    page = _image_page(preflight, data)
+
+    png = preflight.render_page_for_reading(data, page, budget=preflight.new_import_budget())
+
+    width, height = Image.open(io.BytesIO(png)).size
+    assert width * height <= READING_MAX_IMAGE_PIXELS
+    assert abs(width / height - 1.5) < 0.01, "the aspect ratio is kept"
+
+
+def test_an_a4_scan_at_the_worker_dpi_is_not_scaled() -> None:
+    data = make_text_pdf("kurz")
+    preflight = PdfPreflight()
+    page = _image_page(preflight, data)
+
+    png = preflight.render_page_for_reading(data, page, budget=preflight.new_import_budget())
+
+    assert Image.open(io.BytesIO(png)).size == (1_489, 2_105)
+
+
+def test_rendered_pixels_above_the_page_limit_fail_closed(renderer: Renderer) -> None:
+    data = make_text_pdf("kurz")
+    renderer.size = (2_000, 2_000)
+    preflight = PdfPreflight(ocr_dpi=72, max_pixels_per_page=1_000_000)
+    page = _image_page(preflight, data)
+
+    with pytest.raises(DocumentIntegrityError) as error:
+        preflight.render_page_for_reading(data, page, budget=preflight.new_import_budget())
+
+    assert error.value.code == "OCR_RENDERED_PIXELS_LIMIT_EXCEEDED"
+
+
+def test_actual_rendered_pixels_reduce_the_remaining_import_capacity(renderer: Renderer) -> None:
+    first, second = make_text_pdf("kurz"), make_text_pdf("auch kurz")
+    renderer.size = (800, 800)
+    preflight = PdfPreflight(ocr_dpi=72, max_pixels_per_page=1_000_000, max_pixels_per_import=1_000_000)
+    budget = preflight.new_import_budget()
+    page = _image_page(preflight, first, budget)
+    preflight.render_page_for_reading(first, page, budget=budget)
+
+    with pytest.raises(DocumentIntegrityError) as error:
+        preflight.run_bytes(second, budget=budget, **_integrity(second))
+
+    assert error.value.code == "OCR_IMPORT_PIXEL_LIMIT_EXCEEDED"
+    assert budget.rendered_pixels == 640_000
+
+
+def test_import_temp_budget_stops_the_next_render_at_the_cap(renderer: Renderer) -> None:
+    data = make_text_pdf("kurz")
+    renderer.extra_bytes = 10
+    preflight = PdfPreflight(max_temp_bytes=1_000_000)
+    budget = preflight.new_import_budget()
+    page = _image_page(preflight, data, budget)
+    budget.temporary_bytes = 1_000_000
+
+    with pytest.raises(DocumentIntegrityError) as error:
+        preflight.render_page_for_reading(data, page, budget=budget)
+
+    assert error.value.code == "OCR_IMPORT_TEMP_BYTES_LIMIT_EXCEEDED"
+    assert renderer.calls == []
+
+
+def test_actual_temp_bytes_above_the_cap_fail_the_render(renderer: Renderer) -> None:
+    data = make_text_pdf("kurz")
+    renderer.extra_bytes = 50
+    preflight = PdfPreflight(max_temp_bytes=10)
+    page = _image_page(preflight, data)
+
+    with pytest.raises(DocumentIntegrityError) as error:
+        preflight.render_page_for_reading(data, page, budget=preflight.new_import_budget())
+
+    assert error.value.code == "OCR_TEMP_BYTES_LIMIT_EXCEEDED"
+
+
+def test_the_deadline_is_enforced_after_the_render(renderer: Renderer) -> None:
+    data = make_text_pdf("kurz")
     clock = FakeClock()
-    clock.value = 10
-    engine = TesseractOcrEngine(timeout_seconds=30, temporary_root=tmp_path)
-    calls = 0
+    renderer.after = lambda: setattr(clock, "value", 11)
+    preflight = PdfPreflight(deadline_seconds=10, monotonic=clock)
+    page = _image_page(preflight, data)
 
-    def renderer(*args: object, **kwargs: object) -> list[str]:
-        nonlocal calls
-        calls += 1
-        return []
+    with pytest.raises(DocumentIntegrityError) as error:
+        preflight.render_page_for_reading(data, page, budget=preflight.new_import_budget())
 
-    monkeypatch.setattr(pdf2image, "convert_from_bytes", renderer)
-    with pytest.raises(TimeoutError):
-        engine.extract_page_at_dpi(data, 1, 72, deadline_at=10, monotonic=clock)
-    assert calls == 0
+    assert error.value.code == "PREFLIGHT_DEADLINE_EXCEEDED"
+
+
+def test_time_waiting_for_the_model_does_not_count_against_the_deadline(renderer: Renderer) -> None:
+    data = make_text_pdf("kurz")
+    clock = FakeClock()
+    preflight = PdfPreflight(deadline_seconds=10, monotonic=clock)
+    budget = preflight.new_import_budget()
+    page = _image_page(preflight, data, budget)
+    clock.value = 40  # four deadlines of provider latency
+    budget.exclude_wait(40)
+
+    assert preflight.render_page_for_reading(data, page, budget=budget).startswith(b"\x89PNG")
+
+
+def test_the_render_uses_the_remaining_deadline_as_its_timeout(renderer: Renderer) -> None:
+    data = make_text_pdf("kurz")
+    clock = FakeClock()
+    preflight = PdfPreflight(ocr_timeout_seconds=30, deadline_seconds=10, monotonic=clock)
+    page = _image_page(preflight, data)
+    budget = preflight.new_import_budget()
+    clock.value = 4
+
+    preflight.render_page_for_reading(data, page, budget=budget)
+
+    assert renderer.calls[0]["timeout"] == 6
+
+
+def test_the_render_does_not_start_at_an_exhausted_deadline(renderer: Renderer) -> None:
+    data = make_text_pdf("kurz")
+    clock = FakeClock()
+    preflight = PdfPreflight(deadline_seconds=10, monotonic=clock)
+    page = _image_page(preflight, data)
+    budget = preflight.new_import_budget()
+    clock.value = 11
+
+    with pytest.raises(DocumentIntegrityError) as error:
+        preflight.render_page_for_reading(data, page, budget=budget)
+
+    assert error.value.code == "PREFLIGHT_DEADLINE_EXCEEDED"
+    assert renderer.calls == []
+
+
+@pytest.mark.parametrize(
+    ("exception", "code"),
+    [
+        (PDFPopplerTimeoutError("timeout"), "PAGE_RENDER_TIMEOUT"),
+        (PDFInfoNotInstalledError("missing poppler"), "PAGE_RENDER_UNAVAILABLE"),
+        (OSError("private path must not leak"), "PAGE_RENDER_UNAVAILABLE"),
+    ],
+)
+def test_render_failures_map_to_stable_codes_and_leave_no_temp_directory(
+    renderer: Renderer, tmp_path: Path, exception: Exception, code: str
+) -> None:
+    data = make_text_pdf("kurz")
+    renderer.fail = exception
+    renderer.extra_bytes = 5
+    preflight = PdfPreflight(temporary_root=tmp_path)
+    page = _image_page(preflight, data)
+
+    with pytest.raises(DocumentIntegrityError) as error:
+        preflight.render_page_for_reading(data, page, budget=preflight.new_import_budget())
+
+    assert error.value.code == code
+    assert "private path" not in str(error.value)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_only_an_image_page_with_a_resolution_can_be_rendered_for_reading() -> None:
+    data = make_text_pdf("Dieser Text ist bewusst lang genug fuer die Textschicht-Erkennung.")
+    preflight = PdfPreflight()
+    result = preflight.run_bytes(data, **_integrity(data))
+
+    with pytest.raises(DocumentIntegrityError) as error:
+        preflight.render_page_for_reading(data, result.pages[0], budget=preflight.new_import_budget())
+
+    assert error.value.code == "PAGE_RENDER_UNAVAILABLE"

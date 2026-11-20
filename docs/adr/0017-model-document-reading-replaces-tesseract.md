@@ -46,5 +46,10 @@ constants; the caller, never the model, assigns the page identity. A model that 
 is recognised by the HTTP status of the rejected request (`PROVIDER_IMAGE_INPUT_UNSUPPORTED`), never
 by message text. `FakeDocumentReadingProvider` records which model was asked for which page.
 
+Page routing: the owner decision of #65 says that the reading model reads unstructured files but names no
+rule for which pages go to it, so the declaration import keeps the routing it had: exactly the pages
+that went to Tesseract before, those with fewer than `declaration_text_min_chars` characters in their embedded
+text layer, go to the reading model; a page with a usable text layer keeps the deterministic text path.
+
 Consequences: organizations with import enabled choose a reading model before their next import;
 reading costs a model call per page, and unknown prices stay visibly unpriced and unenforced.

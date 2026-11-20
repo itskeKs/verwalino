@@ -640,6 +640,10 @@ def _migrate_test_database(request):
         cursor.execute("SELECT to_regclass('public.organization_ai_settings')")
         if cursor.fetchone()[0] is not None:
             cursor.execute("TRUNCATE public.organization_ai_settings")
+        # The reading-pass downgrade refuses to discard ledger rows; these are synthetic.
+        cursor.execute("SELECT to_regclass('public.declaration_import_pass')")
+        if cursor.fetchone()[0] is not None:
+            cursor.execute("DELETE FROM public.declaration_import_pass WHERE safe_metadata->>'pass_id'='read_page'")
         cursor.execute("SELECT to_regclass('public.auth_throttle')")
         if cursor.fetchone()[0] is not None:
             cursor.execute("TRUNCATE public.auth_throttle")
@@ -822,6 +826,14 @@ _test_app_rw_engine = None
 @pytest.fixture(autouse=True)
 def isolate_diagnostics_directory(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, 'diagnostics_dir', str(tmp_path / 'diagnostics'))
+
+
+@pytest.fixture(autouse=True)
+def declaration_pages_with_text_use_the_text_layer(monkeypatch):
+    """Since #499 a page whose text layer has fewer than ``declaration_text_min_chars`` characters goes to the
+    reading model. The pipeline tests that are not about reading use short synthetic pages: they keep the text
+    layer, and a test that wants a scan brings an image-only PDF or its own preflight."""
+    monkeypatch.setattr(settings, 'declaration_text_min_chars', 1)
 
 
 @pytest.fixture

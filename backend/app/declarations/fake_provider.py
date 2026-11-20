@@ -169,6 +169,16 @@ class FakeDocumentReadingProvider:
         )
         self.reads: list[ReadingRecord] = []
 
+    def estimate_reservation(
+        self, method: str, *, max_output_tokens: int, **request: object
+    ) -> ProviderReservationEstimate:
+        """The in-process fake has no hidden prompt, image or retry request."""
+        return ProviderReservationEstimate(
+            input_tokens=self._usage.input_tokens,
+            attempt_count=1,
+            attempt_input_tokens=(self._usage.input_tokens,),
+        )
+
     async def read_page(
         self, page: PageImage, *, model: str, max_output_tokens: int
     ) -> ProviderCallResult[PageTranscript]:

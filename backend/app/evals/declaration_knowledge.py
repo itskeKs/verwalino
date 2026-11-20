@@ -1843,7 +1843,12 @@ class BoundedProductionDeclarationPipelineAdapter:
         from app.core.config import settings
         from app.declarations.evidence import EvidenceTextIndex
         from app.declarations.openai_provider import _Rates
-        from app.declarations.provider_runtime import create_extraction_provider
+        import uuid
+
+        from app.declarations.preflight import IMAGE_PAGE_SOURCE
+        from app.declarations.provider import READING_IMAGE_MEDIA_TYPE, PageImage
+        from app.declarations.provider_runtime import create_extraction_provider, create_reading_provider
+        from app.declarations.schemas import transcript_text
         from app.declarations.pipeline import (
             DeclarationPipeline,
             PipelineFailure,
@@ -1913,7 +1918,12 @@ class BoundedProductionDeclarationPipelineAdapter:
                 return counted
 
         counting_provider = _CountingProvider(provider)
-        pipeline = DeclarationPipeline(counting_provider, configured=runtime_settings)
+        # The reading stage reads the pages without a text layer with the organization's reading model.
+        reader = create_reading_provider(effective, configured_settings=runtime_settings)
+        pipeline = DeclarationPipeline(
+            counting_provider, configured=runtime_settings,
+            reading_provider=reader, reading_model=effective.document_model,
+        )
         metrics: list[LivePipelineCaseMetrics] = []
         try:
             for entry in entries:
@@ -1927,19 +1937,6 @@ class BoundedProductionDeclarationPipelineAdapter:
                     expected_size=len(data),
                     budget=preflight_budget,
                 )
-                pages = tuple(
-                    PageInput(
-                        document_key=entry.case_id,
-                        pdf_page=artifact.page_number,
-                        text=artifact.text,
-                        quality=_page_quality(artifact.source),
-                    )
-                    for artifact in result.pages
-                )
-                evidence_index = EvidenceTextIndex.from_pages(pages)
-                batches = pipeline._page_batches(pages)
-                if not batches:
-                    raise LiveHarnessUnavailable("Bounded pipeline received no evaluable pages.")
                 ledger = _Ledger(
                     input_tokens=0,
                     output_tokens=0,
@@ -1952,6 +1949,27 @@ class BoundedProductionDeclarationPipelineAdapter:
                     model=provider._primary_model,
                     price_provider=getattr(provider, "_price_provider", "openai"),
                 )
+                page_inputs: list[PageInput] = []
+                for artifact in result.pages:
+                    text, source = artifact.text, artifact.source
+                    if source == IMAGE_PAGE_SOURCE:
+                        image = PageImage(
+                            entry.case_id, artifact.page_number, READING_IMAGE_MEDIA_TYPE,
+                            pipeline._preflight.render_page_for_reading(data, artifact, budget=preflight_budget),
+                        )
+                        transcript = await pipeline._read_one(ledger, preflight_budget, image, uuid.uuid4())
+                        text, source = transcript_text(transcript.blocks), "READING"
+                    page_inputs.append(PageInput(
+                        document_key=entry.case_id,
+                        pdf_page=artifact.page_number,
+                        text=text,
+                        quality=_page_quality(source),
+                    ))
+                pages = tuple(page_inputs)
+                evidence_index = EvidenceTextIndex.from_pages(pages)
+                batches = pipeline._page_batches(pages)
+                if not batches:
+                    raise LiveHarnessUnavailable("Bounded pipeline received no evaluable pages.")
                 inventories = [
                     await pipeline._call("inventory", batch.as_documents(), ledger, DocumentInventoryOutput)
                     for batch in batches
@@ -2063,12 +2081,13 @@ class BoundedProductionDeclarationPipelineAdapter:
         except PipelineFailure as exc:
             raise LiveHarnessUnavailable("Bounded production pipeline rejected live evaluation.") from exc
         finally:
-            client = getattr(provider, "_client", None)
-            close = getattr(client, "close", None)
-            if callable(close):
-                result = close()
-                if hasattr(result, "__await__"):
-                    await result
+            for owned in (provider, reader):
+                client = getattr(owned, "_client", None)
+                close = getattr(client, "close", None)
+                if callable(close):
+                    result = close()
+                    if hasattr(result, "__await__"):
+                        await result
         return LivePipelineReport(cases=tuple(metrics))
 
 

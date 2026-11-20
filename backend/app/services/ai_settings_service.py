@@ -105,7 +105,7 @@ async def worker_ai_settings(organization_id):
     from app.core.db import get_worker_tenant_session
     async with get_worker_tenant_session(organization_id) as db:
         effective = await effective_ai_settings(db, organization_id)
-    if not effective.import_enabled or not effective.api_key or not effective.model:
+    if declaration_import_blocker(effective) is not None:
         raise ValueError('Organization AI import is not configured')
     return effective
 

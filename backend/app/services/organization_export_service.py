@@ -104,7 +104,9 @@ async def inventory(db):
     return {r["name"]: r for r in rows if r["name"] not in {
         "password_reset_request", "user_invitation",
         "user_second_factor", "user_recovery_code",
-        "organization_deletion", "organization_ai_settings"}}
+        "organization_deletion", "organization_ai_settings",
+        # Working data of the declaration import: copies of text the exported originals already hold.
+        "declaration_page_reading"}}
 
 
 def export_predicate(name, columns):

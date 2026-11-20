@@ -61,9 +61,9 @@ _DECLARATION_EXTRACTION_ENVIRONMENT = {
     "HV_DECLARATION_MAX_ATTEMPTS",
 }
 _DECLARATION_AGENTIC_DEFAULTS = {
-    "HV_DECLARATION_PROMPT_VERSION":"declaration-v3",
+    "HV_DECLARATION_PROMPT_VERSION":"declaration-v4",
     "HV_DECLARATION_SCHEMA_VERSION":"2",
-    "HV_DECLARATION_HARNESS_VERSION":"3",
+    "HV_DECLARATION_HARNESS_VERSION":"4",
 }
 _DECLARATION_QA_ENVIRONMENT = {
     "HV_DECLARATION_QA_TIMEOUT_SECONDS",
@@ -355,7 +355,6 @@ async def test_healthcheck_reads_only_global_organization_id_and_cleans_tempfile
         configured=configured,
         unscoped_session_factory=unscoped,
         binary_finder=lambda _name: "/usr/bin/tool",
-        command_runner=lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, "deu\n", ""),
         random_name=lambda: "fixed-healthcheck-name",
     )
 
@@ -381,13 +380,35 @@ async def test_healthcheck_unlinks_tempfile_when_storage_check_fails(tmp_path: P
         configured=configured,
         unscoped_session_factory=unscoped,
         binary_finder=lambda _name: "/usr/bin/tool",
-        command_runner=lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, "deu\n", ""),
         random_name=lambda: "failure-healthcheck-name",
         fsync=fail_fsync,
     )
 
     assert not healthy
     assert list((tmp_path / ".healthcheck").iterdir()) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("missing", "expected"), [(None, True), ("qpdf", False), ("pdftoppm", False)])
+async def test_healthcheck_needs_the_pdf_tools_and_no_tesseract(tmp_path: Path, missing: str | None, expected: bool) -> None:
+    probed: list[str] = []
+
+    def finder(name: str) -> str | None:
+        probed.append(name)
+        return None if name == missing else "/usr/bin/tool"
+
+    @asynccontextmanager
+    async def unscoped():
+        yield SimpleNamespace(execute=lambda _statement: _completed_awaitable())
+
+    healthy = await declaration_import.run_healthcheck(
+        configured=SimpleNamespace(document_storage_root=str(tmp_path)),
+        unscoped_session_factory=unscoped,
+        binary_finder=finder,
+    )
+
+    assert healthy is expected
+    assert set(probed) <= {"qpdf", "pdftoppm"}
 
 
 def test_healthcheck_cli_never_constructs_provider(monkeypatch: pytest.MonkeyPatch) -> None:
