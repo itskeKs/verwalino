@@ -2345,8 +2345,12 @@ the budget; „Gemeldete …“ and „Konservativ erfasste …“ together when
 usage and „Konservative Kostenschätzung“ otherwise, in USD with at most six decimals, or „kein
 Preis bekannt“ for a model without a price, never 0,00 USD. A stage that made no call has no block
 (a text-layer document shows no „Dokumente einlesen“; a run that failed in reading shows no
-„Informationen extrahieren“), and a failed run keeps what its calls consumed. A run without any
-stage keeps the model name and the total as before. Nothing scrolls horizontally at 360 px.
+„Informationen extrahieren“), and a failed run keeps what its calls consumed. A stage shows only
+what its ledger entries report; whatever the run total holds beyond that (a reservation no entry
+attributes, for example of a call that was cancelled) is a third block „Nicht zugeordnet“ with the
+wording for reserved tokens, shown only while it is not zero, so that the blocks add up to „Gesamt“.
+A run with tokens and no entry shows that block and the total. A run with neither a stage nor such a
+remainder keeps the model name and the total as before. Nothing scrolls horizontally at 360 px.
 
 The import screen's „4. Ergebnis“ card explains every failure code in German, in one
 `role="alert"` paragraph under „Verarbeitung fehlgeschlagen.“: what happened, that the uploaded

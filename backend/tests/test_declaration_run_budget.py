@@ -75,6 +75,20 @@ def _stages(result):
              stage.input_tokens, stage.output_tokens, stage.estimated_cost_usd) for stage in result.stages]
 
 
+def _unassigned(result):
+    held = result.unassigned
+    return None if held is None else (held.input_tokens, held.output_tokens, held.estimated_cost_usd)
+
+
+def _assert_the_lines_add_up_to_the_total(result):
+    """Stages plus the unassigned remainder are the run's total, in tokens and, where every line is priced, in cost."""
+    lines = [*result.stages, *([result.unassigned] if result.unassigned else [])]
+    assert sum(line.input_tokens for line in lines) == result.input_tokens
+    assert sum(line.output_tokens for line in lines) == result.output_tokens
+    if result.estimated_cost_usd is not None:
+        assert sum(line.estimated_cost_usd for line in lines) == result.estimated_cost_usd
+
+
 def test_each_stage_reports_its_own_model_tokens_and_cost_and_the_total_stays_the_sum():
     passes = [_entry('read_page', (100, 20), cost='0.000165'), _entry('read_page', (80, 10), cost='0.000105'),
               _entry('inventory', (300, 50), cost='0.000135'), _entry('extract_core', (400, 60), cost='0.000152')]
@@ -86,6 +100,8 @@ def test_each_stage_reports_its_own_model_tokens_and_cost_and_the_total_stays_th
     ]
     assert (result.usage_status, result.input_tokens, result.output_tokens) == ('REPORTED', 880, 140)
     assert result.estimated_cost_usd == Decimal('0.000557')
+    assert result.unassigned is None
+    _assert_the_lines_add_up_to_the_total(result)
 
 
 def test_a_run_that_read_no_page_has_no_reading_stage():
@@ -104,36 +120,76 @@ def test_a_run_that_failed_in_reading_shows_what_the_failed_call_consumed_and_no
     assert _stages(result) == [('READING', READING, 'REPORTED', 40, 3, 40, 3, Decimal('0.000002'))]
 
 
-def test_a_reading_call_with_unknown_usage_shows_its_reservation_on_the_reading_stage():
-    # The failed call reported nothing; its reservation stays in the run's totals and belongs to the reading stage.
+def test_a_reading_call_with_unknown_usage_leaves_its_reservation_unassigned():
+    # The failed call reported nothing; its reservation stays in the run's totals, but no ledger entry carries it.
     result = _run_out(_stage_run((17, 12000), '0.054'), [_entry('read_page', (0, 0), failure='PROVIDER_TIMEOUT')])
-    assert _stages(result) == [('READING', READING, 'RESERVED', None, None, 17, 12000, Decimal('0.054000'))]
+    assert _stages(result) == [('READING', READING, 'UNKNOWN', None, None, 0, 0, Decimal('0.000000'))]
+    assert _unassigned(result) == (17, 12000, Decimal('0.054000'))
     assert result.usage_status == 'RESERVED'
+    _assert_the_lines_add_up_to_the_total(result)
 
 
-def test_a_run_that_failed_in_extraction_keeps_the_finished_reading_and_the_reserved_extraction_call():
+def test_a_cancelled_extraction_call_after_the_finished_reading_is_not_shown_under_reading():
+    # The reading finished and was settled; the first extraction reservation was checkpointed, then the call was
+    # cancelled before any entry was written. The reservation is neither reading nor a reported extraction.
+    result = _run_out(_stage_run((600, 12020), '0.0145'), [_entry('read_page', (100, 20), cost='0.000165')])
+    assert _stages(result) == [('READING', READING, 'REPORTED', 100, 20, 100, 20, Decimal('0.000165'))]
+    assert _unassigned(result) == (500, 12000, Decimal('0.014335'))
+    _assert_the_lines_add_up_to_the_total(result)
+
+
+def test_a_closed_run_with_tokens_and_no_ledger_entry_shows_them_as_unassigned_with_a_total():
+    result = _run_out(_stage_run((10000, 12000), '0.03'), [])
+    assert result.stages == [] and result.usage_status == 'RESERVED'
+    assert _unassigned(result) == (10000, 12000, Decimal('0.030000'))
+    assert (result.input_tokens, result.output_tokens, result.estimated_cost_usd) == (10000, 12000, Decimal('0.03'))
+    _assert_the_lines_add_up_to_the_total(result)
+
+
+def test_a_crashed_run_left_running_assigns_its_held_reservation_to_no_stage():
+    # A worker stopped in the middle of reading page 3: the run is still RUNNING, its import was released to
+    # RETRY_WAIT. The held reservation is not the extraction's, which is where the import's status pointed.
+    passes = [_entry('read_page', (100, 20), cost='0.000165'), _entry('read_page', (100, 20), cost='0.000165')]
+    result = _run_out(_stage_run((200 + 17, 40 + 12000), '0.054', closed=False), passes)
+    assert [item.stage for item in result.stages] == ['READING']
+    assert result.stages[0].input_tokens == 200 and result.stages[0].usage_status == 'REPORTED'
+    assert _unassigned(result) == (17, 12000, Decimal('0.053670'))
+    _assert_the_lines_add_up_to_the_total(result)
+
+
+def test_a_run_that_failed_in_extraction_keeps_the_finished_reading_and_the_reserved_extraction_call_apart():
     passes = [_entry('read_page', (100, 20), cost='0.000165'), _entry('inventory', (0, 0), failure='PROVIDER_TIMEOUT')]
     result = _run_out(_stage_run((600, 12020), '0.0145'), passes)
     assert _stages(result) == [
         ('READING', READING, 'REPORTED', 100, 20, 100, 20, Decimal('0.000165')),
-        ('EXTRACTION', EXTRACTION, 'RESERVED', None, None, 500, 12000, Decimal('0.014335')),
+        ('EXTRACTION', EXTRACTION, 'UNKNOWN', None, None, 0, 0, Decimal('0.000000')),
     ]
+    assert _unassigned(result) == (500, 12000, Decimal('0.014335'))
+    _assert_the_lines_add_up_to_the_total(result)
 
 
-def test_partial_provider_usage_of_a_stage_is_kept_apart_from_its_reserved_remainder():
+def test_partial_provider_usage_of_a_stage_is_kept_apart_from_the_unassigned_remainder():
     passes = [_entry('read_page', (100, 20), cost='0.000165'), _entry('inventory', (30, 5), cost='0.00001', failure='PROVIDER_SCHEMA_FAILURE')]
     result = _run_out(_stage_run((600, 12020), '0.0145'), passes)
-    assert _stages(result)[1] == ('EXTRACTION', EXTRACTION, 'PARTIAL', 30, 5, 500, 12000, Decimal('0.014335'))
+    assert _stages(result)[1] == ('EXTRACTION', EXTRACTION, 'REPORTED', 30, 5, 30, 5, Decimal('0.000010'))
+    assert _unassigned(result) == (470, 11995, Decimal('0.014325'))
+    assert result.usage_status == 'PARTIAL'
+    _assert_the_lines_add_up_to_the_total(result)
 
 
-@pytest.mark.parametrize(('import_status', 'stage'), [('PREFLIGHT', 'READING'), ('EXTRACTING', 'EXTRACTION'), ('RECONCILING', 'EXTRACTION')])
-def test_the_reservation_of_a_call_in_flight_belongs_to_the_stage_the_import_is_in(import_status, stage):
-    # The reading is finished and settled; a live run holds one more reservation that no ledger entry reports yet.
-    passes = [_entry('read_page', (100, 20), cost='0.000165')] if import_status != 'PREFLIGHT' else []
-    run = _stage_run((100 + 500, 20 + 12000), '0.0145', closed=False)
-    result = _run_out(run, passes, import_status)
-    held = [item for item in result.stages if item.usage_status in {'RESERVED', 'PARTIAL'}]
-    assert [item.stage for item in held] == [stage]
+def test_a_fully_reported_run_has_no_unassigned_line():
+    passes = [_entry('read_page', (100, 20), cost='0.000165'), _entry('inventory', (300, 50), cost='0.000135')]
+    result = _run_out(_stage_run((400, 70), '0.0003'), passes)
+    assert result.unassigned is None and result.usage_status == 'REPORTED'
+    _assert_the_lines_add_up_to_the_total(result)
+
+
+@pytest.mark.parametrize('provider', ['OpenAiDeclarationProvider', 'CompatibleDeclarationProvider'])
+def test_the_unassigned_remainder_is_priced_only_when_both_models_of_the_run_are(provider):
+    result = _run_out(_stage_run((600, 12020), '0.0145', provider=provider), [_entry('read_page', (100, 20), cost='0.000165')])
+    expected = Decimal('0.014335') if provider == 'OpenAiDeclarationProvider' else None
+    assert result.unassigned.estimated_cost_usd == expected
+    assert (result.estimated_cost_usd is not None) == (expected is not None), 'an unpriced line makes the total unpriced'
 
 
 def test_an_unpriced_stage_shows_no_price_and_makes_the_total_unpriced_too():

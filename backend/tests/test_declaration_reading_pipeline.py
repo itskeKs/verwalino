@@ -678,7 +678,7 @@ async def test_a_finished_scan_reports_reading_and_extraction_apart_and_they_add
     assert [row[:3] for row in rows] == [("READING", READING_MODEL, "REPORTED"), ("EXTRACTION", EXTRACTION_MODEL, "REPORTED")]
     assert rows[0][3:] == (17, 11), "one page was read"
     assert sum(row[3] for row in rows) == run["input_tokens"] and sum(row[4] for row in rows) == run["output_tokens"]
-    assert run["usage_status"] == "REPORTED"
+    assert run["usage_status"] == "REPORTED" and run["unassigned"] is None
 
 
 async def test_a_job_that_failed_in_reading_still_shows_the_usage_the_failed_call_consumed(
@@ -706,6 +706,30 @@ async def test_a_job_that_failed_in_extraction_shows_the_finished_reading_and_th
     _run, rows = await _stage_rows(client_a_admin, lease)
     # The inventory (13 + 7 tokens) finished before the core pass refused after 10 + 3 tokens.
     assert rows == [("READING", READING_MODEL, "REPORTED", 17, 11), ("EXTRACTION", EXTRACTION_MODEL, "REPORTED", 23, 10)]
+
+
+class _CrashingExtraction(_RecordingProvider):
+    """Extraction whose first call stops without a structured provider failure: its reservation stays, no entry."""
+
+    async def inventory(self, documents, *, max_output_tokens):
+        raise RuntimeError("the call was cancelled")
+
+
+async def test_the_reservation_of_a_cancelled_extraction_call_is_not_shown_under_reading(
+    seed_data, client_a_admin, tesseract_unusable
+) -> None:
+    lease, key, store = await _seed_pipeline_import(seed_data, _scan())
+    reader = FakeDocumentReadingProvider(transcripts={(key, 1): _text()})
+
+    await DeclarationImportWorker(_pipeline(ModelRecording(_CrashingExtraction(key), EXTRACTION_MODEL), reader, store))._run_claimed(lease)
+
+    assert (await _item(lease)).error_code == "PROVIDER_UNEXPECTED_FAILURE"
+    run, rows = await _stage_rows(client_a_admin, lease)
+    assert rows == [("READING", READING_MODEL, "REPORTED", 17, 11)], "the finished reading, and nothing else is attributed"
+    held = run["unassigned"]
+    assert held is not None and held["input_tokens"] > 0 and held["output_tokens"] > 0
+    assert sum(row[3] for row in rows) + held["input_tokens"] == run["input_tokens"]
+    assert sum(row[4] for row in rows) + held["output_tokens"] == run["output_tokens"]
 
 
 async def test_a_text_layer_document_has_no_reading_block(seed_data, client_a_admin) -> None:

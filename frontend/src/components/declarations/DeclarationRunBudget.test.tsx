@@ -3,7 +3,7 @@ import { expect, it } from 'vitest';
 import { DeclarationRunBudget } from './DeclarationRunBudget';
 
 it('shows tokens and runtime without presenting unpriced usage as zero dollars', () => {
-  render(<DeclarationRunBudget runs={[{stages:[],usage_status:'REPORTED',reported_input_tokens:14365,reported_output_tokens:11747,id:'run',model:'synthetic-local',input_tokens:14365,output_tokens:11747,runtime_seconds:329.6,estimated_cost_usd:null}]} />);
+  render(<DeclarationRunBudget runs={[{stages:[],unassigned:null,usage_status:'REPORTED',reported_input_tokens:14365,reported_output_tokens:11747,id:'run',model:'synthetic-local',input_tokens:14365,output_tokens:11747,runtime_seconds:329.6,estimated_cost_usd:null}]} />);
   expect(screen.getByText('kein Preis bekannt')).toBeVisible();
   expect(screen.getByText('14.365')).toBeVisible();
   expect(screen.getByText('11.747')).toBeVisible();
@@ -13,14 +13,14 @@ it('shows tokens and runtime without presenting unpriced usage as zero dollars',
 
 
 it('keeps a known historical estimate in USD', () => {
-  render(<DeclarationRunBudget runs={[{stages:[],usage_status:'REPORTED',reported_input_tokens:100,reported_output_tokens:20,id:'priced',model:'known-model',input_tokens:100,output_tokens:20,runtime_seconds:2,estimated_cost_usd:'0.012345'}]} />);
+  render(<DeclarationRunBudget runs={[{stages:[],unassigned:null,usage_status:'REPORTED',reported_input_tokens:100,reported_output_tokens:20,id:'priced',model:'known-model',input_tokens:100,output_tokens:20,runtime_seconds:2,estimated_cost_usd:'0.012345'}]} />);
   expect(screen.getByText('0,012345 USD')).toBeVisible();
   expect(screen.queryByText('kein Preis bekannt')).not.toBeInTheDocument();
 });
 
 
 it('labels active or failed reservation counters without claiming measured consumption', () => {
-  render(<DeclarationRunBudget runs={[{stages:[],id:'reserved',model:'synthetic-local',input_tokens:10000,output_tokens:12000,reported_input_tokens:null,reported_output_tokens:null,usage_status:'RESERVED',runtime_seconds:90,estimated_cost_usd:null}]} />);
+  render(<DeclarationRunBudget runs={[{stages:[],unassigned:null,id:'reserved',model:'synthetic-local',input_tokens:10000,output_tokens:12000,reported_input_tokens:null,reported_output_tokens:null,usage_status:'RESERVED',runtime_seconds:90,estimated_cost_usd:null}]} />);
   expect(screen.getByText('Reservierte Eingabetoken')).toBeVisible();
   expect(screen.getByText('Reservierte Ausgabetoken')).toBeVisible();
   expect(screen.getByText(/Der tatsächliche Tokenverbrauch ist noch nicht bekannt/)).toBeVisible();
@@ -28,7 +28,7 @@ it('labels active or failed reservation counters without claiming measured consu
 });
 
 it('keeps partial provider usage separate from conservative accounted totals', () => {
-  render(<DeclarationRunBudget runs={[{stages:[],id:'partial',model:'synthetic-local',input_tokens:10000,output_tokens:12000,reported_input_tokens:30,reported_output_tokens:20,usage_status:'PARTIAL',runtime_seconds:90,estimated_cost_usd:null}]} />);
+  render(<DeclarationRunBudget runs={[{stages:[],unassigned:null,id:'partial',model:'synthetic-local',input_tokens:10000,output_tokens:12000,reported_input_tokens:30,reported_output_tokens:20,usage_status:'PARTIAL',runtime_seconds:90,estimated_cost_usd:null}]} />);
   expect(screen.getByText('Gemeldete Eingabetoken')).toBeVisible();
   expect(screen.getByText('30')).toBeVisible();
   expect(screen.getByText('Konservativ erfasste Eingabetoken')).toBeVisible();
@@ -36,7 +36,7 @@ it('keeps partial provider usage separate from conservative accounted totals', (
 });
 
 it('does not present unknown usage as measured zero', () => {
-  render(<DeclarationRunBudget runs={[{stages:[],id:'unknown',model:'synthetic-local',input_tokens:0,output_tokens:0,reported_input_tokens:null,reported_output_tokens:null,usage_status:'UNKNOWN',runtime_seconds:0,estimated_cost_usd:null}]} />);
+  render(<DeclarationRunBudget runs={[{stages:[],unassigned:null,id:'unknown',model:'synthetic-local',input_tokens:0,output_tokens:0,reported_input_tokens:null,reported_output_tokens:null,usage_status:'UNKNOWN',runtime_seconds:0,estimated_cost_usd:null}]} />);
   expect(screen.getByText('Tokenverbrauch unbekannt')).toBeVisible();
   expect(screen.queryByText('0',{exact:true})).not.toBeInTheDocument();
 });
@@ -44,7 +44,7 @@ it('does not present unknown usage as measured zero', () => {
 
 const reading = {stage:'READING',model:'gpt-5.4-mini',usage_status:'REPORTED',reported_input_tokens:1800,reported_output_tokens:300,input_tokens:1800,output_tokens:300,estimated_cost_usd:'0.002700'} as const;
 const extraction = {stage:'EXTRACTION',model:'gpt-5.6-luna',usage_status:'REPORTED',reported_input_tokens:7000,reported_output_tokens:1100,input_tokens:7000,output_tokens:1100,estimated_cost_usd:'0.002720'} as const;
-const total = {id:'run',model:'gpt-5.6-luna',usage_status:'REPORTED',reported_input_tokens:8800,reported_output_tokens:1400,input_tokens:8800,output_tokens:1400,runtime_seconds:42,estimated_cost_usd:'0.005420'} as const;
+const total = {unassigned:null,id:'run',model:'gpt-5.6-luna',usage_status:'REPORTED',reported_input_tokens:8800,reported_output_tokens:1400,input_tokens:8800,output_tokens:1400,runtime_seconds:42,estimated_cost_usd:'0.005420'} as const;
 
 it('shows reading and extraction apart, each with its model, tokens and cost, and then the total', () => {
   render(<DeclarationRunBudget runs={[{...total,stages:[reading,extraction]}]} />);
@@ -97,4 +97,53 @@ it('does not present the unknown usage of a stage as measured zero', () => {
   const unknown = {...reading,usage_status:'UNKNOWN',reported_input_tokens:null,reported_output_tokens:null,input_tokens:0,output_tokens:0,estimated_cost_usd:null} as const;
   render(<DeclarationRunBudget runs={[{...total,stages:[unknown]}]} />);
   expect(within(screen.getByRole('group', {name:'Dokumente einlesen'})).getByText('Tokenverbrauch unbekannt')).toBeVisible();
+});
+
+const held = {input_tokens:500,output_tokens:12000,estimated_cost_usd:'0.014335'} as const;
+
+it('shows a reservation no entry attributes as its own third line under the stages, with the reserved-token wording', () => {
+  // The reading finished; the extraction call was cancelled after its reservation was checkpointed.
+  render(<DeclarationRunBudget runs={[{...total,usage_status:'PARTIAL',input_tokens:2300,output_tokens:12300,reported_input_tokens:1800,reported_output_tokens:300,estimated_cost_usd:'0.017035',stages:[reading],unassigned:held}]} />);
+  expect(screen.queryByRole('group', {name:'Informationen extrahieren'})).not.toBeInTheDocument();
+  const unassigned = screen.getByRole('group', {name:'Nicht zugeordnet'});
+  expect(within(unassigned).getByText('Reservierte Eingabetoken')).toBeVisible();
+  expect(within(unassigned).getByText('500')).toBeVisible();
+  expect(within(unassigned).getByText('12.000')).toBeVisible();
+  expect(within(unassigned).getByText('0,014335 USD')).toBeVisible();
+  expect(within(unassigned).getByText(/Der tatsächliche Tokenverbrauch ist noch nicht bekannt/)).toBeVisible();
+  const order = screen.getAllByRole('group').map(group => group.querySelector('h4')?.textContent);
+  expect(order).toEqual(['Dokumente einlesen','Nicht zugeordnet','Gesamt']);
+});
+
+it('shows the lines of a run that add up to the total in tokens and in cost', () => {
+  const run = {...total,usage_status:'PARTIAL',input_tokens:9300,output_tokens:13400,estimated_cost_usd:'0.019755',reported_input_tokens:8800,reported_output_tokens:1400,stages:[reading,extraction],unassigned:held} as const;
+  const stages = [reading,extraction];
+  render(<DeclarationRunBudget runs={[{...run,stages}]} />);
+  const lines = [...stages,run.unassigned];
+  expect(lines.reduce((sum, line) => sum + line.input_tokens, 0)).toBe(run.input_tokens);
+  expect(lines.reduce((sum, line) => sum + line.output_tokens, 0)).toBe(run.output_tokens);
+  expect(lines.reduce((sum, line) => sum + Number(line.estimated_cost_usd), 0)).toBeCloseTo(Number(run.estimated_cost_usd), 6);
+  expect(screen.getAllByRole('group').map(group => group.querySelector('h4')?.textContent)).toEqual(['Dokumente einlesen','Informationen extrahieren','Nicht zugeordnet','Gesamt']);
+  const sum = screen.getByRole('group', {name:'Gesamt'});
+  expect(within(sum).getByText('9.300')).toBeVisible();
+  expect(within(sum).getByText('0,019755 USD')).toBeVisible();
+});
+
+it('shows the unassigned line and the total for a closed run that has tokens and no entry', () => {
+  render(<DeclarationRunBudget runs={[{...total,usage_status:'RESERVED',reported_input_tokens:null,reported_output_tokens:null,input_tokens:500,output_tokens:12000,estimated_cost_usd:'0.014335',stages:[],unassigned:held}]} />);
+  expect(within(screen.getByRole('group', {name:'Nicht zugeordnet'})).getByText('12.000')).toBeVisible();
+  const sum = screen.getByRole('group', {name:'Gesamt'});
+  expect(within(sum).getByText('12.000')).toBeVisible();
+  expect(within(sum).getByText('0,014335 USD')).toBeVisible();
+});
+
+it('shows no unassigned line while nothing is unassigned', () => {
+  render(<DeclarationRunBudget runs={[{...total,stages:[reading,extraction],unassigned:null}]} />);
+  expect(screen.queryByRole('group', {name:'Nicht zugeordnet'})).not.toBeInTheDocument();
+});
+
+it('does not give the unassigned part a price when the run has no price for it', () => {
+  render(<DeclarationRunBudget runs={[{...total,usage_status:'RESERVED',estimated_cost_usd:null,stages:[],unassigned:{...held,estimated_cost_usd:null}}]} />);
+  expect(within(screen.getByRole('group', {name:'Nicht zugeordnet'})).getByText('kein Preis bekannt')).toBeVisible();
+  expect(screen.queryByText(/0[,.]00.*USD/)).not.toBeInTheDocument();
 });

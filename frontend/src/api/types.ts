@@ -219,6 +219,13 @@ export interface DeclarationRunStage {
   estimated_cost_usd: string | null;
 }
 
+/** What a run's totals hold beyond its stages: a reservation that no ledger entry attributes to a stage. */
+export interface DeclarationRunUnassigned {
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost_usd: string | null;
+}
+
 export interface DeclarationRunBudget {
   usage_status: DeclarationUsageStatus;
   reported_input_tokens: number | null;
@@ -226,6 +233,7 @@ export interface DeclarationRunBudget {
   id: string;
   model: string;
   stages: DeclarationRunStage[];
+  unassigned: DeclarationRunUnassigned | null;
   input_tokens: number;
   output_tokens: number;
   runtime_seconds: number;

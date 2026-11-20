@@ -52,7 +52,10 @@ export function DeclarationRunBudget({ runs }: { runs: Run[] }) {
       {run.stages.map(stage => <Block key={stage.stage} id={`${run.id}-${stage.stage}`} title={STAGE_TITLES[stage.stage]} model={stage.model}>
         <UsageRows usage={stage} />
       </Block>)}
-      {run.stages.length > 0
+      {run.unassigned && <Block id={`${run.id}-unassigned`} title="Nicht zugeordnet">
+        <UsageRows usage={{ ...run.unassigned, usage_status: 'RESERVED', reported_input_tokens: null, reported_output_tokens: null }} />
+      </Block>}
+      {run.stages.length > 0 || run.unassigned
         ? <Block id={`${run.id}-total`} title="Gesamt"><UsageRows usage={run} runtime={run.runtime_seconds} /></Block>
         : <UsageRows usage={run} runtime={run.runtime_seconds} />}
     </div>)}
