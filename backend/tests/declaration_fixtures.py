@@ -97,6 +97,8 @@ class ModelRecording:
         self._primary_model = model
         self._client = None  # nothing to close, as for a provider the worker would build
         self.records: list[tuple[str, str]] = []
+        # Per call: the method, the model and the (document key, page) pairs of the documents it was given.
+        self.calls: list[tuple[str, str, tuple[tuple[str, int], ...]]] = []
         self.documents: list = []
 
     def estimate_reservation(self, *args, **options):
@@ -107,8 +109,11 @@ class ModelRecording:
 
         async def call(*args, **options):
             self.records.append((name, self._primary_model))
+            pages: tuple[tuple[str, int], ...] = ()
             if args and isinstance(args[0], (list, tuple)):
                 self.documents.extend(args[0])
+                pages = tuple((page.document_key, page.pdf_page) for document in args[0] for page in getattr(document, "pages", ()))
+            self.calls.append((name, self._primary_model, pages))
             return await method(*args, **options)
 
         return call
