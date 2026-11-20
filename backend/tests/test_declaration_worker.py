@@ -112,6 +112,28 @@ async def test_worker_reads_changed_key_model_and_switch_at_the_next_job(seed_da
     assert [key for model, key in seen] == ['synthetic-test-key', 'synthetic-replaced-key']
 
 
+async def test_worker_claims_nothing_without_the_document_reading_model(seed_data, configured_ai):
+    org, actor = seed_data['org_a_id'], seed_data['user_a_admin_id']
+    ran = []
+    class Pipeline:
+        async def run(self, lease):
+            ran.append(lease.import_id)
+            async with get_tenant_session(org) as db:
+                assert await DeclarationImportRepository(db, org).transition_with_lease(lease, {'QUEUED'}, 'FAILED', {
+                    'current_stage':'failed', 'error_code':'SYNTHETIC', 'error_message':'SYNTHETIC',
+                    'lease_owner':None, 'lease_token':None, 'lease_expires_at':None,
+                })
+    worker = DeclarationImportWorker(Pipeline())
+    await _create_import(org, actor, status='QUEUED')
+    configured_ai(org, document_model=None)
+    # The queued import waits, untouched, until the reading model is chosen.
+    assert (await worker.run_once(organization_id=org)).code == 'DECLARATION_IMPORT_DISABLED'
+    assert ran == []
+    configured_ai(org, document_model='gpt-5.4-mini')
+    await worker.run_once(organization_id=org)
+    assert len(ran) == 1
+
+
 @pytest.mark.parametrize(
     "updates",
     [

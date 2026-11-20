@@ -144,7 +144,7 @@ async def test_unpriced_running_import_does_not_reserve_the_next_known_models_mo
     from app.services.ai_settings_service import require_organization_ai_budget
     org = seed_data['org_a_id']
     path = f'/api/organizations/{org}/ai-settings'
-    assert (await client_a_admin.put(path,json={'model':'future-model','import_enabled':True,'monthly_limit_usd':'1.00'})).status_code==200
+    assert (await client_a_admin.put(path,json={'model':'future-model','document_model':'gpt-5.4-mini','import_enabled':True,'monthly_limit_usd':'1.00'})).status_code==200
     created = await client_a_admin.post('/api/declaration-imports',json={'mode':'NEW_PROPERTY'})
     assert created.status_code==201,created.text
     await _set_organization(migrator_session,org)
@@ -1536,6 +1536,61 @@ async def test_declaration_import_disabled_blocks_create_upload_and_start(
     )
 
     for response in (blocked_create, blocked_upload, blocked_start):
+        assert response.status_code == 503
+        assert response.json()["detail"] == "DECLARATION_IMPORT_DISABLED"
+
+
+@pytest.mark.asyncio
+async def test_declaration_import_needs_the_document_reading_model_and_keeps_the_originals(
+    client_a_admin, seed_data, configured_ai
+) -> None:
+    created = await client_a_admin.post(
+        "/api/declaration-imports", json={"mode": "NEW_PROPERTY"}
+    )
+    assert created.status_code == 201
+    import_id = created.json()["id"]
+    uploaded = await client_a_admin.post(
+        f"/api/declaration-imports/{import_id}/documents",
+        files={"file": ("teilung.pdf", b"%PDF-1.4\n%%EOF", "application/pdf")},
+        data={"document_role": "DECLARATION", "sequence_no": "1"},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    document_id = uploaded.json()["id"]
+
+    # The extraction model alone, as after the upgrade, no longer lets an import run.
+    configured_ai(seed_data["org_a_id"], document_model=None)
+    blocked = [
+        await client_a_admin.post("/api/declaration-imports", json={"mode": "NEW_PROPERTY"}),
+        await client_a_admin.post(
+            f"/api/declaration-imports/{import_id}/documents",
+            files={"file": ("teilung.pdf", b"%PDF-1.4\n%%EOF", "application/pdf")},
+            data={"document_role": "DECLARATION", "sequence_no": "2"},
+        ),
+        await client_a_admin.post(
+            f"/api/declaration-imports/{import_id}/start", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"}
+        ),
+    ]
+    for response in blocked:
+        assert response.status_code == 503
+        assert response.json()["detail"] == "DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING"
+
+    # The uploaded original stays readable and listed while the configuration is incomplete.
+    assert (await client_a_admin.get(f"/api/declaration-imports/{import_id}")).status_code == 200
+    listed = await client_a_admin.get(f"/api/declaration-imports/{import_id}/documents")
+    assert [item["id"] for item in listed.json()] == [document_id]
+
+    # Choosing the reading model is all that is missing.
+    configured_ai(seed_data["org_a_id"], document_model="gpt-5.4-mini")
+    assert (await client_a_admin.post("/api/declaration-imports", json={"mode": "NEW_PROPERTY"})).status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_declaration_import_without_key_model_or_switch_is_still_reported_as_not_set_up(
+    client_a_admin, seed_data, configured_ai
+) -> None:
+    for updates in ({"import_enabled": False, "document_model": None}, {"model": None, "import_enabled": False, "qa_enabled": False}):
+        configured_ai(seed_data["org_a_id"], **updates)
+        response = await client_a_admin.post("/api/declaration-imports", json={"mode": "NEW_PROPERTY"})
         assert response.status_code == 503
         assert response.json()["detail"] == "DECLARATION_IMPORT_DISABLED"
 

@@ -16,7 +16,7 @@ def declaration_settings(world):
     org = world.act('GET', '/api/organizations/me').json()['id']
     world.data['declaration_org'] = org
     response = world.act('PUT', f'/api/organizations/{org}/ai-settings', json={
-        'api_key':'synthetic-journey-key', 'model':'gpt-5.6-luna', 'import_enabled':True,
+        'api_key':'synthetic-journey-key', 'model':'gpt-5.6-luna', 'document_model':'gpt-5.4-mini', 'import_enabled':True,
         'confirmation':True,
     })
     assert response.status_code == 200, world.describe_response()

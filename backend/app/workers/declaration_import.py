@@ -181,6 +181,7 @@ class DeclarationImportWorker:
             async with self._tenant_session_factory(organization_id) as session:
                 from app.services.ai_settings_service import (
                     AiKeyUnreadableError,
+                    declaration_import_blocker,
                     effective_ai_settings,
                 )
 
@@ -194,7 +195,7 @@ class DeclarationImportWorker:
                             organization_id,
                         )
                     continue
-                if not effective.import_enabled or not effective.api_key or not effective.model:
+                if declaration_import_blocker(effective) is not None:
                     continue
                 self._active_ai = effective
                 lease = await DeclarationImportRepository(
@@ -376,10 +377,10 @@ class DeclarationImportWorker:
         # A disabled import feature must not acquire a lease or invoke external
         # parsing. The independent healthcheck still probes worker readiness.
         if organization_id is not None:
-            from app.services.ai_settings_service import effective_ai_settings
+            from app.services.ai_settings_service import declaration_import_blocker, effective_ai_settings
             async with self._tenant_session_factory(organization_id) as session:
                 effective = await effective_ai_settings(session, organization_id)
-            if not effective.import_enabled or not effective.api_key or not effective.model:
+            if declaration_import_blocker(effective) is not None:
                 return WorkerResult("DECLARATION_IMPORT_DISABLED")
         if not await self.schema_ready():
             return WorkerResult("SCHEMA_NOT_READY")

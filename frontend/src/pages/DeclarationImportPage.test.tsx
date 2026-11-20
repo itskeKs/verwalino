@@ -234,13 +234,24 @@ function pendingImport(overrides: Partial<ReturnType<typeof declarationImport>> 
   return { ...declarationImport("DRAFT"), ...overrides };
 }
 
+const NOT_SET_UP = /Der Import von Teilungserklärungen ist für Ihre Organisation nicht eingerichtet\. Bitte wenden Sie sich an Ihre Administration\./;
+const MISSING_READING_MODEL = /Für den Import fehlt das Modell zum Einlesen von Dokumenten\. Bitte wenden Sie sich an Ihre Administration: In den Einstellungen muss unter „Dokumente einlesen“ ein Modell ausgewählt werden\. Hochgeladene Dokumente bleiben erhalten\./;
+
 describe("Teilungserklärung upload wizard", () => {
   it.each([
-    ["draft creation", "/api/declaration-imports"],
-    ["upload", "/api/declaration-imports/import-1/documents"],
-    ["start", "/api/declaration-imports/import-1/start"],
-  ])("explains disabled import after %s without exposing the code or request ID", async (action, endpoint) => {
-    const code = "DECLARATION_IMPORT_DISABLED";
+    ["DECLARATION_IMPORT_DISABLED", "draft creation", "/api/declaration-imports",
+      NOT_SET_UP],
+    ["DECLARATION_IMPORT_DISABLED", "upload", "/api/declaration-imports/import-1/documents",
+      NOT_SET_UP],
+    ["DECLARATION_IMPORT_DISABLED", "start", "/api/declaration-imports/import-1/start",
+      NOT_SET_UP],
+    ["DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING", "draft creation", "/api/declaration-imports",
+      MISSING_READING_MODEL],
+    ["DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING", "upload", "/api/declaration-imports/import-1/documents",
+      MISSING_READING_MODEL],
+    ["DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING", "start", "/api/declaration-imports/import-1/start",
+      MISSING_READING_MODEL],
+  ])("explains the %s refusal after %s (%s) without exposing the code or request ID", async (code, action, endpoint, message) => {
     const requestId = "disabled-import-1234";
     const refusal = jsonResponse({ detail: code }, 503);
     refusal.headers.set("X-Request-ID", requestId);
@@ -270,7 +281,7 @@ describe("Teilungserklärung upload wizard", () => {
       fireEvent.click(start);
     }
 
-    expect(await screen.findByText(/Der Import von Teilungserklärungen ist für Ihre Organisation nicht eingerichtet\. Bitte wenden Sie sich an Ihre Administration\./)).toBeVisible();
+    expect(await screen.findByText(message)).toBeVisible();
     expect(fetchMock).toHaveBeenCalledWith(endpoint, expect.objectContaining({ method: "POST" }));
     expect(screen.queryByText(new RegExp(`${code}|Request-ID|${requestId}`))).not.toBeInTheDocument();
   });

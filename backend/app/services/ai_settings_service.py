@@ -20,6 +20,10 @@ from app.schemas.ai_settings import AiSettingsOut, AiConfirmationOut, AiModelOut
 # the copy lives in the frontend, the reviewed wording follows #26.
 AI_PROVIDER_CONFIRMATION_VERSION = '1'
 
+# Why the declaration import cannot run for an organization (structured, never message text).
+DECLARATION_IMPORT_DISABLED = 'DECLARATION_IMPORT_DISABLED'
+DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING = 'DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING'
+
 CONFIRMATION_REQUIRED_MESSAGE = ('Bitte bestätigen Sie vor dem Speichern, dass Ihre Organisation '
     'den Anbieter selbst ausgewählt und beauftragt hat und den Betreiber anweist, '
     'Dokumente und extrahierte Texte an diesen Anbieter zu übermitteln.')
@@ -64,6 +68,19 @@ async def matching_confirmation(db, organization_id, provider, base_url):
         .where(OrganizationAiConfirmation.organization_id == organization_id, *_confirmation_match(provider, base_url))
         .order_by(OrganizationAiConfirmation.confirmed_at.desc(), OrganizationAiConfirmation.id.desc())
         .limit(1))).first()
+
+
+def declaration_import_blocker(effective: EffectiveAiSettings) -> str | None:
+    """The one decision whether the declaration import may run: None, or the code naming what is missing.
+
+    The import needs the organization's switch, key and extraction model; reading the pages needs the document
+    reading model as well, which an administrator chooses and no upgrade or default ever fills in.
+    """
+    if not effective.import_enabled or not effective.api_key or not effective.model:
+        return DECLARATION_IMPORT_DISABLED
+    if not effective.document_model:
+        return DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING
+    return None
 
 
 async def effective_ai_settings(db, organization_id) -> EffectiveAiSettings:

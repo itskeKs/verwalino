@@ -34,6 +34,7 @@ const RETRYABLE_FAILURE_CODES = new Set([
 
 const FAILURE_MESSAGES: Record<string, string> = {
   DECLARATION_IMPORT_DISABLED: "Der Import von Teilungserklärungen ist für Ihre Organisation nicht eingerichtet. Bitte wenden Sie sich an Ihre Administration.",
+  DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING: "Für den Import fehlt das Modell zum Einlesen von Dokumenten. Bitte wenden Sie sich an Ihre Administration: In den Einstellungen muss unter „Dokumente einlesen“ ein Modell ausgewählt werden. Hochgeladene Dokumente bleiben erhalten.",
   ORGANIZATION_AI_BUDGET_EXCEEDED: "Das monatliche KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den Betreiber.",
   JOB_PRINCIPAL_UNVERIFIED: "Für diesen älteren Auftrag ist kein bestätigter Auslöser gespeichert. Ein berechtigter Benutzer kann ihn erneut starten.",
   JOB_PERMISSION_CHANGED: "Die Berechtigung des auslösenden Benutzers gilt nicht mehr. Ein berechtigter Benutzer kann den Import erneut starten.",

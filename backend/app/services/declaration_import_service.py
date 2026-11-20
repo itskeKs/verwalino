@@ -18,7 +18,6 @@ from app.repositories.property_document_repo import PropertyDocumentRepository
 from app.repositories.property_repo import PropertyRepository
 from app.services.property_document_service import PropertyDocumentService
 
-DECLARATION_IMPORT_DISABLED = "DECLARATION_IMPORT_DISABLED"
 ACTIVE_OR_COMPLETE_STATUSES = {
     "QUEUED", "PREFLIGHT", "EXTRACTING", "RECONCILING", "RETRY_WAIT",
     "NEEDS_REVIEW", "APPLYING", "APPLIED",
@@ -26,11 +25,11 @@ ACTIVE_OR_COMPLETE_STATUSES = {
 
 
 async def require_declaration_import_enabled(db, organization_id) -> None:
-    """Reject write-side import work when the deployment switch is off."""
-    from app.services.ai_settings_service import effective_ai_settings
-    effective = await effective_ai_settings(db, organization_id)
-    if not effective.import_enabled or not effective.api_key or not effective.model:
-        raise HTTPException(status_code=503, detail=DECLARATION_IMPORT_DISABLED)
+    """Reject write-side import work unless the organization's AI settings allow the import to run."""
+    from app.services.ai_settings_service import declaration_import_blocker, effective_ai_settings
+    blocker = declaration_import_blocker(await effective_ai_settings(db, organization_id))
+    if blocker is not None:
+        raise HTTPException(status_code=503, detail=blocker)
 
 
 class DeclarationImportService:
