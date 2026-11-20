@@ -2279,16 +2279,27 @@ Synthetic Gartenstraße 5, Anna/Karl/Lena paid 7200/2400/2400 EUR; Lena's amount
 
 Einstellungen retains personal design selection for every role. An `OWNER_ADMIN`
 additionally sees „KI für Ihre Organisation“ in a separate existing card. Visible
-labels identify the provider (OpenAI, OpenAI-compatible API, Anthropic), compatible API base URL, the password-only write-only API-key field, model list,
-import/Q&A switches and optional monthly USD limit. The key status explains preserve,
+labels identify the provider (OpenAI, OpenAI-compatible API, Anthropic), compatible API base URL, the password-only write-only API-key field, the model list,
+two model selectors („Dokumente einlesen“, „Informationen extrahieren“), import/Q&A switches and optional monthly USD limit. The key status explains preserve,
 replace and remove behavior; removal turns both functions off. Errors keep useful
 inputs, and a confirmed save clears the typed key and states that the next request
 or job uses the change. Keys are never read back or stored in browser persistence.
 
-All provider-listed model IDs remain selectable in a native select. „geprüft“ means
-actual evaluation promotion evidence; the initial registry is empty. Unknown-price
-models show that their monthly limit is not enforced. German copy explains shared
-UTC monthly reservation accounting and document transmission to the selected provider. Changing provider or endpoint clears the key/model and disables both functions until reconfigured. Local endpoints require an explicit key value, including a placeholder for a service without authentication. The import processing notice names the organization's configured provider rather than OpenAI.
+All provider-listed model IDs remain selectable in two native selects fed from the
+same list: „Dokumente einlesen“ (the document reading model) and „Informationen
+extrahieren“ (the extraction model, also used for property questions); each has one
+sentence of help. The same model may be chosen for both, and saving keeps the choice
+that was not touched. „geprüft“ means actual evaluation promotion evidence; the
+initial registry is empty. A model with an unknown price shows, under the monthly
+limit, one sentence per role: „Für das Modell „Dokumente einlesen“ ist kein Preis
+bekannt. …“ or „Für das Modell „Informationen extrahieren“ ist kein Preis bekannt. …“,
+each stating that the monthly limit is not enforced for it. While the import switch is
+on and no reading model is chosen, a sentence under „Dokumente einlesen“ says that the
+import needs one and that uploaded documents stay. The import screen explains the same
+state in German to every role (structured code
+`DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING`, never shown) and points to the
+administration. German copy explains shared
+UTC monthly reservation accounting and document transmission to the selected provider. Changing provider or endpoint clears the key and both model choices and disables both functions until reconfigured. Local endpoints require an explicit key value, including a placeholder for a service without authentication. The import processing notice names the organization's configured provider rather than OpenAI.
 
 Storing or replacing the key requires the provider confirmation: a checkbox at the
 key field states that the organization chose and contracted the provider itself
@@ -2313,6 +2324,10 @@ the administrator's organization card after this change.
 | Confirmed state | [view](docs/assets/design/ai-settings/ai-confirmation-confirmed-1280.png) | [view](docs/assets/design/ai-settings/ai-confirmation-confirmed-360.png) |
 | Klar (card theme) | [AI card](docs/assets/design/ai-settings/settings-after-klar-1280.png) | [AI card](docs/assets/design/ai-settings/settings-after-klar-360.png) |
 | Warm (card theme) | [AI card](docs/assets/design/ai-settings/settings-after-warm-1280.png) | [AI card](docs/assets/design/ai-settings/settings-after-warm-360.png) |
+| Model roles before (one „Modell“ selector) | [view](docs/assets/design/ai-settings/models-before-1280.png) | [view](docs/assets/design/ai-settings/models-before-360.png) |
+| Model roles after („Dokumente einlesen“, „Informationen extrahieren“) | [view](docs/assets/design/ai-settings/models-after-1280.png) | [view](docs/assets/design/ai-settings/models-after-360.png) |
+| Import on, reading model not chosen | [view](docs/assets/design/ai-settings/models-missing-reading-model-1280.png) | [view](docs/assets/design/ai-settings/models-missing-reading-model-360.png) |
+| Import screen without a reading model | [view](docs/assets/design/ai-settings/models-import-refused-1280.png) | [view](docs/assets/design/ai-settings/models-import-refused-360.png) |
 
 
 Provider selection uses the same settings card and native select. API-Basis-URL appears

@@ -1749,11 +1749,11 @@ run `docker compose down -v` or delete the volumes.
 A deploy workflow that was disabled by hand during a release is re-enabled in the same release,
 before that release is declared done.
 
-## Migration compatibility: 0029–0195
+## Migration compatibility: 0029–0196
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0195 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0196 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -1815,13 +1815,14 @@ before that release is declared done.
 | 0192 (accepted source; parent 0191) | Makes the reversal link of a booked payment immutable once set (issue #688): replaces only the function `trg_payment_immutability()` of 0018 (the trigger is unchanged). On a booked row `reversed_by_id` may now change only from NULL to the id of a booked payment of the same organization whose `reverses_id` is the row's id (`PaymentService.reverse_payment` and the organization import set it exactly so, after the Storno is inserted booked); re-pointing it, clearing it and any other target are refused with a `GoBD: ...` exception like the function's other refusals, and every other check keeps its behaviour. The function now runs with the owner's rights, `search_path=pg_catalog,pg_temp` and row security off, so the lookup of the Storno does not depend on what the acting role may read; it compares the organization of both rows itself. `EXECUTE` is revoked from PUBLIC (a trigger fires without it), so the runtime role cannot attach the function to a table of its own to learn which payment is the Storno of which in another organization. No row is read or rewritten by the migration, and rows already linked unchanged stay as they are (a link that was forged before this revision is not detected or repaired). Downgrade restores the 0018 function exactly (body, invoker rights, no settings, `EXECUTE` for PUBLIC again) and needs no data check. 0191 stays as the rehearsed accepted source. |
 | 0193 (accepted source; parent 0192) | Limits the refusal of a special levy for an unscoped read to what classified data refuses (issue #739): adds the overload `report_scope_source_access(org, sphere, capability, lease, owner)` next to the three-argument function of 0127, which stays as it is for every caller that names neither (the organization-wide overviews, exports, SEPA, the policies of 0075). For an unscoped read that names exactly one lease or one owner, the overload answers as the function did before 0127 when none of the properties that lease or owner touches has classified finance (`property_has_classified_finance`, which counts the levy's property); the properties are resolved inside the function from the row ids, only among rows of the caller's organization (lease: its unit; owner: the units of its ownership entries that were not corrected, its payments, the lines of its plans, its levy allocations), so an unknown id or one of another organization concerns no property. In every other case it is the three-argument function. The overload has the same attributes (definer rights, `search_path=pg_catalog,pg_temp`, row security off, `EXECUTE` revoked from PUBLIC and granted to `app_rw`). No row is read or rewritten by the migration and no data can be lost: downgrade drops the overload and needs no data check. 0192 stays as the accepted source. |
 | 0194 (accepted source; parent 0193) | The debt of a lease counts every booked payment of that lease for the period, whichever accounting scope's account received it (issue #803): adds the function `lease_payments_outside_scope(org, lease, listed)`. A rent statement of one scope used to count the lease's full rent as owed but only the payments row security let that scope read, so two rental scopes that cover one lease each showed the other scope's payments as unpaid. The function returns the booked payments of the one lease the request names that the caller did not read (`listed` holds the ids it did read, so none counts twice): type, direction, amount, assigned month, value date and booking time, never an id, account, counterparty, text or scope. It answers only where the statement is admitted: for the caller's organization and where `payment_computation_context_valid` (0036) accepts the lease, which for a selected scope also asks for the caller's live `read` grant, a scope whose financial inputs are classified and a lease whose unit the scope covers, so an unknown id, a lease of another organization, a lease outside the selected scope and a caller without a grant get no rows. The function has definer rights, `search_path=pg_catalog,pg_temp`, row security off, `EXECUTE` revoked from PUBLIC and granted to `app_rw`. No row is read or rewritten by the migration and no data can be lost: downgrade drops the function and needs no data check; the statement then counts only the payments of the selected scope again. Existing payments, scope bindings and statements of single-scope leases are unchanged. 0193 stays as the accepted source. |
-| 0195 (head; parent 0194) | The organization import restores a dunning notice that another user prepared, with the archived preparer as its preparer (issue #694, ADR 0016): replaces only the function `protect_dunning_context()` of 0039 (`CREATE OR REPLACE`; definer rights, `search_path=pg_catalog,pg_temp`, both advisory locks and the ACL stay). Its condition that `created_by` of a new context is the signed-in user gets one alternative: the transaction-local setting `app.organization_import_dunning_context`, which only the import sets around the insert of one context, names this context's notice and its `created_by`, and `created_by` is an inactive account of the same organization with the unusable password `!` (the placeholder the import writes for an archived user; a colleague deactivated in the user list keeps their password and is none). Every other condition stays for the signed-in user (organization, selected scope, live `prepare` grant, a context that precedes its notice), and a context stays immutable (UPDATE and DELETE are refused, setting or not). No row is read or rewritten by the migration and no data can be lost: downgrade restores the text of 0039 and needs no data check; an import then refuses a notice another user prepared again at `dunning_scope_context`. Existing contexts and notices are unchanged. 0194 stays as the accepted source. |
+| 0195 (accepted source; parent 0194) | The organization import restores a dunning notice that another user prepared, with the archived preparer as its preparer (issue #694, ADR 0016): replaces only the function `protect_dunning_context()` of 0039 (`CREATE OR REPLACE`; definer rights, `search_path=pg_catalog,pg_temp`, both advisory locks and the ACL stay). Its condition that `created_by` of a new context is the signed-in user gets one alternative: the transaction-local setting `app.organization_import_dunning_context`, which only the import sets around the insert of one context, names this context's notice and its `created_by`, and `created_by` is an inactive account of the same organization with the unusable password `!` (the placeholder the import writes for an archived user; a colleague deactivated in the user list keeps their password and is none). Every other condition stays for the signed-in user (organization, selected scope, live `prepare` grant, a context that precedes its notice), and a context stays immutable (UPDATE and DELETE are refused, setting or not). No row is read or rewritten by the migration and no data can be lost: downgrade restores the text of 0039 and needs no data check; an import then refuses a notice another user prepared again at `dunning_scope_context`. Existing contexts and notices are unchanged. 0194 stays as the accepted source. |
+| 0196 (head; parent 0195) | Adds the nullable `organization_ai_settings.document_model`, the organization's document reading model (issue #499, ADR 0017); the existing `model` stays the extraction and property Q&A model. The migration reads and rewrites no row: `model` and every other column stay as they are, `document_model` is NULL for every organization after the upgrade and is never filled in on an administrator's behalf, so the declaration import refuses to run (`DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING`) until an administrator chooses a reading model, while uploaded originals stay. No grant changes (the table grant covers the column). Downgrade refuses while any organization has chosen a reading model ("Configured document reading models require this release") and otherwise drops the column, so no data can be lost. 0195 stays as the accepted source. |
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0195 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0195, 0139→0195 and accepted-source 0140→0195, 0141→0195 and
-0142→0195, 0143→0195, 0144→0195, 0145→0195, 0146→0195, 0147→0195, 0148→0195, 0149→0195, 0150→0195, 0151→0195, 0152→0195, 0153→0195, 0154→0195, 0155→0195, 0159→0195, 0160→0195, 0161→0195, 0162→0195, 0163→0195, 0164→0195, 0165→0195, 0166→0195, 0167→0195, 0168→0195, 0169→0195, 0170→0195, 0171→0195, 0172→0195, 0173→0195, 0174→0195, 0175→0195, 0176→0195, 0177→0195, 0178→0195, 0179→0195, 0180→0195, 0181→0195 and 0182→0195 (accepted sources), 0183→0195, 0184→0195 and 0185→0195 rehearsals, and the 0187→0188 rehearsal of the new tables, also
+0028→0196 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0196, 0139→0196 and accepted-source 0140→0196, 0141→0196 and
+0142→0196, 0143→0196, 0144→0196, 0145→0196, 0146→0196, 0147→0196, 0148→0196, 0149→0196, 0150→0196, 0151→0196, 0152→0196, 0153→0196, 0154→0196, 0155→0196, 0159→0196, 0160→0196, 0161→0196, 0162→0196, 0163→0196, 0164→0196, 0165→0196, 0166→0196, 0167→0196, 0168→0196, 0169→0196, 0170→0196, 0171→0196, 0172→0196, 0173→0196, 0174→0196, 0175→0196, 0176→0196, 0177→0196, 0178→0196, 0179→0196, 0180→0196, 0181→0196 and 0182→0196 (accepted sources), 0183→0196, 0184→0196 and 0185→0196 rehearsals, and the 0187→0188 rehearsal of the new tables, also
 compare existing ACLs, allowing only the explicit organization INSERT/reserve UPDATE revocations and the capability-checked
 0159 binding adapter and the 0168 column-level resolution-link grant;
 it does not prove live data validity or cross-version runtime compatibility.
@@ -1897,10 +1898,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0195**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0196**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0195**,
-**0122 → 0195**, **0139 → 0195**, **0140 → 0195**, **0141 → 0195**, **0142 → 0195**, **0143 → 0195**, **0144 → 0195**, **0145 → 0195**, **0146 → 0195**, **0147 → 0195**, **0148 → 0195**, **0149 → 0195**, **0150 → 0195**, **0151 → 0195**, **0152 → 0195**, **0153 → 0195**, **0154 → 0195**, **0155 → 0195**, **0159 → 0195**, **0160 → 0195**, **0161 → 0195**, **0162 → 0195**, **0163 → 0195**, **0164 → 0195**, **0165 → 0195**, **0166 → 0195** (accepted sources), **0167 → 0195** (accepted source), **0168 → 0195** (accepted source), **0169 → 0195** (accepted source), **0170 → 0195** (accepted source), **0171 → 0195** (accepted source), **0172 → 0195** (accepted source), **0173 → 0195** (accepted source), **0174 → 0195** (accepted source), **0175 → 0195** (accepted source), **0176 → 0195** (accepted source), **0177 → 0195**, **0178 → 0195**, **0179 → 0195**, **0180 → 0195**, **0181 → 0195**, **0182 → 0195**, **0183 → 0195**, **0184 → 0195**, **0185 → 0195** or **0186 → 0195**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0196**,
+**0122 → 0196**, **0139 → 0196**, **0140 → 0196**, **0141 → 0196**, **0142 → 0196**, **0143 → 0196**, **0144 → 0196**, **0145 → 0196**, **0146 → 0196**, **0147 → 0196**, **0148 → 0196**, **0149 → 0196**, **0150 → 0196**, **0151 → 0196**, **0152 → 0196**, **0153 → 0196**, **0154 → 0196**, **0155 → 0196**, **0159 → 0196**, **0160 → 0196**, **0161 → 0196**, **0162 → 0196**, **0163 → 0196**, **0164 → 0196**, **0165 → 0196**, **0166 → 0196** (accepted sources), **0167 → 0196** (accepted source), **0168 → 0196** (accepted source), **0169 → 0196** (accepted source), **0170 → 0196** (accepted source), **0171 → 0196** (accepted source), **0172 → 0196** (accepted source), **0173 → 0196** (accepted source), **0174 → 0196** (accepted source), **0175 → 0196** (accepted source), **0176 → 0196** (accepted source), **0177 → 0196**, **0178 → 0196**, **0179 → 0196**, **0180 → 0196**, **0181 → 0196**, **0182 → 0196**, **0183 → 0196**, **0184 → 0196**, **0185 → 0196** or **0186 → 0196**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 
@@ -2540,9 +2541,10 @@ process, and schedule the command using their existing operations mechanism.
 Hosted and self-hosted organizations bring their own provider key. An `OWNER_ADMIN`
 opens **Einstellungen → KI für Ihre Organisation**, selects the provider and optional
 compatible base URL (0179), enters the key, loads that provider's model list,
-chooses one model and enables import and/or property questions. Existing 0178
+chooses the models and enables import and/or property questions. Existing 0178
 settings retain their OpenAI destination when upgraded. The
-same model handles extraction, escalation and Q&A. Every provider-listed model is
+extraction model handles extraction, escalation and Q&A; since 0196 a second model
+reads documents (see below). Every provider-listed model is
 selectable; a provider may reject a model that lacks required capabilities. A
 rejected key or unavailable list produces a German error. There is currently no
 verified model-promotion evidence in this release, so no model is marked „geprüft“;
@@ -2634,5 +2636,29 @@ a numeric ledger placeholder is never displayed as free usage.
 Migration 0179 preserves existing encrypted settings and adds the optional compatible
 endpoint and provider constraint. Downgrade refuses configured non-OpenAI destinations
 rather than silently losing their configuration. Existing rows keep their OpenAI
-origin and credentials. 0180 is an accepted source for upgrades to 0195 alongside the
+origin and credentials. 0180 is an accepted source for upgrades to 0196 alongside the
 previous sources; production moves only through a reviewed release.
+
+### Document reading and extraction models (0196)
+
+An organization chooses two models of its one provider: **Dokumente einlesen**
+(`document_model`, reads the pages of a document) and **Informationen extrahieren**
+(`model`, extraction, assignments, rechecks and property questions). Both come from the
+same provider model list and use the same endpoint, request timeout and key; the same
+model may serve both roles, and saving one choice keeps the other. The settings read
+model reports the price status of each (`price_known`, `document_price_known`); the
+monthly limit is not enforced for an unpriced model. Changing provider or API address
+clears both choices. Neither model change is part of the `ai_settings.updated` audit
+diff. See [ADR 0017](docs/adr/0017-model-document-reading-replaces-tesseract.md).
+
+**Upgrade action:** 0196 leaves `model` as it was and sets no reading model for any
+organization. None is chosen automatically, also not the extraction model, and no
+default or price list picks one. The declaration import needs both models: until an
+administrator chooses „Dokumente einlesen“, creating a draft, uploading a document and
+starting or retrying an import answer 503 `DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING`
+(the import screen says that the administration has to choose a reading model), the
+worker leaves queued imports untouched, and the settings card names what is missing.
+An organization without switch, key or extraction model keeps
+`DECLARATION_IMPORT_DISABLED`. Uploaded originals and their listing stay available;
+property questions need only the extraction model. No restart or `.env` change is needed.
+

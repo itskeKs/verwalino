@@ -16,8 +16,9 @@ paths:
 
 - Every model call goes through a provider protocol: `DeclarationExtractionProvider` in
   `backend/app/declarations/provider.py` for imports, `KnowledgeAnswerProvider` in
-  `declarations/knowledge_provider.py` for property questions. Do not import the OpenAI SDK
-  elsewhere.
+  `declarations/knowledge_provider.py` for property questions, `DocumentReadingProvider` in
+  `declarations/provider.py` for reading a rendered page into a typed transcript with the organization's
+  document reading model. Do not import the OpenAI SDK elsewhere.
 - Reservation, usage and cost accounting live in `declarations/pipeline.py` (`add_usage`,
   `settle_reservation`, `charge_reservation`) with the per-run cap `declaration_max_cost_usd`;
   `core/runtime_budget.py` holds the QA policy checks. The pipeline fails closed when a cap or
@@ -41,4 +42,6 @@ paths:
   records (`declarations/observability.py`) and logs carry identifiers, versions, hashes and
   usage, never document text.
 - The provider-neutral runtime (#66) uses the existing typed interfaces and deterministic
-  manager; see ADR 0014. OCR as a separate service (#65) remains an open decision.
+  manager; see ADR 0014. Model-based reading with two model roles replaces Tesseract path by path
+  (#65, ADR 0017): a path that reads with a model has no Tesseract step or fallback, and there is no
+  separate OCR service.
