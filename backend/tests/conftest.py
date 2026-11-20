@@ -829,11 +829,19 @@ def isolate_diagnostics_directory(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def declaration_pages_with_text_use_the_text_layer(monkeypatch):
+def declaration_pages_with_text_use_the_text_layer():
     """Since #499 a page whose text layer has fewer than ``declaration_text_min_chars`` characters goes to the
     reading model. The pipeline tests that are not about reading use short synthetic pages: they keep the text
-    layer, and a test that wants a scan brings an image-only PDF or its own preflight."""
-    monkeypatch.setattr(settings, 'declaration_text_min_chars', 1)
+    layer, and a test that wants a scan brings an image-only PDF or its own preflight.
+
+    No ``monkeypatch`` here: an autouse fixture that requests it would be set up before the engine fixture, so a
+    test's own patches would outlive that fixture's teardown."""
+    previous = settings.declaration_text_min_chars
+    settings.declaration_text_min_chars = 1
+    try:
+        yield
+    finally:
+        settings.declaration_text_min_chars = previous
 
 
 @pytest.fixture
