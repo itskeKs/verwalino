@@ -38,10 +38,10 @@ _ACTIVE_ACTIONS = {
 # A page without a usable text layer; the reading model reads it (``PdfPreflight.render_page_for_reading``).
 IMAGE_PAGE_SOURCE = "IMAGE"
 # A page image sent to the reading model has at most this many pixels; a larger render is scaled down, never
-# refused. An A4 page at the worker's 180 dpi (1,489 x 2,105 = 3.1 million pixels) passes unchanged. The bound
-# keeps the conservative image reservation of the transports that publish no formula (one token per 14 x 14
-# pixel patch, 20,409 tokens at the bound) far below the import input budget, and every documented provider
-# resizes beyond roughly this size before it reads the image anyway.
+# refused. An A4 page (595 x 842 points) at the worker's 180 dpi (1,488 x 2,105 = 3.1 million pixels) passes
+# unchanged. The bound keeps the conservative image reservation of the transports that publish no formula (one
+# token per 14 x 14 pixel patch, 20,409 tokens at the bound) far below the import input budget, and every
+# documented provider resizes beyond roughly this size before it reads the image anyway.
 READING_MAX_IMAGE_PIXELS = 4_000_000
 
 

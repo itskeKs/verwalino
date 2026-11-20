@@ -102,7 +102,9 @@ class Settings(BaseSettings):
     declaration_ocr_max_pixels_per_page: int = 20_000_000
     declaration_ocr_max_temp_bytes: int = 256 * 1024 * 1024
     declaration_ocr_max_pages_per_import: int = 200
-    # 200 scanned A4 pages at the render ceiling of 4,000,000 pixels (READING_MAX_IMAGE_PIXELS in the preflight).
+    # The count is taken from the page size at 180 dpi, before the image is scaled to the render ceiling of
+    # 4,000,000 pixels (READING_MAX_IMAGE_PIXELS in the preflight). An A4 page (595 x 842 points) counts 3,132,240
+    # pixels, so 200 A4 pages and the rechecks fit; larger formats reach the bound earlier (A3 at page 128).
     # A scan reaches that many pages only within the upload limit of 25 MiB per PDF (declaration_max_pdf_bytes).
     declaration_ocr_max_pixels_per_import: int = 800_000_000
     declaration_preflight_deadline_seconds: int = 600

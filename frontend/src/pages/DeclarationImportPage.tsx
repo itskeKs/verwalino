@@ -44,7 +44,7 @@ const FAILURE_MESSAGES: Record<string, string> = {
   DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING: `Für den Import fehlt das Modell zum Einlesen von Dokumenten. Bitte wenden Sie sich an Ihre Administration: ${CHOOSE_READING_MODEL}. Hochgeladene Dokumente bleiben erhalten.`,
   DOCUMENT_MODEL_NOT_CONFIGURED: `Für den Import fehlt das Modell zum Einlesen von Dokumenten. ${ORIGINAL_KEPT} Bitte wenden Sie sich an Ihre Administration: ${CHOOSE_READING_MODEL}, das Bilder lesen kann.`,
   PROVIDER_IMAGE_INPUT_UNSUPPORTED: `Das Modell unter „Dokumente einlesen“ kann keine Bilder lesen, deshalb konnten die Seiten nicht eingelesen werden. ${ORIGINAL_KEPT} Bitte wenden Sie sich an Ihre Administration: ${CHOOSE_READING_MODEL}, das Bilder lesen kann.`,
-  OPENAI_REQUEST_FAILED: `Der Anbieter hat die Anfrage abgelehnt. ${ORIGINAL_KEPT} Die Administration kann in den Einstellungen die gewählten Modelle unter „Dokumente einlesen“ und „Informationen extrahieren“ prüfen.`,
+  OPENAI_REQUEST_FAILED: `Die Anfrage an den Anbieter ist fehlgeschlagen. ${ORIGINAL_KEPT} Die Administration kann in den Einstellungen die gewählten Modelle unter „Dokumente einlesen“ und „Informationen extrahieren“ prüfen.`,
   PROVIDER_REFUSAL: `Das Modell hat sich geweigert, das Dokument zu verarbeiten. ${ORIGINAL_KEPT} Bitte wenden Sie sich an Ihre Administration: ${CHOOSE_OTHER_MODEL}`,
   PROVIDER_SCHEMA_FAILURE: `Das Modell hat keine auswertbare Antwort geliefert. ${ORIGINAL_KEPT} Bitte wenden Sie sich an Ihre Administration: ${CHOOSE_OTHER_MODEL}`,
   IMPORT_TOKEN_BUDGET_EXCEEDED: `Das Tokenlimit für diesen Import ist erreicht. Das Einlesen der Seiten und das Extrahieren der Informationen zählen zusammen. ${ORIGINAL_KEPT} ${SMALLER_IMPORT}`,

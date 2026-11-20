@@ -82,7 +82,7 @@ for the reading model.
 | rendered pixels per page (render bound) | 20,000,000 |
 | pixels of a page image sent to the reading model | 4,000,000 (a larger render is scaled down, never refused) |
 | temporary render data of one page render (released when the render ends) | 256 MiB |
-| pages / pixels read per import | 200 / 800,000,000 (200 scanned A4 pages at the 4,000,000-pixel render ceiling) |
+| pages / pixels read per import | 200 / 800,000,000 (counted from the page size at 180 dpi before scaling to the render ceiling: an A4 page counts 3,132,240 pixels, so 200 A4 pages and the rechecks fit; larger formats reach the bound earlier, A3 at page 128) |
 | precheck deadline | 600 seconds |
 | provider pages / characters per batch | 20 / 80,000 |
 | input / output tokens per import | 2,500,000 / 500,000 |
@@ -141,7 +141,10 @@ provider, endpoint, timeout and key. One page is one request; a failed page is r
   and is reached first on a dearer model. The upload limit of 25 MiB per PDF bounds a large scan
   first: 200 pages in high resolution can exceed it before the page limit is reached. The
   organization's monthly limit counts a running import at its cap when its extraction model or its
-  reading model is priced.
+  reading model is priced. A running import therefore holds up to the per-import cost limit (3.00 USD)
+  against the monthly limit, and an organization whose monthly limit is lower cannot start an import
+  with a priced model: start and retry refuse it with `ORGANIZATION_AI_BUDGET_EXCEEDED`, checked for the
+  extraction and for the reading model.
 - **Resume.** Each finished page transcript is saved with the call's settled usage in one
   transaction (`declaration_page_reading`, migration 0196; working data of the import, written by
   the worker only). A transcript is kept as long as the import's documents, until the organization

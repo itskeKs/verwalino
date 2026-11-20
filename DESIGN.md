@@ -2341,7 +2341,8 @@ the runtime. Every block is a definition list that is one column up to 640 px an
 above, with the usage vocabulary of the total: „Eingabetoken“/„Ausgabetoken“ for provider-reported
 usage; „Reservierte …“ while usage is unknown, with the sentence that the Reservierung stays in
 the budget; „Gemeldete …“ and „Konservativ erfasste …“ together when only part was reported;
-„Tokenverbrauch unbekannt“ when nothing is known. The cost reads „Geschätzte Kosten“ for reported
+„Tokenverbrauch unbekannt“ when nothing is known, without a cost row (there is nothing to price).
+The cost reads „Geschätzte Kosten“ for reported
 usage and „Konservative Kostenschätzung“ otherwise, in USD with at most six decimals, or „kein
 Preis bekannt“ for a model without a price, never 0,00 USD. A stage that made no call has no block
 (a text-layer document shows no „Dokumente einlesen“; a run that failed in reading shows no
@@ -2349,6 +2350,8 @@ Preis bekannt“ for a model without a price, never 0,00 USD. A stage that made 
 what its ledger entries report; whatever the run total holds beyond that (a reservation no entry
 attributes, for example of a call that was cancelled) is a third block „Nicht zugeordnet“ with the
 wording for reserved tokens, shown only while it is not zero, so that the blocks add up to „Gesamt“.
+While the run is still open, that block says instead: „Reserviert für den Aufruf, der gerade läuft. Nach
+dessen Abschluss wird der Verbrauch der Stufe zugeordnet.“
 A run with tokens and no entry shows that block and the total. A run with neither a stage nor such a
 remainder keeps the model name and the total as before. Nothing scrolls horizontally at 360 px.
 

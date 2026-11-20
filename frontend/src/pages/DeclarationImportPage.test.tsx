@@ -451,7 +451,7 @@ describe("Teilungserklärung upload wizard", () => {
   it.each([
     ["DOCUMENT_MODEL_NOT_CONFIGURED", /Für den Import fehlt das Modell zum Einlesen von Dokumenten\..*unter „Dokumente einlesen“ ein Modell ausgewählt werden, das Bilder lesen kann/],
     ["PROVIDER_IMAGE_INPUT_UNSUPPORTED", /Das Modell unter „Dokumente einlesen“ kann keine Bilder lesen.*ein Modell ausgewählt werden, das Bilder lesen kann/],
-    ["OPENAI_REQUEST_FAILED", /Der Anbieter hat die Anfrage abgelehnt\..*Die Administration kann in den Einstellungen die gewählten Modelle unter „Dokumente einlesen“ und „Informationen extrahieren“ prüfen\./],
+    ["OPENAI_REQUEST_FAILED", /Die Anfrage an den Anbieter ist fehlgeschlagen\..*Die Administration kann in den Einstellungen die gewählten Modelle unter „Dokumente einlesen“ und „Informationen extrahieren“ prüfen\./],
     ["PROVIDER_REFUSAL", /Das Modell hat sich geweigert.*anderes Modell/],
     ["PROVIDER_SCHEMA_FAILURE", /Das Modell hat keine auswertbare Antwort geliefert.*anderes Modell/],
     ["IMPORT_TOKEN_BUDGET_EXCEEDED", /Das Tokenlimit für diesen Import ist erreicht\. Das Einlesen der Seiten und das Extrahieren der Informationen zählen zusammen/],

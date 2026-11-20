@@ -14,8 +14,8 @@ The reading stage of the declaration import needs three more things, all in this
   recomputed on every run), hence the table. Only the worker writes it, and a guard fences each insert to the
   live lease with the existing worker effect receipt, like the other import outputs. Reading follows the access to the import's
   other source data (``property_import_runtime_access``), so the recorded evaluation can re-check the quotes
-  of a finished import against the text they were taken from. The transcripts stay with the import, like its
-  original; they leave the database with it (cascade) and with the organization (erasure).
+  of a finished import against the text they were taken from. The transcripts are kept as long as the import's
+  documents, until the organization is erased; nothing cascades them away earlier.
 * the pass-ledger validator accepts the pass id ``read_page``.
 * ``organization_ai_monthly_usage`` holds a RUNNING run at its cap (``greatest(max_cost_usd, estimated)``) when
   its extraction model or its reading model is priced, with the same provider guard as before for both; it
@@ -23,8 +23,9 @@ The reading stage of the declaration import needs three more things, all in this
   running import counted at what was already charged.
 
 ``downgrade()`` refuses while a reading model or a reading-pass record is stored, so that neither is discarded
-silently; the older runtime has no reading role and would run the import without it. The page transcripts are
-dropped with their table: they are re-readable working data of the import, and a resumed job reads them again.
+silently; the older runtime has no reading role and would run the import without it. The page transcripts of
+every import, finished ones included, are dropped with their table: they are working data copied from the
+originals, which stay, and a resumed job reads them again.
 
 Revision ID: 0196
 Revises: 0195
@@ -133,7 +134,8 @@ def downgrade():
       THEN RAISE EXCEPTION 'Configured document reading models require this release'; END IF; END $$""")
     op.execute("""DO $$ BEGIN IF EXISTS(SELECT 1 FROM declaration_import_pass WHERE safe_metadata->>'pass_id'='read_page')
       THEN RAISE EXCEPTION 'Reading pass records require this release'; END IF; END $$""")
-    # The page transcripts are working data of an import that is still running; a resumed job reads them again.
+    # The page transcripts of every import, finished ones included, are working data copied from the originals,
+    # which stay; a resumed job reads them again.
     op.execute('DROP TABLE public.declaration_page_reading')
     op.execute('DROP FUNCTION public.guard_declaration_page_reading()')
     op.execute('DROP FUNCTION public.declaration_page_reading_readable(uuid,uuid)')
