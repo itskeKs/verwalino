@@ -103,7 +103,9 @@ credential fields in structured audit payloads. Global authentication/setup/sign
 and throttle tables are outside the export. So are the organization's AI settings (the key and
 the two model choices, „Dokumente einlesen“ and „Informationen extrahieren“) and the page
 transcripts of declaration imports (`declaration_page_reading`): the transcripts are working data
-copied from originals that the archive does contain, and after an import an administrator
+copied from originals that the archive does contain. They are kept as long as the import's documents
+(until the organization is erased) and are not exported, so after a restore the evidence re-check of a
+scanned import in the recorded evaluation is `UNAVAILABLE`, and after an import an administrator
 chooses the models again. The model names of finished runs stay with the run
 (`declaration_extraction_run.model_name`, `document_model_name`). Special levy allocation rows that a later change of
 ownership superseded are exported with their markers (`special_levy_allocation_supersession`), and an

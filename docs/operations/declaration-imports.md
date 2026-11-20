@@ -72,8 +72,8 @@ default ten documents and 500 pages per import. The precheck rejects unreadable,
 encrypted or active PDFs as well as embedded files. It uses the text layer first; a page with
 fewer than `HV_DECLARATION_TEXT_MIN_CHARS` (40) characters of it is read by the reading model
 instead. There is no local text recognition in this path. The page count and pixel
-bounds of all such pages are reserved in the precheck, so that an import over a bound stops before
-the first model call. The `HV_DECLARATION_OCR_*` keys keep their names and now bound the rendering
+bounds of all such pages of all documents of the import are reserved in the precheck, before the
+first model call, so that an import over a bound costs no reading at all. The `HV_DECLARATION_OCR_*` keys keep their names and now bound the rendering
 for the reading model.
 
 | Area | Default limit |
@@ -81,14 +81,14 @@ for the reading model.
 | render resolution / time per page for reading | 180 DPI / 30 seconds |
 | rendered pixels per page (render bound) | 20,000,000 |
 | pixels of a page image sent to the reading model | 4,000,000 (a larger render is scaled down, never refused) |
-| temporary render data per import | 256 MiB |
-| pages / pixels read per import | 200 / 400,000,000 |
+| temporary render data of one page render (released when the render ends) | 256 MiB |
+| pages / pixels read per import | 200 / 800,000,000 (200 scanned A4 pages at the 4,000,000-pixel render ceiling) |
 | precheck deadline | 600 seconds |
 | provider pages / characters per batch | 20 / 80,000 |
 | input / output tokens per import | 2,500,000 / 500,000 |
 | output tokens per provider call | 12,000 |
 | recheck pages / recheck calls | 12 / 2 |
-| candidates / estimated import cost | 5,000 / 1.00 USD |
+| candidates / estimated import cost | 5,000 / 3.00 USD |
 
 Every **Evidence-Quote** must appear locally on the exact
 `(document_key, pdf_page)` given. The validator normalizes Unicode, line breaks,
@@ -122,9 +122,11 @@ provider, endpoint, timeout and key. One page is one request; a failed page is r
   starts answer `DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING`, the worker leaves queued imports
   untouched, and a job that nevertheless reaches the reading stage ends with
   `DOCUMENT_MODEL_NOT_CONFIGURED`. Uploaded originals stay.
-- **No fallback.** A model that cannot take the image (recognised by the HTTP status of the
-  rejected request, never by message text) ends the job with `PROVIDER_IMAGE_INPUT_UNSUPPORTED`; a
-  refusal or malformed answer with `PROVIDER_REFUSAL` or `PROVIDER_SCHEMA_FAILURE`. The application
+- **No fallback.** A model that cannot take the image (recognised by the status 415 or, for a 400
+  or 422, by the structured identifiers of the provider's error object, its `param` naming the image
+  part or an image `code`; never by message text) ends the job with
+  `PROVIDER_IMAGE_INPUT_UNSUPPORTED`; any other rejected request with `OPENAI_REQUEST_FAILED`, as in
+  the extraction passes; a refusal or malformed answer with `PROVIDER_REFUSAL` or `PROVIDER_SCHEMA_FAILURE`. The application
   never switches model or provider. A reading failure ends the run; the job is `RETRY_WAIT` for
   a retryable code and `FAILED` otherwise.
 - **Metering.** Before each call the worker reserves the page at the reading model's price (an
@@ -135,12 +137,18 @@ provider, endpoint, timeout and key. One page is one request; a failed page is r
   usage the provider reported; when it reported none, the reservation stays recorded. An
   unpriced model is not limited and shown as „kein Preis bekannt“. The token limits (2,500,000
   input, 500,000 output) are sized for the 200 dense scanned pages the page limit permits, with the
-  derivation beside them in `app/core/config.py`; the cost limit of 1.00 USD stays the money guard
-  and is reached first on a dearer model.
+  derivation beside them in `app/core/config.py`; the cost limit of 3.00 USD stays the money guard
+  and is reached first on a dearer model. The upload limit of 25 MiB per PDF bounds a large scan
+  first: 200 pages in high resolution can exceed it before the page limit is reached. The
+  organization's monthly limit counts a running import at its cap when its extraction model or its
+  reading model is priced.
 - **Resume.** Each finished page transcript is saved with the call's settled usage in one
   transaction (`declaration_page_reading`, migration 0196; working data of the import, written by
-  the worker only, removed with the import and its organization, not exported). A resumed job
-  neither asks for nor pays for a page it already holds. A job keeps the extraction and reading
+  the worker only). A transcript is kept as long as the import's documents, until the organization
+  is erased; nothing deletes it earlier. It is not part of the organization export
+  ([export](organization-export.md)), so after a restore the evidence re-check of a scanned import
+  in the recorded evaluation is `UNAVAILABLE`. A resumed job neither asks for nor pays for a page it
+  already holds. A job keeps the extraction and reading
   model of its first run (`declaration_extraction_run.model_name`, `document_model_name`): a
   settings change applies to new jobs only.
 - **Outcome on the import screen.** Every failure above has a German sentence in
@@ -151,9 +159,13 @@ provider, endpoint, timeout and key. One page is one request; a failed page is r
 - **Cost view.** `GET /api/declaration-imports/{id}` lists per run the stages `READING` and
   `EXTRACTION` (model, usage status, reported and conservatively recorded tokens, cost or none for an
   unpriced model) built from the pass ledger (`pass_id` `read_page` for reading) and the run row; a
-  stage that made no call, such as the reading of a text-layer document, has no entry. The import
-  and review screens show them as „Dokumente einlesen“ and „Informationen extrahieren“ before the
-  run total.
+  stage that made no call, such as the reading of a text-layer document, has no entry. A stage shows
+  only what its ledger entries report. What the run total holds beyond that (a reservation that no
+  entry attributes, for example of a call that was cancelled) is the separate `unassigned` item
+  (tokens and cost, or no cost when a model of the run has no price), never assigned to a stage by
+  inference; it is absent when zero. The stages and `unassigned` add up to the run's tokens and cost.
+  The import and review screens show them as „Dokumente einlesen“, „Informationen extrahieren“ and
+  „Nicht zugeordnet“ before the run total.
 
 ## Provider Failures, Recovery and Safe Telemetry
 

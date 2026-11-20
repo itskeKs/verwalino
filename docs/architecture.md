@@ -374,7 +374,8 @@ The extraction passes run with the organization's extraction model, which also d
 recheck, exclusively on router-selected pages. Reading and extraction are metered in one
 ledger by the model that made each call (reserve before, settle after, usage of failed calls
 kept), count together against the import and monthly budgets, and are shown apart per run
-in the cost view. A finished page transcript is saved per import (`declaration_page_reading`)
+in the cost view. A finished page transcript is saved per import (`declaration_page_reading`; kept as long as the
+import's documents and not exported, see the runbook)
 so that a resumed job does not read or pay for it again; a job keeps the two model identities
 of its first run. Luna `low`, Terra, and the variant with a
 mini router are eval configurations, not productive auto-promotion. Each

@@ -31,8 +31,9 @@ Tesseract: a motivation, no quality guarantee. A separate OCR service is superse
 `DocumentReadingProvider.read_page` takes one rendered PNG page (source identity, page number) and the
 reading model and returns a `PageTranscript` (ordered `TEXT`, `TABLE` and `UNREADABLE` blocks, the marker
 `[unreadable]`) with the call's `ProviderUsage`; the OpenAI, compatible and Anthropic transports implement it.
-One page is one request; an unsupported image is recognised by the HTTP status of the rejected request, never
-by message text. Prompt `reading-v1`, schema `reading-1`; extraction prompt `declaration-v4`. Routing is
+One page is one request; an unsupported image is recognised by the status 415 or, for a 400 or 422, by the
+structured identifiers of the provider's error object that name the image part, never by message text; any
+other rejected request keeps the code of an extraction pass. Prompt `reading-v1`, schema `reading-1`; extraction prompt `declaration-v4`. Routing is
 unchanged, as the owner decision names none: pages with fewer than `declaration_text_min_chars` characters in
 the text layer go to the model, the others keep the deterministic text path.
 
@@ -42,8 +43,11 @@ the text layer go to the model, the others keep the deterministic text path.
   both stages count against the import and monthly budgets. Usage of failed calls stays; an unknown usage
   keeps its reservation. A finished page transcript is saved with its settled usage
   (`declaration_page_reading`, 0196); a resumed job reads and pays for no page twice and keeps the two
-  model identities of its first run.
-- The cost view lists the stages apart, then the total. Failure codes have German texts on the import
+  model identities of its first run. Transcripts are kept as long as the import's documents (until the
+  organization is erased) and are not part of the organization export, so after a restore the evidence
+  re-check of a scanned import is unavailable.
+- The cost view lists the stages apart, then what no ledger entry attributes to a stage („Nicht zugeordnet“),
+  then the total; the lines add up to the total. Failure codes have German texts on the import
   screen (original kept, nothing applied, what to do). The browser twin chooses two models in the
   settings and runs offline providers; no live provider run belongs to this ADR.
 - Consequences: organizations with import enabled choose a reading model before their next import;
