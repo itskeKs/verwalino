@@ -86,12 +86,14 @@ def open_statement(browser_world):
     browser_world.run(run())
 
 
-@then("the statement shows 100,00 € and no 1.000,00 €")
-def statement_scoped(browser_world):
+@then("the statement shows 1.000,00 € paid, 900,00 € of it from other accounting scopes")
+def statement_across_scopes(browser_world):
     async def run():
-        table = browser_world.page.locator(".info-table")
-        await expect(table.get_by_role("cell", name=euro("100.00"), exact=True)).to_be_visible()
-        await expect(table.get_by_role("cell", name=euro("1000.00"), exact=True)).to_have_count(0)
+        # 100,00 € were paid into this scope's account, 900,00 € into the other one's: the debt counts both.
+        await browser_world.row("Ist gesamt", euro("1000.00"))
+        await browser_world.row("davon Zahlungen aus anderen Abrechnungskreisen", euro("900.00"))
+        # The other scope's money is one summed amount: no second place names it.
+        await expect(browser_world.page.get_by_text(euro("900.00"), exact=True)).to_have_count(1)
     browser_world.run(run())
 
 
@@ -134,10 +136,10 @@ def open_open_items(browser_world):
     browser_world.run(run())
 
 
-@then("the open items show 7.100,00 € outstanding")
+@then("the open items show 6.200,00 € outstanding")
 def open_items_amount(browser_world):
     async def run():
-        await expect(browser_world.page.get_by_text(f"{euro('7100.00')} offen", exact=True)).to_be_visible()
+        await expect(browser_world.page.get_by_text(f"{euro('6200.00')} offen", exact=True)).to_be_visible()
     browser_world.run(run())
 
 
@@ -163,7 +165,7 @@ def open_items_blocked(browser_world):
 def no_false_empty(browser_world):
     async def run():
         page = browser_world.page
-        await expect(page.get_by_text(f"{euro('7100.00')} offen", exact=True)).to_have_count(0)
+        await expect(page.get_by_text(f"{euro('6200.00')} offen", exact=True)).to_have_count(0)
         await expect(page.get_by_text("Keine offenen Posten", exact=False)).to_have_count(0)
     browser_world.run(run())
 

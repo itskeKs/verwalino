@@ -59,7 +59,8 @@ async def test_statement_requires_complete_current_property_and_contact_sources(
     async with synthetic_enforcement(scope_seed), client(ids) as api:
         params = {'accounting_scope_id': str(ids['scope']), 'period_start': '2025-01-01', 'period_end': '2025-12-31'}
         result = await api.get(url(ids, kind), params=params)
-        assert result.status_code == 200 and result.json()['ist_total'] == '100.00', result.text
+        # A lease's debt also counts the 900.00 booked into the second scope's account; an owner's account does not.
+        assert result.status_code == 200 and result.json()['ist_total'] == ('1000.00' if kind == 'lease' else '100.00'), result.text
         # Counterparty source revocation must not silently become a zero report.
         async with client(ids, 'actor') as admin:
             assert (await admin.post(f'/api/person-data-domains/{contact_domain}/grants/{contact_receipt}/revoke')).status_code == 204

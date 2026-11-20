@@ -1,12 +1,13 @@
 """Dunning snapshots retain exact scope through creation, issue, export and privacy."""
 import uuid
 from datetime import date
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import text
 
 from tests.test_financial_scope_boundary import worker_tenant as worker_tenant, scope_seed as scope_seed
-from tests.test_scoped_account_statements import statement_fixture, client, mutate
+from tests.test_scoped_account_statements import add_payments, fetch, statement_fixture, client, mutate
 
 pytestmark = pytest.mark.asyncio
 
@@ -58,7 +59,9 @@ async def test_created_draft_is_readable_at_response_start(creation_case, app_rw
             response = await writer.post(f'/api/dunning/{kind}', json=body)
         assert response.status_code == 201, response.text
         assert observed == [response.json()['id']], 'Draft not committed at http.response.start'
-        assert response.json()['principal_amount'] == ('7100.00' if kind == 'tenant' else '1100.00')
+        # Tenant: 11 months of 500.00 rent and 12 x 100.00 advance are open; June's rent was paid twice over
+        # (100.00 + 900.00 into the two scopes), which is no credit against another type or month.
+        assert response.json()['principal_amount'] == ('6700.00' if kind == 'tenant' else '1100.00')
         assert [row['id'] for row in (await api.get('/api/dunning')).json()] == observed
 
 
@@ -122,7 +125,7 @@ async def test_scoped_dunning_distinguishes_prepare_approve_export_and_revocatio
         created = await api.post('/api/dunning/tenant', json=tenant_body(ids))
         assert created.status_code == 201, created.text
         notice = created.json()
-        assert notice['principal_amount'] == '7100.00'
+        assert notice['principal_amount'] == '6700.00'
         assert notice['accounting_scope_id'] == str(ids['scope'])
         assert (await api.post(f"/api/dunning/{notice['id']}/issue")).status_code == 404
     async with client(ids, 'actor') as admin:
@@ -525,3 +528,75 @@ async def test_raw_dated_successor_guard_keeps_plan_scope_period_and_recipient_b
                     await transaction.rollback()
     finally:
         await engine.dispose()
+
+
+async def tenant_notice(api, ids, period_start, period_end, reference_date, scope='scope'):
+    return await api.post('/api/dunning/tenant', json={
+        'tenant_profile_id': str(ids['profile']), 'lease_agreement_id': str(ids['lease']), 'accounting_scope_id': str(ids[scope]),
+        'period_start': period_start, 'period_end': period_end, 'reference_date': reference_date})
+
+
+async def test_a_month_paid_across_two_scopes_has_no_arrears_and_no_notice(migrator_session, scope_seed):
+    ids = await statement_fixture(migrator_session, scope_seed, 'lease')
+    await grant(ids, ['read', 'prepare'])
+    # June owes 500.00 rent and 100.00 advance. The rent was paid 100.00 into the first scope's account and
+    # 900.00 into the second one's, the advance 100.00 into the second one's: nothing is open for June.
+    await add_payments(ids, {'amount': '100.00', 'type': 'NK_VORAUSZAHLUNG'})
+    async with client(ids) as api:
+        june = await tenant_notice(api, ids, '2025-06-01', '2025-06-30', '2025-07-15')
+        assert june.status_code == 422, june.text
+        assert 'No overdue items' in june.json()['detail']
+        assert (await api.get('/api/dunning')).json() == []
+        # July has no payment at all: the notice demands 500.00 rent and 100.00 advance, as in every scope.
+        july = await tenant_notice(api, ids, '2025-07-01', '2025-07-31', '2025-07-15')
+        assert july.status_code == 201, july.text
+        assert july.json()['principal_amount'] == '600.00'
+
+
+async def test_interest_of_a_month_settled_late_in_another_scope_runs_only_until_that_payment(migrator_session, scope_seed):
+    ids = await statement_fixture(migrator_session, scope_seed, 'lease')
+    await grant(ids, ['read', 'prepare'])
+    # July rent of 500.00 is due on Thursday 3 July (third working day, § 556b BGB). 100.00 arrived on 1 July in the
+    # first scope's account, 300.00 on 21 July in the second one's; 100.00 rent and the 100.00 advance are still open
+    # on 15 August.
+    await add_payments(
+        ids,
+        {'amount': '100.00', 'month': 7, 'value_date': date(2025, 7, 1), 'bank': ids['bank'], 'scope': ids['scope']},
+        {'amount': '300.00', 'month': 7, 'value_date': date(2025, 7, 21)},
+    )
+    path = '/api/dunning/settings'
+    async with client(ids, 'actor') as admin:
+        original = (await admin.get(path)).json()
+        settings = {key: value for key, value in original.items() if key != 'base_rate_covered_until'}
+        assert (await admin.put(path, json={**settings, 'default_interest_enabled': True})).status_code == 200
+    try:
+        async with client(ids) as api:
+            created = await tenant_notice(api, ids, '2025-07-01', '2025-07-31', '2025-08-15')
+            assert created.status_code == 201, created.text
+            notice = created.json()
+    finally:
+        async with client(ids, 'actor') as admin:
+            assert (await admin.put(path, json={key: value for key, value in original.items() if key != 'base_rate_covered_until'})).status_code == 200
+    rent = next(item for item in notice['interest_snapshot']['items'] if item['payment_type'] == 'KALTMIETE')
+    # 400.00 stay unpaid from 4 July, the first day after the due date, until the day before the payment of
+    # 21 July (17 days), then 100.00 until 15 August (26 days).
+    assert [(row['start'], row['end'], row['days'], row['principal']) for row in rent['segments']] == [
+        ('2025-07-04', '2025-07-20', 17, '400.00'), ('2025-07-21', '2025-08-15', 26, '100.00')]
+    for row in rent['segments']:
+        # Interest = principal x annual rate x days / 365, to within the cent the item's rounding moves between segments.
+        exact = Decimal(row['principal']) * Decimal(row['annual_rate']) * row['days'] / 36500
+        assert abs(Decimal(row['interest']) - exact) <= Decimal('0.01'), row
+    assert notice['principal_amount'] == '200.00'
+
+
+async def test_a_notice_names_nothing_of_the_payments_of_another_scope(migrator_session, scope_seed):
+    ids = await statement_fixture(migrator_session, scope_seed, 'lease')
+    await grant(ids, ['read', 'prepare', 'approve', 'export'])
+    await mutate(text('UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE organization_id=:org AND scope_id=:second_scope AND user_id=:clerk AND revoked_at IS NULL'), ids)
+    hidden = await fetch('SELECT id::text FROM payment WHERE bank_account_id=:second_bank', ids)
+    async with client(ids) as api:
+        created = await tenant_notice(api, ids, '2025-01-01', '2025-12-31', '2026-01-15')
+        assert created.status_code == 201, created.text
+        for response in (created, await api.get(f"/api/dunning/{created.json()['id']}")):
+            for secret in (hidden, str(ids['second_bank']), str(ids['second_scope']), 'Second account', 'Second statement sphere'):
+                assert secret not in response.text, secret

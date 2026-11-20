@@ -1558,3 +1558,30 @@ def test_a_twelve_month_plan_from_the_15th_clamps_only_its_first_instalment(sale
     start, end = date(2026, 7, 15), date(2027, 7, 14)
     assert _amounts(_sale_charges('12000.00', sale_day, _KARL, start=start, end=end)) == karl
     assert _amounts(_sale_charges('12000.00', sale_day, _LENA, start=start, end=end)) == lena
+
+
+def test_payments_of_other_accounting_scopes_count_like_any_payment_and_are_summed_up():
+    """#803: 600.00 rent owed in June; 100.00 and 900.00 paid, the 900.00 into another scope, 150.00 paid back there."""
+    lease = LeaseChargeInput(uuid.UUID(int=803), date(2025, 1, 1), None, Decimal('600'), Decimal('0'))
+    charges = tenant_expected_charges(lease, date(2025, 6, 1), date(2025, 6, 30))
+
+    def paid(amount, direction='IN', **kwargs):
+        return PaymentInput(None if kwargs.get('other_scope') else uuid.uuid4(), PT_KALTMIETE, direction, Decimal(amount),
+                            2025, 6, **kwargs)
+
+    own = paid('100.00')
+    elsewhere = [paid('900.00', other_scope=True), paid('150.00', 'OUT', other_scope=True)]
+    result = account_statement(charges, [own, *elsewhere])
+    # Soll 600.00; Ist 100.00 + 900.00 - 150.00 = 850.00, of which 750.00 came from the other scope.
+    assert (result.soll_total, result.ist_total, result.balance, result.other_scope_ist) == (
+        Decimal('600.00'), Decimal('850.00'), Decimal('-250.00'), Decimal('750.00'))
+    assert [(item.ist, item.open_amount) for item in result.open_items if item.payment_type == PT_KALTMIETE] == [
+        (Decimal('850.00'), Decimal('-250.00'))]
+    # The same payments without the mark give the same statement but no summed amount.
+    unmarked = account_statement(charges, [own, *(replace(p, other_scope=False) for p in elsewhere)])
+    assert replace(result, other_scope_ist=None) == unmarked
+    # Reversed payments, reversals and drafts of another scope are not counted, and without any there is no amount.
+    uncounted = [replace(elsewhere[0], is_reversed=True), replace(elsewhere[0], is_reversal=True),
+                 replace(elsewhere[0], is_booked=False)]
+    assert account_statement(charges, [own, *uncounted]).other_scope_ist is None
+    assert account_statement(charges, [own]).other_scope_ist is None

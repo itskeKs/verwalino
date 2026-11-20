@@ -1342,7 +1342,10 @@ required. The 360 px after image scrolls the cost table to the annual amount.
 “Fällig am *” for tenant and owner views, defaulting to the local current date. Changing
 it clears the previous result until “Abrufen” loads the selected cutoff.
 The legacy summary table keeps “Soll gesamt”, “Ist gesamt” and “Saldo”; a positive
-Saldo has no arrears suffix or warning colour. Two rows follow:
+Saldo has no arrears suffix or warning colour. A tenant account whose lease was also
+paid into accounts of other accounting scopes adds the row “davon Zahlungen aus anderen
+Abrechnungskreisen” directly below “Ist gesamt”, one signed amount through `formatMoney`
+and without any payment, account or date; it is absent when no such payment counts. Two rows follow:
 “davon fällig” (positive: “Rückstand”, destructive token; negative: “Guthaben”,
 emerald) and “noch nicht fällig” (neutral). Signed amounts render through `formatMoney`
 (`-600,00 €`). The detail rows keep the same amounts
@@ -1352,6 +1355,15 @@ below the period: “fällig” or “noch nicht fällig” for nonzero signed a
 never carry an arrears label.
 Owner rows also show “Fällig am DD.MM.YYYY” from the backend, including the
 resolved working-day shift. The full-period balance stays visible as the cutoff changes.
+
+Synthetic lease of 600 EUR monthly (500 EUR rent, 100 EUR advance) over 2025, with 100 EUR
+paid into the first rental scope's account and 900 EUR into the second one's in June,
+read in the first scope:
+
+| Summary table | 1280 px | 360 px |
+|---|---|---|
+| Before: only the first scope's 100 EUR counts, 7.100,00 € open | [Desktop](docs/assets/design/rent-account-other-scopes/before-1280.png) | [Phone](docs/assets/design/rent-account-other-scopes/before-360.png) |
+| After: both count, 6.200,00 € open | [Desktop](docs/assets/design/rent-account-other-scopes/after-1280.png) | [Phone](docs/assets/design/rent-account-other-scopes/after-360.png) |
 
 The economic-plan detail displays “Fälligkeit: jeweils zum N. des Monats”
 below its title, using the stored day and showing 1 for historical NULL.

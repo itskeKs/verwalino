@@ -59,7 +59,7 @@ it("classifies owner balances at the selected cutoff and displays the resolved d
 it("keeps the full-year balance and labels only the selected cutoff's due part as arrears", async () => {
   vi.mocked(api.leaseStatement).mockResolvedValue({
     soll_total: "10800.00", ist_total: "8900.00", balance: "1900.00",
-    dunning_notices: [], due_balance: "100.00", not_yet_due_balance: "1800.00", open_items: [
+    dunning_notices: [], other_scope_ist: null, due_balance: "100.00", not_yet_due_balance: "1800.00", open_items: [
       { period_year: 2026, period_month: 4, payment_type: "KALTMIETE", soll: "750.00", ist: "650.00", open_amount: "100.00", is_due: true },
       { period_year: 2026, period_month: 11, payment_type: "KALTMIETE", soll: "750.00", ist: "0.00", open_amount: "750.00", is_due: false },
       { period_year: 2026, period_month: 12, payment_type: "KALTMIETE", soll: "750.00", ist: "800.00", open_amount: "-50.00", is_due: false },
@@ -94,6 +94,38 @@ it("keeps the full-year balance and labels only the selected cutoff's due part a
   expect(api.leaseStatement).toHaveBeenLastCalledWith("lease-t12", "2026-01-01", "2026-12-31", undefined, "2026-11-04");
 });
 
+it.each([
+  { other: "900.00", shown: "900,00 €" },
+  { other: "-50.00", shown: "-50,00 €" },
+])("shows what other accounting scopes were paid as one amount below Ist gesamt ($other)", async ({ other, shown }) => {
+  vi.mocked(api.leaseStatement).mockResolvedValue({
+    soll_total: "7200.00", ist_total: "1000.00", balance: "6200.00", other_scope_ist: other,
+    dunning_notices: [], due_balance: "6200.00", not_yet_due_balance: "0.00", open_items: [],
+  });
+  const user = userEvent.setup();
+  render(<MemoryRouter><MietkontoPage /></MemoryRouter>);
+  await user.selectOptions(await screen.findByRole("combobox", { name: "Mietvertrag *" }), "lease-t12");
+  await user.click(screen.getByRole("button", { name: "Abrufen" }));
+  const paid = (await screen.findByText("Ist gesamt", { exact: true })).closest("tr")!;
+  expect(paid).toHaveTextContent("1.000,00 €");
+  const elsewhere = paid.nextElementSibling as HTMLElement;
+  expect(elsewhere).toHaveTextContent("davon Zahlungen aus anderen Abrechnungskreisen");
+  expect(elsewhere).toHaveTextContent(shown);
+});
+
+it("shows no row for other accounting scopes when none of their payments counts", async () => {
+  vi.mocked(api.leaseStatement).mockResolvedValue({
+    soll_total: "7200.00", ist_total: "100.00", balance: "7100.00", other_scope_ist: null,
+    dunning_notices: [], due_balance: "7100.00", not_yet_due_balance: "0.00", open_items: [],
+  });
+  const user = userEvent.setup();
+  render(<MemoryRouter><MietkontoPage /></MemoryRouter>);
+  await user.selectOptions(await screen.findByRole("combobox", { name: "Mietvertrag *" }), "lease-t12");
+  await user.click(screen.getByRole("button", { name: "Abrufen" }));
+  await screen.findByText("Ist gesamt", { exact: true });
+  expect(screen.queryByText(/anderen Abrechnungskreisen/)).not.toBeInTheDocument();
+});
+
 describe("Mietkonto saldo (Soll minus Ist)", () => {
   it.each([
     { ist: "6600.00", balance: "600.00", shown: "600,00 €", label: null, color: "" },
@@ -102,7 +134,7 @@ describe("Mietkonto saldo (Soll minus Ist)", () => {
   ])("shows $balance correctly for 7200.00 Soll and $ist Ist", async ({ ist, balance, shown, label, color }) => {
     vi.mocked(api.leaseStatement).mockResolvedValue({
       soll_total: "7200.00", ist_total: ist, balance,
-      dunning_notices: [], due_balance: balance, not_yet_due_balance: "0.00",
+      dunning_notices: [], other_scope_ist: null, due_balance: balance, not_yet_due_balance: "0.00",
       open_items: [{
         period_year: 2025, period_month: 12, payment_type: "KALTMIETE",
         soll: "500.00", ist: "0.00", open_amount: "500.00", is_due: true,

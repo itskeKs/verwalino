@@ -180,7 +180,7 @@ class PaymentInput:
     has no notion of the DB lifecycle (it just filters on the two booleans).
     """
 
-    payment_id: uuid.UUID
+    payment_id: uuid.UUID | None  # None only for other_scope: known by its amounts, not by an id (#803)
     payment_type: str
     direction: str  # 'IN' | 'OUT'
     amount: Decimal  # always positive; direction carries the sign
@@ -195,6 +195,9 @@ class PaymentInput:
     value_date: date | None = None
     combined_advance: bool = False
     unallocated_advance: bool = False
+    # Paid into an account of another accounting scope than the one the statement reads: counted like any payment
+    # of the lease, and summed up in MietkontoResult.other_scope_ist (#803).
+    other_scope: bool = False
 
     @property
     def signed_amount(self) -> Decimal:
@@ -548,6 +551,9 @@ class MietkontoResult:
     separate due dates for frozen one-off obligations. Totals are cent-exact
     sums (no re-round).
     `balance` = soll_total - ist_total (>0 = owes; <0 = overpaid/credit).
+    `other_scope_ist` is the part of `ist_total` that came from payments marked `other_scope`
+    (a lease's debt counts every booked payment of the lease whichever accounting scope's account
+    received it, #803); None when no such payment counts.
     """
 
     open_items: tuple[OpenItem, ...]
@@ -556,6 +562,7 @@ class MietkontoResult:
     balance: Decimal
     due_balance: Decimal | None = None
     not_yet_due_balance: Decimal | None = None
+    other_scope_ist: Decimal | None = None
 
 
 def _ist_key(p: PaymentInput) -> tuple[int | None, int | None, str]:
@@ -583,6 +590,7 @@ def account_statement(
     bookings without a period are due. No payment allocation or total changes.
     """
     payments = [p for p in payments if p.is_booked and not p.is_reversed and not p.is_reversal]
+    elsewhere = [p.signed_amount for p in payments if p.other_scope]
     heating_periods = {(c.period_year, c.period_month) for c in expected_charges if c.payment_type == PT_HK_VORAUSZAHLUNG}
     combined_prepayments = {(p.period_year, p.period_month) for p in payments if p.combined_advance}
     reconciled_periods = heating_periods & combined_prepayments
@@ -715,6 +723,7 @@ def account_statement(
         balance=_money(soll_total - ist_total),
         due_balance=due_balance,
         not_yet_due_balance=not_yet_due_balance,
+        other_scope_ist=_money(sum(elsewhere, Decimal("0.00"))) if elsewhere else None,
     )
 
 

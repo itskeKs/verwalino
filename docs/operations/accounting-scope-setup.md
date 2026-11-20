@@ -149,6 +149,23 @@ a lease and a WEG scope for an owner; the requested interval must fit the scope.
 An owner statement with a selected economic plan can inherit that plan's scope.
 An explicit different scope is rejected, as is a period outside the scoped plan.
 
+The scope decides which leases and periods a caller may open, not what a lease
+owes. The debt of a lease counts every booked payment of that lease for the
+period, whichever scope's account received it, so two rental scopes that cover
+the same lease and period show the same open amount, and a payment into another
+scope's account never leaves a month unpaid. A caller holding no grant for the
+scope that booked a payment sees it only as one summed amount, “davon Zahlungen
+aus anderen Abrechnungskreisen”, in the rent account: no payment, account, date
+or counterparty of it reaches the response, and a tenant notice names none of
+them either (its interest periods end on the day before such a payment, because
+the interest is computed from the payments). A booked payment of the lease that
+belongs to no scope at all is counted in the same summed amount. Hausgeld
+payments of a WEG scope, deposit payments, payments of another lease of the
+tenant, reversed payments and their reversals, drafts and payments assigned to a
+month outside the requested period never count. Owner accounts and WEG
+statements are unchanged. Nothing prevents two rental scopes on one property;
+a payment on a wrong account is booked as it happened.
+
 The open-items overview is a single database transaction. A failed or denied
 subject blocks the result instead of disappearing from a partial debt list. A
 changed selection clears old results, and query controls stay fixed until the

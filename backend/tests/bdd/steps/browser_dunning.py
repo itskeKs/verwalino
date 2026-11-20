@@ -171,9 +171,11 @@ async def interest_pdf(browser_world):
         await popup.close()
 
 
-@given("a rental agreement with receipts in two separate accounting scopes")
+@given("a rental agreement of 850 EUR rent with receipts in two separate accounting scopes")
 def scoped_rent(world, seed_data):
-    rental(world, seed_data)
+    rental(world, seed_data, advance="0.00")
+    response = world.act("PATCH", f"/api/leases/{world.data['leases'][0]['id']}", json={"base_rent": "850.00"})
+    assert response.status_code == 200, world.describe_response()
     first = world.data["scope"]
     second = create_scope(world, world.data["user_id"], "Zweiter Mietkreis")
     for scope, amount in ((first, "100.00"), (second, "900.00")):
@@ -199,7 +201,8 @@ async def shortcut(browser_world):
     await field(page, "Zeitraum bis *").fill("2026-12-31")
     await browser_world.scope()
     await button(page, "Offene Posten laden").click()
-    await expect(page.get_by_text("10.100,00 € offen", exact=True)).to_be_visible()
+    # 12 x 850,00 € owed, 100,00 € paid into the first scope's account and 900,00 € into the second one's.
+    await expect(page.get_by_text("9.200,00 € offen", exact=True)).to_be_visible()
     await page.get_by_role("link", name="Mahnung erstellen", exact=True).click()
     await expect(page.get_by_role("heading", name="Neue Mahnung anlegen", exact=True)).to_be_visible()
 
@@ -231,10 +234,11 @@ async def create_scoped_notice(browser_world):
     browser_world.world.data["notice_url"] = browser_world.page.url
 
 
-@then("the notice shows only the first scope's outstanding rent")
+@then("the notice demands the eleven months that neither scope was paid for")
 @browser_step
 async def scoped_amount(browser_world):
-    await browser_world.row("Hauptforderung (Rückstand)", "10.100,00 €")
+    # June was paid twice over (1.000,00 € for 850,00 €) and is no arrears; the other eleven months are: 11 x 850,00 €.
+    await browser_world.row("Hauptforderung (Rückstand)", "9.350,00 €")
 
 
 @when('the manager confirms "Entwurf verwerfen"')

@@ -318,6 +318,14 @@ export function MietkontoPage() {
                   {formatMoney(centsFromDecimal(result.ist_total))}
                 </td>
               </tr>
+              {"other_scope_ist" in result && result.other_scope_ist !== null && (
+                <tr>
+                  <td>davon Zahlungen aus anderen Abrechnungskreisen</td>
+                  <td style={{ fontFamily: "var(--mono)" }}>
+                    {formatMoney(centsFromDecimal(result.other_scope_ist))}
+                  </td>
+                </tr>
+              )}
               <tr>
                 <td>
                   <strong>Saldo</strong>

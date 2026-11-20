@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import uuid
 from calendar import monthrange
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
@@ -700,9 +701,17 @@ class PaymentService:
         if prop is None:
             raise HTTPException(404, "Property not found")
         charges = tenant_expected_charges(lc, period_start, period_end, federal_state=prop.federal_state)
+
+        def counted(rows):
+            return [p for p in self._scope_payments_to_period(rows, period_start, period_end) if p.payment_type != "KAUTION"]
+
+        # The debt of a lease counts every booked payment of it, whichever accounting scope's account received it
+        # (#803): the selected scope decides what the caller may open, not what the lease owes. The payments it
+        # cannot read come as amounts only and are shown as one summed amount.
         payments = await self._repo.list_for_lease(lease.id)
-        scoped = self._scope_payments_to_period(payments, period_start, period_end)
-        inputs = await self._tenant_payment_inputs(lease, rent_changes, [p for p in scoped if p.payment_type != "KAUTION"])
+        elsewhere = counted(await self._repo.list_outside_scope_for_lease(lease.id, [p.id for p in payments]))
+        inputs = await self._tenant_payment_inputs(lease, rent_changes, counted(payments))
+        inputs += [replace(row, other_scope=True) for row in await self._tenant_payment_inputs(lease, rent_changes, elsewhere)]
         return account_statement(charges, inputs, as_of=as_of or date.today(), include_payment_dates=include_payment_dates)
 
     async def _owner_plan_inputs(self, plan: EconomicPlan):
@@ -1074,14 +1083,17 @@ class PaymentService:
         return lease, await self._tenant_payment_inputs(lease, history, rows)
 
     async def _tenant_payment_inputs(self, lease, history, rows):
-        candidates = [p.id for p in rows if p.payment_type == "NK_VORAUSZAHLUNG"
-            and p.period_year is not None and 1 <= p.period_year <= 9999 and p.booked_at is not None]
+        def assigned(p):
+            return (p.payment_type == "NK_VORAUSZAHLUNG"
+                    and p.period_year is not None and 1 <= p.period_year <= 9999 and p.booked_at is not None)
+        # A payment of another accounting scope has no id here and its audit rows are as hidden as it is: its
+        # advance assignment is read from the lease history as of its booking, like a legacy payment's.
+        candidates = [p.id for p in rows if assigned(p) and p.id is not None]
         frozen = await self._audit.booked_advance_modes(candidates) if candidates else {}
-        valid_ids = set(candidates)
         inputs = []
         for payment in rows:
             modes = ()
-            if payment.id in valid_ids:
+            if assigned(payment):
                 modes = (frozen[payment.id] if payment.id in frozen
                          else self._assigned_advance_modes(lease, history, payment))
             includes_combined = "COMBINED" in modes

@@ -236,14 +236,31 @@ async def visible_scope_refusal(browser_world):
 @browser_step
 async def retry_with_scope(browser_world):
     await browser_world.scope()
+    # June rent of 850 EUR was paid 100 EUR into the first scope's account and 900 EUR into the second one's.
+    await submit(browser_world, 'Mahnung erstellen', '/api/dunning/tenant', status=422)
+
+
+@then('the form reports that nothing is overdue for June and no draft exists')
+def june_is_paid(browser_world, world):
+    rows = world.act('GET', '/api/dunning', params={'tenant_profile_id': world.data['tenants'][0]['id']})
+    assert rows.status_code == 200 and rows.json() == [], rows.text
+    browser_world.run(expect(browser_world.page.get_by_text(
+        'No overdue items found for this tenant in the given period', exact=True)).to_be_visible())
+
+
+@when('the manager asks for July instead and submits the notice')
+@browser_step
+async def retry_for_july(browser_world):
+    for label, value in (('Zeitraum von *', '2026-07-01'), ('Zeitraum bis *', '2026-07-31')):
+        await field(browser_world.page, label).fill(value)
     browser_world.world.data['scoped_tenant_draft'] = await create_and_open(browser_world, 'tenant')
 
 
-@then('exactly one tenant draft exists and opens with 750 EUR principal')
+@then('exactly one tenant draft exists and opens with 850 EUR principal')
 def scoped_tenant_principal(browser_world, world):
-    browser_world.run(browser_world.row('Hauptforderung (Rückstand)', '750,00 €'))
+    browser_world.run(browser_world.row('Hauptforderung (Rückstand)', '850,00 €'))
     notice = world.data['scoped_tenant_draft']
-    assert notice['principal_amount'] == '750.00'
+    assert notice['principal_amount'] == '850.00'
     rows = world.act('GET', '/api/dunning', params={'tenant_profile_id': world.data['tenants'][0]['id']})
     assert rows.status_code == 200 and [row['id'] for row in rows.json()] == [notice['id']], rows.text
 

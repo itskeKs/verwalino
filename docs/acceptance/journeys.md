@@ -171,7 +171,10 @@ draft, with no reload and no duplicate. The tenant and owner fee checks set the
 standard first fee to 2.50 EUR and enter `0,00` in each form at 1280 and 360 px. The
 saved fee is zero; principal and total match with interest off. Owner drafts show their six months at
 1280 and 360 px. It also checks four-digit principal, interest and open amounts without horizontal
-scrolling at 1280 and 360 px, plus the German issue-time display. Its April
+scrolling at 1280 and 360 px, plus the German issue-time display. Its scope scenario
+explains the missing Abrechnungskreis in German at both widths; with the first scope selected,
+June rent of 850 EUR paid 100 EUR and 900 EUR into the accounts of two scopes yields no notice, and
+a July notice opens with 850 EUR principal. Its April
 scenario checks the explicit `Zinsbeginn: 08.04.2026` in the issued detail at
 both widths and in the downloaded PDF. The separate
 [interest/PDF scenario](../../features/dunning_interest.feature) checks frozen

@@ -33,7 +33,9 @@ async def test_rental_monitor_limits_type_units_and_obligation_period(migrator_s
         assert bk[0]['due_date'] == '2026-12-31'
         assert not any(row['kind'].startswith('WEG') or row['kind'] == 'WIRTSCHAFTSPLAN' for row in rows)
         overdue = next(row for row in rows if row['kind'] == 'OFFENE_POSTEN')
-        assert overdue['detail'].startswith('24 '), overdue  # 12 rental + 12 advance months, one scoped unit
+        # 12 rental + 12 advance months of one scoped unit, less June's rent: 100.00 + 900.00 were paid for it,
+        # one into each rental scope's account, and the lease's debt counts both.
+        assert overdue['detail'].startswith('23 '), overdue
         assert (await api.get('/api/fristen', params={'reference_date': '2026-12-31'})).status_code == 409
 
 
