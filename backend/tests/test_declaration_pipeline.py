@@ -31,7 +31,8 @@ from app.declarations.pipeline import (
     _values_semantically_equal,
 )
 from app.declarations.openai_provider import OpenAiDeclarationProvider
-from app.declarations.preflight import DocumentIntegrityError, PdfPreflight, TesseractOcrEngine
+from app.declarations.fake_provider import FakeDocumentReadingProvider
+from app.declarations.preflight import DocumentIntegrityError, PdfPreflight
 from app.declarations.observability import ProviderPassMetadata
 from app.declarations.provider import DocumentInput, PageInput, ProviderCallResult, ProviderFailure, ProviderReservationEstimate, ProviderUsage
 from app.declarations.schemas import (
@@ -43,6 +44,7 @@ from app.declarations.schemas import (
     IntegerValue,
     MeaFraction,
     ReconciliationOutput,
+    ReadingBlock,
     RuleExtractionOutput,
     RulePayload,
     TargetedRecheckOutput,
@@ -1498,15 +1500,19 @@ def slow_declaration_stage(request, monkeypatch, tmp_path):
             return [str(image_path)]
 
         monkeypatch.setattr("pdf2image.convert_from_bytes", render_page)
-        monkeypatch.setattr("pytesseract.image_to_string", lambda *args, **kwargs: "Teilungserklärung Hauptstraße 1")
         provider = _RecordingProvider(document_key)
         if stage == "recheck":
             provider.reconciliation_output.facts[0].evidence[0].quote = "nicht vorhandene Formulierung"
         preflight = PdfPreflight(
             text_min_chars=1000 if stage == "preflight" else 1,
-            ocr_engine=TesseractOcrEngine(temporary_root=tmp_path),
+            temporary_root=tmp_path,
         )
-        pipeline = DeclarationPipeline(provider, store=store, preflight=preflight)
+        reader = FakeDocumentReadingProvider(
+            transcripts={(document_key, 1): [ReadingBlock(kind="TEXT", text="Teilungserklärung Hauptstraße 1")]}
+        )
+        pipeline = DeclarationPipeline(
+            provider, store=store, preflight=preflight, reading_provider=reader, reading_model="gpt-5.4-mini"
+        )
         return pipeline, provider, gate
 
     return prepare
@@ -1528,7 +1534,8 @@ async def test_slow_declaration_processing_renews_the_lease_and_publishes_once(
             DeclarationExtractionRun.import_id == lease.import_id,
         ))).all()
     assert item.status == "NEEDS_REVIEW" and item.error_code is None
-    assert item.attempt_count == len(provider.calls)
+    # The reading of a page without a text layer is an attempt of the job beside the extraction passes.
+    assert item.attempt_count == len(provider.calls) + len(pipeline._reading_provider.reads)
     assert [(run.status, run.error_code) for run in runs] == [("SUCCEEDED", None)]
 
 
@@ -1884,7 +1891,7 @@ async def test_vision_render_failure_never_calls_recheck_and_persists_page_block
     provider.reconciliation_output.facts[0].evidence[0].quote = "nicht vorhandene Formulierung"
 
     await DeclarationPipeline(
-        provider, store=store, preflight=_FailingVisionPreflight()
+        provider, store=store, preflight=_FailingVisionPreflight(text_min_chars=1)
     ).run(lease)
 
     assert provider.calls == ["inventory", "extract_core", "extract_rules", "reconcile"]

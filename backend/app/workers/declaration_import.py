@@ -9,13 +9,12 @@ import math
 import os
 import secrets
 import shutil
-import subprocess
 import uuid
 
 from app.core.request_id import correlation_context
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -41,7 +40,6 @@ logger = logging.getLogger(__name__)
 _PIPELINE_ENTRY_STATUSES = {"QUEUED", "RETRY_WAIT"}
 _REQUIRED_IMPORT_COLUMNS = {"lease_token", "lease_generation", "lease_expires_at", "queue_request_id",
                             "approval_request_digest", "publication_domain_id", "publication_grant_id"}
-_HEALTHCHECK_TESSERACT_TIMEOUT_SECONDS = 5
 # Fixed cadence cap for the bounded never-confirmed sign-up cleanup; the
 # eligibility window itself lives in 0144's cleanup_signup_requests().
 SIGNUP_CLEANUP_INTERVAL_SECONDS = 60
@@ -181,6 +179,7 @@ class DeclarationImportWorker:
             async with self._tenant_session_factory(organization_id) as session:
                 from app.services.ai_settings_service import (
                     AiKeyUnreadableError,
+                    declaration_import_blocker,
                     effective_ai_settings,
                 )
 
@@ -194,7 +193,7 @@ class DeclarationImportWorker:
                             organization_id,
                         )
                     continue
-                if not effective.import_enabled or not effective.api_key or not effective.model:
+                if declaration_import_blocker(effective) is not None:
                     continue
                 self._active_ai = effective
                 lease = await DeclarationImportRepository(
@@ -267,6 +266,7 @@ class DeclarationImportWorker:
                     getattr(effective, "provider", None), "CompatibleDeclarationProvider"
                 ),
                 model_name=getattr(effective, "model", None) or "unknown",
+                document_model_name=getattr(effective, "document_model", None),
                 prompt_version=self._settings.declaration_prompt_version,
                 schema_version=self._settings.declaration_schema_version,
                 harness_version=self._settings.declaration_harness_version,
@@ -321,12 +321,25 @@ class DeclarationImportWorker:
     async def _run_claimed(self, lease: WorkerLease) -> WorkerResult:
         pipeline = self._pipeline
         owned_provider = None
+        owned_reader = None
         if pipeline is None:
-            from app.declarations.provider_runtime import create_extraction_provider
+            from app.declarations.provider_runtime import create_extraction_provider, create_reading_provider
             from app.declarations.pipeline import DeclarationPipeline
             effective = self._active_ai
+            # A job keeps the extraction and reading model it started with: a settings change since then
+            # applies to new jobs only (ADR 0017).
+            async with self._tenant_session_factory(lease.organization_id) as session:
+                identities = await DeclarationImportRepository(session, lease.organization_id).job_model_identities(lease.import_id)
+            if identities is not None:
+                effective = replace(effective, model=identities[0], document_model=identities[1])
             owned_provider = create_extraction_provider(effective)
-            pipeline = DeclarationPipeline(owned_provider, tenant_session_factory=self._tenant_session_factory)
+            owned_reader = create_reading_provider(effective)
+            pipeline = DeclarationPipeline(
+                owned_provider,
+                reading_provider=owned_reader,
+                reading_model=effective.document_model,
+                tenant_session_factory=self._tenant_session_factory,
+            )
         pipeline_task = asyncio.create_task(pipeline.run(lease))
         heartbeat_task = asyncio.create_task(self._heartbeat(lease))
         try:
@@ -369,17 +382,18 @@ class DeclarationImportWorker:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(pipeline_task, heartbeat_task, return_exceptions=True)
-            if owned_provider is not None and owned_provider._client is not None:
-                await owned_provider._client.close()
+            for owned in (owned_provider, owned_reader):
+                if owned is not None and owned._client is not None:
+                    await owned._client.close()
 
     async def run_once(self, *, organization_id: uuid.UUID | None = None) -> WorkerResult:
         # A disabled import feature must not acquire a lease or invoke external
         # parsing. The independent healthcheck still probes worker readiness.
         if organization_id is not None:
-            from app.services.ai_settings_service import effective_ai_settings
+            from app.services.ai_settings_service import declaration_import_blocker, effective_ai_settings
             async with self._tenant_session_factory(organization_id) as session:
                 effective = await effective_ai_settings(session, organization_id)
-            if not effective.import_enabled or not effective.api_key or not effective.model:
+            if declaration_import_blocker(effective) is not None:
                 return WorkerResult("DECLARATION_IMPORT_DISABLED")
         if not await self.schema_ready():
             return WorkerResult("SCHEMA_NOT_READY")
@@ -474,7 +488,6 @@ async def run_healthcheck(
         [], AbstractAsyncContextManager[AsyncSession]
     ] = get_worker_unscoped_session,
     binary_finder: Callable[[str], str | None] = shutil.which,
-    command_runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     random_name: Callable[[], str] = lambda: secrets.token_hex(16),
     fsync: Callable[[int], None] = os.fsync,
 ) -> bool:
@@ -482,16 +495,7 @@ async def run_healthcheck(
     try:
         async with unscoped_session_factory() as session:
             await session.execute(select(Organization.id).limit(1))
-        if any(binary_finder(name) is None for name in ("qpdf", "pdftoppm", "tesseract")):
-            return False
-        languages = command_runner(
-            ["tesseract", "--list-langs"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=_HEALTHCHECK_TESSERACT_TIMEOUT_SECONDS,
-        )
-        if languages.returncode != 0 or "deu" not in (languages.stdout or "").splitlines():
+        if any(binary_finder(name) is None for name in ("qpdf", "pdftoppm")):
             return False
 
         healthcheck_directory = Path(configured.document_storage_root) / ".healthcheck"

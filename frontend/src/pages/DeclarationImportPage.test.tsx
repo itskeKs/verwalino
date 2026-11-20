@@ -234,13 +234,24 @@ function pendingImport(overrides: Partial<ReturnType<typeof declarationImport>> 
   return { ...declarationImport("DRAFT"), ...overrides };
 }
 
+const NOT_SET_UP = /Der Import von Teilungserklärungen ist für Ihre Organisation nicht eingerichtet\. Bitte wenden Sie sich an Ihre Administration\./;
+const MISSING_READING_MODEL = /Für den Import fehlt das Modell zum Einlesen von Dokumenten\. Bitte wenden Sie sich an Ihre Administration: In den Einstellungen muss unter „Dokumente einlesen“ ein Modell ausgewählt werden\. Hochgeladene Dokumente bleiben erhalten\./;
+
 describe("Teilungserklärung upload wizard", () => {
   it.each([
-    ["draft creation", "/api/declaration-imports"],
-    ["upload", "/api/declaration-imports/import-1/documents"],
-    ["start", "/api/declaration-imports/import-1/start"],
-  ])("explains disabled import after %s without exposing the code or request ID", async (action, endpoint) => {
-    const code = "DECLARATION_IMPORT_DISABLED";
+    ["DECLARATION_IMPORT_DISABLED", "draft creation", "/api/declaration-imports",
+      NOT_SET_UP],
+    ["DECLARATION_IMPORT_DISABLED", "upload", "/api/declaration-imports/import-1/documents",
+      NOT_SET_UP],
+    ["DECLARATION_IMPORT_DISABLED", "start", "/api/declaration-imports/import-1/start",
+      NOT_SET_UP],
+    ["DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING", "draft creation", "/api/declaration-imports",
+      MISSING_READING_MODEL],
+    ["DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING", "upload", "/api/declaration-imports/import-1/documents",
+      MISSING_READING_MODEL],
+    ["DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING", "start", "/api/declaration-imports/import-1/start",
+      MISSING_READING_MODEL],
+  ])("explains the %s refusal after %s (%s) without exposing the code or request ID", async (code, action, endpoint, message) => {
     const requestId = "disabled-import-1234";
     const refusal = jsonResponse({ detail: code }, 503);
     refusal.headers.set("X-Request-ID", requestId);
@@ -270,7 +281,7 @@ describe("Teilungserklärung upload wizard", () => {
       fireEvent.click(start);
     }
 
-    expect(await screen.findByText(/Der Import von Teilungserklärungen ist für Ihre Organisation nicht eingerichtet\. Bitte wenden Sie sich an Ihre Administration\./)).toBeVisible();
+    expect(await screen.findByText(message)).toBeVisible();
     expect(fetchMock).toHaveBeenCalledWith(endpoint, expect.objectContaining({ method: "POST" }));
     expect(screen.queryByText(new RegExp(`${code}|Request-ID|${requestId}`))).not.toBeInTheDocument();
   });
@@ -434,6 +445,47 @@ describe("Teilungserklärung upload wizard", () => {
     renderImportRoute("/teilungserklaerung/import/import-1");
     expect(await screen.findByText(/Das monatliche KI-Budget ist ausgeschöpft/)).toBeVisible();
     expect(screen.queryByRole("button", { name: "Erneut versuchen" })).toBeNull();
+  });
+
+  const KEPT = /Das hochgeladene Dokument bleibt erhalten; es wurde nichts übernommen\./;
+  it.each([
+    ["DOCUMENT_MODEL_NOT_CONFIGURED", /Für den Import fehlt das Modell zum Einlesen von Dokumenten\..*unter „Dokumente einlesen“ ein Modell ausgewählt werden, das Bilder lesen kann/],
+    ["PROVIDER_IMAGE_INPUT_UNSUPPORTED", /Das Modell unter „Dokumente einlesen“ kann keine Bilder lesen.*ein Modell ausgewählt werden, das Bilder lesen kann/],
+    ["OPENAI_REQUEST_FAILED", /Die Anfrage an den Anbieter ist fehlgeschlagen\..*Die Administration kann in den Einstellungen die gewählten Modelle unter „Dokumente einlesen“ und „Informationen extrahieren“ prüfen\./],
+    ["PROVIDER_REFUSAL", /Das Modell hat sich geweigert.*anderes Modell/],
+    ["PROVIDER_SCHEMA_FAILURE", /Das Modell hat keine auswertbare Antwort geliefert.*anderes Modell/],
+    ["IMPORT_TOKEN_BUDGET_EXCEEDED", /Das Tokenlimit für diesen Import ist erreicht\. Das Einlesen der Seiten und das Extrahieren der Informationen zählen zusammen/],
+    ["IMPORT_COST_BUDGET_EXCEEDED", /Das Kostenlimit für diesen Import ist erreicht\. Das Einlesen der Seiten und das Extrahieren der Informationen zählen zusammen/],
+    ["ORGANIZATION_AI_BUDGET_EXCEEDED", /Das monatliche KI-Budget ist ausgeschöpft\. Bitte wenden Sie sich an den Betreiber\./],
+    ["PAGE_RENDER_TIMEOUT", /Das Aufbereiten einer Seite hat zu lange gedauert/],
+    ["PAGE_RENDER_UNAVAILABLE", /Eine Seite des Dokuments konnte nicht zum Einlesen aufbereitet werden/],
+  ])("explains the failure %s in German, keeps the original and says nothing was applied", async (code, explanation) => {
+    vi.spyOn(declarationApi, "getDeclarationImport").mockResolvedValue(
+      pendingImport({ status: "FAILED", error_code: code, error_message: code }),
+    );
+    vi.spyOn(declarationApi, "listDeclarationDocuments").mockResolvedValue([]);
+    vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation(() => () => undefined);
+    renderImportRoute("/teilungserklaerung/import/import-1");
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/Verarbeitung fehlgeschlagen\./);
+    expect(alert).toHaveTextContent(explanation);
+    expect(alert).toHaveTextContent(KEPT);
+    expect(alert).not.toHaveTextContent(code);
+    expect(screen.queryByRole("button", { name: "Erneut versuchen" })).toBeNull();
+  });
+
+  it("never shows a raw code for a failure it has no text for", async () => {
+    vi.spyOn(declarationApi, "getDeclarationImport").mockResolvedValue(
+      pendingImport({ status: "FAILED", error_code: "SOME_FUTURE_CODE", error_message: "SOME_FUTURE_CODE" }),
+    );
+    vi.spyOn(declarationApi, "listDeclarationDocuments").mockResolvedValue([]);
+    vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation(() => () => undefined);
+    renderImportRoute("/teilungserklaerung/import/import-1");
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Der Import kann nicht fortgesetzt werden.");
+    expect(alert).not.toHaveTextContent("SOME_FUTURE_CODE");
   });
 
   it("restores uploaded documents from a draft URL and continues at the highest sequence", async () => {

@@ -100,7 +100,14 @@ The manifest lists inaccessible entities and excluded column names. It never
 reports hidden row IDs or hidden counts. Password hashes, authentication/reset
 tokens, worker lease tokens and session generations are excluded, including
 credential fields in structured audit payloads. Global authentication/setup/signup
-and throttle tables are outside the export. Special levy allocation rows that a later change of
+and throttle tables are outside the export. So are the organization's AI settings (the key and
+the two model choices, „Dokumente einlesen“ and „Informationen extrahieren“) and the page
+transcripts of declaration imports (`declaration_page_reading`): the transcripts are working data
+copied from originals that the archive does contain. They are kept as long as the import's documents
+(until the organization is erased) and are not exported, so after a restore the evidence re-check of a
+scanned import in the recorded evaluation is `UNAVAILABLE`, and after an import an administrator
+chooses the models again. The model names of finished runs stay with the run
+(`declaration_extraction_run.model_name`, `document_model_name`). Special levy allocation rows that a later change of
 ownership superseded are exported with their markers (`special_levy_allocation_supersession`), and an
 import restores both, so owner accounts, dunning and the settlement count the same rows after a
 restore: only rows without a marker count. The audit entry `special_levy.allocation_moved` is exported
@@ -688,7 +695,7 @@ not an immutable field; a separate minimization policy remains an owner decision
 | `cost_entry` | `document_number`, `owner_distribution_key`, `source`, `status`, `tenant_apportionable`, `tenant_distribution_key` | Frozen voucher content, accounting classifications and computation provenance. |
 | `commercial_preallocation` | `commercial_reason` | Shared position-allocation evidence. The existing guard-based catalog retains the protected rule; normal organization erasure preserves it and the statement's frozen copy under the existing retention decision. |
 | `coverage_declaration` | `component`, `reason`, `source_document_ids`, `source_revision`, `state`, `values` | Retained source, scope or review evidence and its technical provenance. |
-| `declaration_extraction_run` | `error_code`, `harness_version`, `model_name`, `prompt_version`, `provider`, `schema_version`, `status` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `declaration_extraction_run` | `document_model_name`, `error_code`, `harness_version`, `model_name`, `prompt_version`, `provider`, `schema_version`, `status` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
 | `declaration_import` | `approval_idempotency_key`, `approval_request_digest`, `approval_result_json`, `current_stage`, `error_code`, `error_message`, `lease_owner`, `mode`, `status` | Retained source, scope or review evidence and its technical provenance. |
 | `declaration_import_document` | `document_role` | Retained source, scope or review evidence and its technical provenance. |
 | `declaration_import_pass` | `safe_metadata` | Retained source, scope or review evidence and its technical provenance. |

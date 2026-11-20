@@ -351,20 +351,33 @@ deterministic manager**, not a freely autonomous agent. The
 `DeclarationPipeline` owns the fixed pass order, budgets, deadlines,
 reservations, retry limits, local validation, and publication. A
 model receives no tools, no hand-offs, and no action sink. PDF text,
-OCR, and image pages are untrusted data: they may propose facts, but
+page transcripts, and image pages are untrusted data: they may propose facts, but
 may not determine the flow, permissions, or canonical data.
 
+An organization chooses two models of its one provider (ADR 0017): the reading model
+(„Dokumente einlesen“, `document_model`) and the extraction model („Informationen
+extrahieren“, `model`). Both are required for the import; neither is ever chosen for
+the organization, and there is no Tesseract step or fallback in this path.
+
 ```text
-approved PDF -> local pre-check/OCR -> Luna structured outputs
+approved PDF -> local pre-check (text layer, limits)
+  -> pages without a text layer: render locally, one page at a time
+     -> reading model -> page transcript (text, tables, [unreadable])
+  -> extraction model structured outputs on text-layer text and transcripts
   -> exact local evidence-quote validation + domain checks
   -> deterministic RouterDecision
-  -> optional: render selected page locally as PNG -> mini recheck
+  -> optional: render selected page locally as PNG -> recheck with the extraction model
   -> validate again -> NEEDS_REVIEW -> Human Approval
 ```
 
-Luna runs in the product with `reasoning.effort="medium"`. The recheck is limited to
-`gpt-5.4-mini` with `reasoning.effort="none"` and exclusively to
-router-selected pages. Luna `low`, Terra, and the variant with a
+The extraction passes run with the organization's extraction model, which also does the
+recheck, exclusively on router-selected pages. Reading and extraction are metered in one
+ledger by the model that made each call (reserve before, settle after, usage of failed calls
+kept), count together against the import and monthly budgets, and are shown apart per run
+in the cost view. A finished page transcript is saved per import (`declaration_page_reading`; kept as long as the
+import's documents and not exported, see the runbook)
+so that a resumed job does not read or pay for it again; a job keeps the two model identities
+of its first run. Luna `low`, Terra, and the variant with a
 mini router are eval configurations, not productive auto-promotion. Each
 pass is independent: there is no `previous_response_id` and no
 carried-over reasoning state. The provider uses Responses API Structured

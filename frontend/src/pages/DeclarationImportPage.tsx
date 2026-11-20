@@ -32,9 +32,26 @@ const RETRYABLE_FAILURE_CODES = new Set([
   "WORKER_INTERRUPTED",
 ]);
 
+// What every failure of the import says: the original stays and nothing was applied (the job ends before any
+// candidate becomes a fact), and what the user can do.
+const ORIGINAL_KEPT = "Das hochgeladene Dokument bleibt erhalten; es wurde nichts übernommen.";
+const CHOOSE_READING_MODEL = "In den Einstellungen muss unter „Dokumente einlesen“ ein Modell ausgewählt werden";
+const CHOOSE_OTHER_MODEL = "In den Einstellungen kann unter „Dokumente einlesen“ und „Informationen extrahieren“ ein anderes Modell ausgewählt werden.";
+const SMALLER_IMPORT = "Importieren Sie weniger oder kürzere Dokumente in einem Import.";
+
 const FAILURE_MESSAGES: Record<string, string> = {
   DECLARATION_IMPORT_DISABLED: "Der Import von Teilungserklärungen ist für Ihre Organisation nicht eingerichtet. Bitte wenden Sie sich an Ihre Administration.",
-  ORGANIZATION_AI_BUDGET_EXCEEDED: "Das monatliche KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den Betreiber.",
+  DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING: `Für den Import fehlt das Modell zum Einlesen von Dokumenten. Bitte wenden Sie sich an Ihre Administration: ${CHOOSE_READING_MODEL}. Hochgeladene Dokumente bleiben erhalten.`,
+  DOCUMENT_MODEL_NOT_CONFIGURED: `Für den Import fehlt das Modell zum Einlesen von Dokumenten. ${ORIGINAL_KEPT} Bitte wenden Sie sich an Ihre Administration: ${CHOOSE_READING_MODEL}, das Bilder lesen kann.`,
+  PROVIDER_IMAGE_INPUT_UNSUPPORTED: `Das Modell unter „Dokumente einlesen“ kann keine Bilder lesen, deshalb konnten die Seiten nicht eingelesen werden. ${ORIGINAL_KEPT} Bitte wenden Sie sich an Ihre Administration: ${CHOOSE_READING_MODEL}, das Bilder lesen kann.`,
+  OPENAI_REQUEST_FAILED: `Die Anfrage an den Anbieter ist fehlgeschlagen. ${ORIGINAL_KEPT} Die Administration kann in den Einstellungen die gewählten Modelle unter „Dokumente einlesen“ und „Informationen extrahieren“ prüfen.`,
+  PROVIDER_REFUSAL: `Das Modell hat sich geweigert, das Dokument zu verarbeiten. ${ORIGINAL_KEPT} Bitte wenden Sie sich an Ihre Administration: ${CHOOSE_OTHER_MODEL}`,
+  PROVIDER_SCHEMA_FAILURE: `Das Modell hat keine auswertbare Antwort geliefert. ${ORIGINAL_KEPT} Bitte wenden Sie sich an Ihre Administration: ${CHOOSE_OTHER_MODEL}`,
+  IMPORT_TOKEN_BUDGET_EXCEEDED: `Das Tokenlimit für diesen Import ist erreicht. Das Einlesen der Seiten und das Extrahieren der Informationen zählen zusammen. ${ORIGINAL_KEPT} ${SMALLER_IMPORT}`,
+  IMPORT_COST_BUDGET_EXCEEDED: `Das Kostenlimit für diesen Import ist erreicht. Das Einlesen der Seiten und das Extrahieren der Informationen zählen zusammen. ${ORIGINAL_KEPT} ${SMALLER_IMPORT}`,
+  ORGANIZATION_AI_BUDGET_EXCEEDED: `Das monatliche KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den Betreiber. ${ORIGINAL_KEPT}`,
+  PAGE_RENDER_TIMEOUT: `Das Aufbereiten einer Seite hat zu lange gedauert. ${ORIGINAL_KEPT} Bitte laden Sie eine kleinere oder einfachere Datei hoch und starten Sie einen neuen Import.`,
+  PAGE_RENDER_UNAVAILABLE: `Eine Seite des Dokuments konnte nicht zum Einlesen aufbereitet werden. ${ORIGINAL_KEPT} Bitte prüfen Sie, ob sich die PDF-Datei öffnen lässt, und laden Sie sie gegebenenfalls erneut hoch. Besteht das Problem weiter, wenden Sie sich an den Betreiber.`,
   JOB_PRINCIPAL_UNVERIFIED: "Für diesen älteren Auftrag ist kein bestätigter Auslöser gespeichert. Ein berechtigter Benutzer kann ihn erneut starten.",
   JOB_PERMISSION_CHANGED: "Die Berechtigung des auslösenden Benutzers gilt nicht mehr. Ein berechtigter Benutzer kann den Import erneut starten.",
   PROVIDER_TIMEOUT: "Zeitüberschreitung beim Dienstleister. Bitte versuchen Sie den Import erneut.",
@@ -448,7 +465,7 @@ export function DeclarationImportPage() {
         {item?.status === "APPLIED" && <p><strong>Übernommen</strong><br />Der freigegebene Entwurf wurde in das Objekt übernommen.</p>}
         {item?.status === "CANCELLED" && <><p><strong>Abgebrochen</strong><br />{failureMessage ?? "Der Import wurde abgebrochen."}</p>{isRetryable && <button type="button" className="btn btn--primary" disabled={retrying} onClick={() => void retryImport()}>{retrying ? "Wird erneut gestartet…" : "Erneut versuchen"}</button>}</>}
         {item?.status === "FAILED" && <>
-          <p className="error-text" role="alert"><strong>Verarbeitung fehlgeschlagen.</strong><br />{failureMessage ?? item.error_message ?? "Der Import kann nicht fortgesetzt werden."}</p>
+          <p className="error-text" role="alert"><strong>Verarbeitung fehlgeschlagen.</strong><br />{failureMessage ?? "Der Import kann nicht fortgesetzt werden."}</p>
           {isRetryable && <button type="button" className="btn btn--primary" disabled={retrying} onClick={() => void retryImport()}>{retrying ? "Wird erneut gestartet…" : "Erneut versuchen"}</button>}
         </>}
         {!item || ["DRAFT", "QUEUED", "PREFLIGHT", "EXTRACTING", "RECONCILING", "RETRY_WAIT", "APPLYING"].includes(item.status) ? <p className="empty-hint">Noch kein abschließendes Ergebnis.</p> : null}

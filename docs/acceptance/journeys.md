@@ -241,19 +241,28 @@ receipts, the separate deposit, Anlage V income and both CSV totals at desktop a
 **Goal:** Sabine takes over the management of a condominium association (WEG) and does not want to
 type the property in by hand.
 **She does:** looks in Verwalino for the way to upload a declaration of division and uploads
-the [fictional scanned declaration](data/teilungserklaerung-lindenallee-12.pdf). It describes WEG Lindenallee 12, 01234 Musterstadt: apartments 1 and 2 each own 450/1,000; garage G1 owns 100/1,000. The independent expected sum is 450 + 450 + 100 = 1,000, equal to the printed denominator. An administrator first configures the organization OpenAI key/model and enables import in Einstellungen.
+the [fictional scanned declaration](data/teilungserklaerung-lindenallee-12.pdf). It describes WEG Lindenallee 12, 01234 Musterstadt: apartments 1 and 2 each own 450/1,000; garage G1 owns 100/1,000. The independent expected sum is 450 + 450 + 100 = 1,000, equal to the printed denominator. An administrator first stores the organization's provider key in Einstellungen, loads the provider's models and chooses two **different** ones: one under „Dokumente einlesen“ (reads the pages, must take images) and one under „Informationen extrahieren“. They save, reload the page and see both choices unchanged, and enable the import. The same model may be chosen for both roles; this journey uses two.
 **Expected:**
 - Either Verwalino creates a property from it with all units, per unit the number, the kind
   (apartment, garage, …) and the co-ownership share, and the shares add up to the denominator of
-  the declaration of division; for that Sabine checks some units against the document.
-- Or Verwalino tells Sabine clearly that this is not possible here and what she can do instead. A
-  way that is offered and then fails or loads forever is a defect.
+  the declaration of division; for that Sabine checks some units against the document. The scan
+  has no text layer: the page is read by the reading model, not by a local text-recognition
+  program, and the review shows apartments 1 and 2 at 450/1,000 each and garage G1 at 100/1,000,
+  each with page 1 of the scan as its source.
+- The screen shows „Verbrauch je Importlauf“ with „Dokumente einlesen“ (the reading model) and
+  „Informationen extrahieren“ (the extraction model) apart, each with its tokens and cost or
+  „kein Preis bekannt“, and the run total below. The provider's records show that the reading
+  model was asked only for the page and the extraction model only for the extraction passes.
+- Or Verwalino tells Sabine clearly that this is not possible here and what she can do instead:
+  without a model under „Dokumente einlesen“ the import does not start, and a model that cannot
+  read images or a reached limit is explained in German on the import screen, with the uploaded
+  original kept and nothing applied. A way that is offered and then fails or loads forever is a defect.
 - In any case: where it ends and what Sabine sees there. For this journey that is the most
   important result.
 
 **Checked by:** agent
 **Also at 360 px:** result page and AI settings
-**Automated:** [real-browser twin](../../features/journeys/declaration_import.feature), using an offline deterministic extraction provider. Live model discovery and import require the separate authorized user check.
+**Automated:** [real-browser twin](../../features/journeys/declaration_import.feature): the administrator chooses the two models in Einstellungen, the worker takes both from the saved settings and runs with offline deterministic reading and extraction providers (`backend/tests/offline_declaration_import.py`, which the user check of a PR can also run by hand, see [README.md](README.md#where-a-run-happens)). Live model discovery and import require the separate authorized user check.
 
 ## Operating cost draft acceptance check
 

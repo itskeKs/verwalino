@@ -106,7 +106,10 @@ async def recorded_run(client_a_admin, configured_ai, seed_data, recorded_store,
     job = await new_uploaded_draft(client_a_admin)
     documents = (await client_a_admin.get(f'/api/declaration-imports/{job}/documents')).json()
     fake = fictional_provider(documents[0]['id'])
-    outputs = {'DocumentInventoryOutput': fake._inventory_output, 'CoreExtractionOutput': fake._core_output,
+    from app.declarations.schemas import PageReadingOutput
+    from tests.declaration_fixtures import lindenallee_reading_blocks
+    outputs = {'PageReadingOutput': PageReadingOutput(blocks=lindenallee_reading_blocks()),
+               'DocumentInventoryOutput': fake._inventory_output, 'CoreExtractionOutput': fake._core_output,
                'RuleExtractionOutput': fake._rules_output, 'ReconciliationOutput': fake._reconciliation_output,
                'TargetedRecheckOutput': fake._recheck_output}
     requests = []
@@ -124,14 +127,17 @@ async def recorded_run(client_a_admin, configured_ai, seed_data, recorded_store,
     async with AsyncOpenAI(api_key='synthetic-sdk-key', base_url='https://api.openai.com/v1', max_retries=0,
                            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond))) as client:
         provider = OpenAiDeclarationProvider(client=client, token_encoder=FixedTokenEncoder(1000))
-        worker = DeclarationImportWorker(DeclarationPipeline(provider, store=recorded_store))
+        reader = OpenAiDeclarationProvider(client=client, primary_model='gpt-5.4-mini', escalation_model='gpt-5.4-mini',
+                                           token_encoder=FixedTokenEncoder(1000))
+        worker = DeclarationImportWorker(DeclarationPipeline(provider, store=recorded_store,
+                                                             reading_provider=reader, reading_model='gpt-5.4-mini'))
         result = await worker.run_once(organization_id=seed_data['org_a_id'])
         assert result.import_id == job, 'worker claimed a different import in the shared test organization'
     state = await client_a_admin.get(f'/api/declaration-imports/{job}')
     if getattr(request, 'param', None) == 'schema_failure':
         assert state.json()['status'] == 'FAILED', state.text
         assert state.json()['error_code'] == 'PROVIDER_SCHEMA_FAILURE'
-        assert len(requests) == 2
+        assert len(requests) == 3  # the page reading, the inventory and the core pass that fails
     else:
         assert state.json()['status'] == 'NEEDS_REVIEW', state.text
         assert state.json()['attempt_count'] >= 4

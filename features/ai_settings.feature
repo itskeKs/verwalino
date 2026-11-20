@@ -58,3 +58,18 @@ Feature: Organization AI settings
     When the administrator saves an AI key and enables declaration import
     And the administrator removes the saved key and switches the AI features off
     Then the new audit events record both changes without the key
+
+
+  Scenario: The reading model and the extraction model are chosen independently
+    Given an administrator of "Verwaltung Alpha" is signed in
+    When the administrator chooses a reading model and a different extraction model
+    And the administrator changes only the extraction model
+    Then the settings keep the reading model and report the price status of each model
+
+
+  Scenario: Declaration import waits for the reading model
+    Given an administrator of "Verwaltung Alpha" is signed in
+    When the administrator enables declaration import with an extraction model only
+    Then starting a declaration import is refused because the reading model is missing
+    When the administrator chooses a reading model
+    Then a declaration import can be started

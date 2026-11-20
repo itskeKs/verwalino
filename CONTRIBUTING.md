@@ -13,8 +13,9 @@ untouched. Report cleanup in one line, never in a repository file.
 - Python with [uv](https://docs.astral.sh/uv/), Node 22, Docker (for the test database only).
 - Backend dependencies: `cd backend && uv sync --extra dev --extra ops --extra ocr`.
   The local launcher `scripts/dev-local.sh` requires Poppler (`pdftoppm`) and
-  Tesseract with the German language pack (`deu`); its worker health check aborts
-  startup if any is missing.
+  Tesseract with the German language pack (`deu`) for the invoice and inbox workers (the
+  declaration import renders pages with Poppler and reads them with a model: no Tesseract);
+  its worker health check aborts startup if any is missing.
 - Browser setup (once, and after Playwright lock updates):
   `cd backend && uv run --locked --extra dev playwright install chromium`.
 - Frontend dependencies: `cd frontend && npm ci` (`make frontend-deps` does it when needed).
@@ -38,7 +39,10 @@ untouched. Report cleanup in one line, never in a repository file.
   Inbox worker skipped: check ClamAV (clamscan and signatures), worker database access, document storage and German OCR; API and UI will continue.
 - Declarations of division (Teilungserklärungen): the dependency sets above include the
   operations tooling. Imports require **Human Approval** before creating canonical
-  building, unit, or rule data; document content remains untrusted. See the
+  building, unit, or rule data; document content remains untrusted. The import needs two models in
+  Einstellungen (reading and extraction; ADR 0017) and its tests make no provider call: the
+  offline reading and extraction providers are in `backend/tests/` (`tests/offline_declaration_import.py`
+  also runs the real worker against a running instance, see [acceptance README](docs/acceptance/README.md#where-a-run-happens)). See the
   [declaration-import runbook](docs/operations/declaration-imports.md) for operation,
   data protection, local tests, and the deliberately blocked live evaluation.
 - Self-hosting: [DEPLOY.md](DEPLOY.md) and `scripts/self-host.sh`.

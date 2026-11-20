@@ -10,10 +10,12 @@ import base64
 from hashlib import sha256
 import io
 import json
+import math
 import re
+import struct
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from functools import lru_cache
 from json import JSONDecodeError
@@ -37,6 +39,8 @@ from app.core.ai_models import MODEL_PRICES
 from app.declarations.prompts import (
     CORE_EXTRACTION_PROMPT,
     INVENTORY_PROMPT,
+    PAGE_READING_PROMPT,
+    READING_PROMPT_VERSION,
     RECHECK_PROMPT,
     RECONCILIATION_PROMPT,
     RULE_EXTRACTION_PROMPT,
@@ -45,10 +49,14 @@ from app.declarations.provider import (
     DocumentInput,
     PageInput,
     PROVIDER_CONNECTION_ERROR,
+    PROVIDER_IMAGE_INPUT_UNSUPPORTED,
     PROVIDER_INCOMPLETE,
     PROVIDER_REFUSAL,
     PROVIDER_SCHEMA_FAILURE,
     PROVIDER_TIMEOUT,
+    READING_IMAGE_MEDIA_TYPE,
+    READING_PASS_ID,
+    PageImage,
     ProviderCallResult,
     ProviderFailure,
     ProviderReservationEstimate,
@@ -61,8 +69,11 @@ from app.declarations.observability import (
     log_schema_validation_diagnostic,
 )
 from app.declarations.schemas import (
+    READING_SCHEMA_VERSION,
     CoreExtractionOutput,
     DocumentInventoryOutput,
+    PageReadingOutput,
+    PageTranscript,
     ReconciliationOutput,
     RuleExtractionOutput,
     StrictModel,
@@ -77,14 +88,82 @@ _LUNA_SHORT_CONTEXT_MAX_INPUT_TOKENS = 272_000
 # OpenAI notes that final billing may differ by one token due to rounding, so
 # reserve the upper boundary instead of the nominal estimate.
 _VERIFIED_HIGH_IMAGE_INPUT_TOKENS = 3_001
+# Image input reservation for the reading stage, from the pixel dimensions of the page image (never from its
+# base64 length). Documented formulas, verified 2026-11-20:
+# * OpenAI, https://developers.openai.com/api/docs/guides/images-vision ("Calculating costs"): the two
+#   models above reserve the verified high-detail cap; every other OpenAI model reserves the larger of the
+#   documented families' worst cases: tile-based (fit 2048 x 2048, shortest side at most 768, 512 px tiles,
+#   at most 2,833 + 5,667 per tile, the gpt-4o-mini row) and patch-based (ceil(w/32) x ceil(h/32) patches, the
+#   30,000 patch hard cap, the largest listed multiplier 2.46).
+# * Anthropic, https://platform.claude.com/docs/en/build-with-claude/vision ("Resolution and token cost"):
+#   ceil(w/28) x ceil(h/28) visual tokens, at most 4,784 per image (the high-resolution tier's cap).
+# * Compatible endpoints publish no formula: one token per 14 x 14 pixel patch, the finest patch of the common
+#   vision encoders, which no model spends more tokens than; at the 4 million pixel bound of the render step
+#   that is 20,409 tokens.
+_OPENAI_TILE_BASE_TOKENS, _OPENAI_TILE_TOKENS, _OPENAI_MAX_PATCHES, _OPENAI_MAX_PATCH_MULTIPLIER = 2_833, 5_667, 30_000, Decimal("2.46")
+_ANTHROPIC_MAX_IMAGE_TOKENS = 4_784
+_COMPATIBLE_IMAGE_PATCH_PIXELS = 14
+_KNOWN_PATCH_BUDGET_MODELS = frozenset({"gpt-5.4-mini", "gpt-5.6-luna"})
+
+
+def reserved_image_tokens(provider: str, model: str, width: int, height: int) -> int:
+    """Conservative input tokens of one image of ``width`` x ``height`` pixels at high detail."""
+    if provider == "anthropic":
+        return min(-(-width // 28) * -(-height // 28), _ANTHROPIC_MAX_IMAGE_TOKENS)
+    if provider == "openai":
+        if model in _KNOWN_PATCH_BUDGET_MODELS:
+            return _VERIFIED_HIGH_IMAGE_INPUT_TOKENS
+        scale = min(1.0, 2048 / max(width, height))
+        fitted_width, fitted_height = width * scale, height * scale
+        shortest = min(fitted_width, fitted_height)
+        if shortest > 768:
+            fitted_width, fitted_height = fitted_width * 768 / shortest, fitted_height * 768 / shortest
+        tiles = math.ceil(fitted_width / 512) * math.ceil(fitted_height / 512)
+        tile_bound = _OPENAI_TILE_BASE_TOKENS + _OPENAI_TILE_TOKENS * tiles
+        patches = min(_OPENAI_MAX_PATCHES, -(-width // 32) * -(-height // 32))
+        return max(tile_bound, math.ceil(patches * _OPENAI_MAX_PATCH_MULTIPLIER))
+    return -(-width // _COMPATIBLE_IMAGE_PATCH_PIXELS) * -(-height // _COMPATIBLE_IMAGE_PATCH_PIXELS)
+
+
+def png_dimensions(data_url: str) -> tuple[int, int]:
+    """Width and height from the header of a PNG data URL: 24 bytes are read, the image is not decoded."""
+    try:
+        header = base64.b64decode(data_url.split(",", 1)[1][:32])
+        if header[:8] != _PNG_SIGNATURE or header[12:16] != b"IHDR":
+            raise ValueError("not a PNG header")
+        width, height = struct.unpack(">II", header[16:24])
+    except Exception:
+        raise ProviderFailure(
+            "OPENAI_IMAGE_INPUT_INVALID", False, "Image input must be a valid PNG data URL."
+        ) from None
+    return width, height
 _PNG_DATA_URL = re.compile(r"^data:image/png;base64,([A-Za-z0-9+/]*={0,2})$")
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _STATIC_HARNESS = (
-    "declaration-responses-v3|structured-output-kind-anyof|store=false|"
+    "declaration-responses-v4|structured-output-kind-anyof|store=false|"
     "no-previous-response-id|fixed-pass-manager"
 )
 _SAFE_RESPONSE_IDENTIFIER = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _OPENAI_API_BASE_URL = "https://api.openai.com/v1"
+# A reading request differs from every extraction request only by its image block. The provider says that its
+# model cannot take the image by the status 415, or, for a 400 or 422, by the structured identifiers of its error
+# object: the ``param`` (the field of the request at fault) naming the image part, or one of the codes OpenAI gives
+# a rejected image. Message text never decides; any other rejection keeps the code of a rejected request.
+_IMAGE_PARAMETER = re.compile(r"(?:^|[.\[\]])(?:image|image_url|input_image)(?:$|[.\[\]])")
+_IMAGE_REJECTION_CODES = frozenset({"invalid_image", "invalid_image_format", "invalid_image_url", "image_parse_error"})
+
+
+def _rejects_the_image_input(error: Exception) -> bool:
+    status = getattr(error, "status_code", None)
+    if isinstance(status, bool) or not isinstance(status, int):
+        return False
+    if status == 415:
+        return True
+    if status not in {400, 422}:
+        return False
+    param, code = getattr(error, "param", None), getattr(error, "code", None)
+    return (isinstance(param, str) and _IMAGE_PARAMETER.search(param) is not None) or (
+        isinstance(code, str) and code in _IMAGE_REJECTION_CODES)
 
 # Only these disjoint tagged unions have an equivalent anyOf wire form.
 _WIRE_KIND_UNIONS = {
@@ -131,7 +210,7 @@ def _convert_wire_kind_unions(schema: dict[str, Any]) -> dict[str, Any]:
     return schema
 
 
-@lru_cache(maxsize=5)
+@lru_cache(maxsize=6)
 def _sdk_output_type(output_type: type[T]) -> type[T]:
     if output_type is DocumentInventoryOutput:
         return output_type
@@ -407,11 +486,47 @@ class OpenAiDeclarationProvider:
             max_output_tokens=max_output_tokens,
         )
 
+    async def read_page(
+        self, page: PageImage, *, model: str, max_output_tokens: int
+    ) -> ProviderCallResult[PageTranscript]:
+        """Reading stage: one rendered page per request, copied into a typed transcript.
+
+        One page, because the per-call output ceiling (``declaration_provider_max_output_tokens_per_call``) is
+        far below what a stack of dense pages transcribes to, a malformed page costs one page and not a
+        batch, and a failed page can be read again alone. The page identity comes from the caller, never from
+        the model. ``model`` must be the model this provider is configured for: no other model is asked.
+        """
+        result = await self._run(
+            pass_id=READING_PASS_ID,
+            model=model,
+            prompt=PAGE_READING_PROMPT,
+            content_blocks=self._reading_content_blocks(page),
+            output_type=PageReadingOutput,
+            max_output_tokens=max_output_tokens,
+        )
+        transcript = PageTranscript(
+            document_key=page.document_key, pdf_page=page.pdf_page, blocks=result.output.blocks
+        )
+        return replace(result, output=transcript)
+
+    @staticmethod
+    def _reading_content_blocks(page: PageImage) -> list[dict[str, str]]:
+        if page.media_type != READING_IMAGE_MEDIA_TYPE:
+            raise ProviderFailure(
+                "OPENAI_IMAGE_INPUT_INVALID", False, "Image input must be a valid PNG data URL."
+            )
+        encoded = base64.b64encode(page.data).decode("ascii")
+        return [
+            {"type": "input_text", "text": f"pdf_page={page.pdf_page}"},
+            {"type": "input_image", "image_url": f"data:{READING_IMAGE_MEDIA_TYPE};base64,{encoded}", "detail": "high"},
+        ]
+
     def estimate_reservation(
         self,
         method: str,
         *,
         max_output_tokens: int,
+        page: PageImage | None = None,
         documents: Sequence[DocumentInput] = (),
         inventory: DocumentInventoryOutput | None = None,
         core: CoreExtractionOutput | None = None,
@@ -426,6 +541,14 @@ class OpenAiDeclarationProvider:
         repair prompt and vision policy cannot drift from live preflight.
         """
         self._validate_output_allowance(max_output_tokens)
+        if method == "read_page" and page is not None:
+            return self._request_reservation(
+                READING_PASS_ID, self._primary_model,
+                PAGE_READING_PROMPT,
+                self._reading_content_blocks(page),
+                PageReadingOutput,
+                max_output_tokens,
+            )
         if method == "inventory":
             self._reject_unexpected_images(documents)
             return self._request_reservation(
@@ -903,8 +1026,10 @@ class OpenAiDeclarationProvider:
             raise ProviderFailure(
                 "OPENAI_INPUT_ESTIMATE_FAILED", False, "Input token estimation failed."
             ) from error
-        estimated_input = len(encoded) + self._reserved_image_input_tokens(
-            model, input_payload
+        estimated_input = len(encoded) + (
+            self._reserved_reading_image_tokens(model, input_payload)
+            if pass_id == READING_PASS_ID
+            else self._reserved_image_input_tokens(model, input_payload)
         )
         if model == "gpt-5.6-luna" and estimated_input > _LUNA_SHORT_CONTEXT_MAX_INPUT_TOKENS:
             raise ProviderFailure(
@@ -1058,6 +1183,15 @@ class OpenAiDeclarationProvider:
                 if block.get("type") == "input_image":
                     block["image_url"] = "<image-data-url-omitted>"
         return normalized
+
+    def _reserved_reading_image_tokens(self, model: str, input_payload: list[dict[str, Any]]) -> int:
+        """Reading pages reserve from their pixel dimensions, by the formula of this transport's provider."""
+        return sum(
+            reserved_image_tokens(self._price_provider, model, *png_dimensions(block["image_url"]))
+            for message in input_payload
+            for block in message.get("content", [])
+            if block.get("type") == "input_image"
+        )
 
     @staticmethod
     def _reserved_image_input_tokens(
@@ -1248,6 +1382,12 @@ class OpenAiDeclarationProvider:
                 )
                 raise _SchemaFailure(metadata=metadata) from None
             code = "OPENAI_REQUEST_FAILED"
+            retryable = self._is_retryable_exception(error)
+            message = "OpenAI request failed."
+            if pass_id == READING_PASS_ID and _rejects_the_image_input(error):
+                code, retryable, message = (
+                    PROVIDER_IMAGE_INPUT_UNSUPPORTED, False, "The model cannot take the image input."
+                )
             metadata = self._metadata(
                 pass_id=pass_id,
                 attempt_no=attempt_no,
@@ -1260,8 +1400,8 @@ class OpenAiDeclarationProvider:
             )
             raise ProviderFailure(
                 code,
-                self._is_retryable_exception(error),
-                "OpenAI request failed.",
+                retryable,
+                message,
                 attempt_metadata=(metadata,),
             ) from None
 
@@ -1422,6 +1562,12 @@ class OpenAiDeclarationProvider:
         request_id: str | None = None,
     ) -> ProviderPassMetadata:
         observed = usage or ProviderUsage(0, 0, Decimal("0"), 1)
+        # The reading stage versions its prompt and schema apart from the extraction passes' settings.
+        prompt_version, schema_version = (
+            (READING_PROMPT_VERSION, READING_SCHEMA_VERSION)
+            if pass_id == READING_PASS_ID
+            else (self._prompt_version, self._schema_version)
+        )
         reason_codes = (
             (failure_class,)
             if failure_class in {
@@ -1440,9 +1586,9 @@ class OpenAiDeclarationProvider:
             returned_model_id=returned_model_id,
             reasoning_effort=self._reasoning_effort(model) or "default",
             request_id=request_id,
-            prompt_version=self._prompt_version,
+            prompt_version=prompt_version,
             prompt_sha256=fingerprints.prompt_sha256,
-            schema_version=self._schema_version,
+            schema_version=schema_version,
             schema_sha256=fingerprints.schema_sha256,
             harness_version=self._harness_version,
             harness_sha256=fingerprints.harness_sha256,

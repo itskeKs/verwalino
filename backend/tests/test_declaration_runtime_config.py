@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import secrets
 import subprocess
 from collections.abc import Callable
@@ -13,7 +14,10 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
+from pydantic import TypeAdapter
 from sqlalchemy.engine import make_url
+
+from app.core.config import Settings
 
 from app.models.organization import Organization
 from app.workers import declaration_import
@@ -61,9 +65,9 @@ _DECLARATION_EXTRACTION_ENVIRONMENT = {
     "HV_DECLARATION_MAX_ATTEMPTS",
 }
 _DECLARATION_AGENTIC_DEFAULTS = {
-    "HV_DECLARATION_PROMPT_VERSION":"declaration-v3",
+    "HV_DECLARATION_PROMPT_VERSION":"declaration-v4",
     "HV_DECLARATION_SCHEMA_VERSION":"2",
-    "HV_DECLARATION_HARNESS_VERSION":"3",
+    "HV_DECLARATION_HARNESS_VERSION":"4",
 }
 _DECLARATION_QA_ENVIRONMENT = {
     "HV_DECLARATION_QA_TIMEOUT_SECONDS",
@@ -194,6 +198,33 @@ def _environment(service: dict[str, object]) -> dict[str, str]:
     environment = service["environment"]
     assert isinstance(environment, dict)
     return environment
+
+
+def _declaration_defaults_stated_for_deployments() -> list[tuple[str, str, str]]:
+    """(file, variable, default) of every HV_DECLARATION_* default a deployment file states: the compose defaults
+    of every service and the lines of the environment example."""
+    stated: list[tuple[str, str, str]] = []
+    compose_files = [*ROOT.glob("docker-compose*.y*ml"), *(ROOT / "infra").glob("*.y*ml")]
+    for path in sorted(compose_files):
+        for name, default in re.findall(r"\$\{(HV_DECLARATION_[A-Z0-9_]+):-([^}]*)\}", path.read_text(encoding="utf-8")):
+            stated.append((path.name, name, default))
+    for line in ENV_EXAMPLE_PATH.read_text(encoding="utf-8").splitlines():
+        match = re.fullmatch(r"(HV_DECLARATION_[A-Z0-9_]+)=(.*)", line)
+        if match:
+            stated.append((ENV_EXAMPLE_PATH.name, match.group(1), match.group(2)))
+    return stated
+
+
+def test_every_declaration_default_in_the_deployment_files_is_the_settings_default() -> None:
+    stated = _declaration_defaults_stated_for_deployments()
+    assert {name for _file, name, _default in stated} >= _DECLARATION_EXTRACTION_ENVIRONMENT | _DECLARATION_QA_ENVIRONMENT
+
+    differing = []
+    for file, name, default in stated:
+        field = Settings.model_fields[name.removeprefix("HV_").lower()]
+        if TypeAdapter(field.annotation).validate_python(default) != field.default:
+            differing.append(f"{file}: {name} defaults to {default}, Settings to {field.default}")
+    assert differing == []
 
 
 def test_compose_declares_least_privilege_worker_topology() -> None:
@@ -355,7 +386,6 @@ async def test_healthcheck_reads_only_global_organization_id_and_cleans_tempfile
         configured=configured,
         unscoped_session_factory=unscoped,
         binary_finder=lambda _name: "/usr/bin/tool",
-        command_runner=lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, "deu\n", ""),
         random_name=lambda: "fixed-healthcheck-name",
     )
 
@@ -381,13 +411,35 @@ async def test_healthcheck_unlinks_tempfile_when_storage_check_fails(tmp_path: P
         configured=configured,
         unscoped_session_factory=unscoped,
         binary_finder=lambda _name: "/usr/bin/tool",
-        command_runner=lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, "deu\n", ""),
         random_name=lambda: "failure-healthcheck-name",
         fsync=fail_fsync,
     )
 
     assert not healthy
     assert list((tmp_path / ".healthcheck").iterdir()) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("missing", "expected"), [(None, True), ("qpdf", False), ("pdftoppm", False)])
+async def test_healthcheck_needs_the_pdf_tools_and_no_tesseract(tmp_path: Path, missing: str | None, expected: bool) -> None:
+    probed: list[str] = []
+
+    def finder(name: str) -> str | None:
+        probed.append(name)
+        return None if name == missing else "/usr/bin/tool"
+
+    @asynccontextmanager
+    async def unscoped():
+        yield SimpleNamespace(execute=lambda _statement: _completed_awaitable())
+
+    healthy = await declaration_import.run_healthcheck(
+        configured=SimpleNamespace(document_storage_root=str(tmp_path)),
+        unscoped_session_factory=unscoped,
+        binary_finder=finder,
+    )
+
+    assert healthy is expected
+    assert set(probed) <= {"qpdf", "pdftoppm"}
 
 
 def test_healthcheck_cli_never_constructs_provider(monkeypatch: pytest.MonkeyPatch) -> None:

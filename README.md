@@ -82,9 +82,11 @@ administrator configures a provider in Einstellungen. There is no
 application-owned key and no automatic fallback to another provider.
 
 - **Declaration-of-division import:** upload the Teilungserklärung as PDF. A
-  fixed pipeline runs a local precheck and OCR, then inventory, core and rule
-  extraction, reconciliation, local validation and one bounded vision
-  recheck pass. It proposes units, co-ownership shares and rules. It is not an
+  fixed pipeline runs a local precheck, has a model read every page without a
+  text layer (the reading model you choose in Einstellungen; no local text
+  recognition), then inventory, core and rule extraction with the extraction
+  model, reconciliation, local validation and one bounded vision recheck
+  pass. It proposes units, co-ownership shares and rules. It is not an
   autonomous agent: the model has no tools and cannot change data.
 - **Evidence and review:** every proposed value must quote the page it comes
   from. A quote that is not on the cited page blocks the draft, and conflicting

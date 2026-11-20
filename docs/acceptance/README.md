@@ -86,6 +86,21 @@ worktree and shows exactly what the PR changed. The script has four subcommands:
   directory that is already gone or half removed does not keep the locks. A directory that fails the
   checks is left in place and named, with the exit status 1, after the locks are released.
 
+The instance runs only the API: it has no provider and no declaration worker. For a user check that needs the
+declaration import, the launching session (never the tester) processes the queued import with the offline
+worker of the browser twin, once the tester has started it. No provider is called; the output says which model
+was asked for which page, and both model ids come from the settings the tester saved in the product. From a
+checkout of the PR's commit, with the test database settings and the instance's document directory:
+
+```sh
+cd <repository>/backend && . ../scripts/test-env.sh && uv run --locked --extra dev --extra ops --extra ocr \
+  python -m tests.offline_declaration_import --organization "<organization name>" \
+  --documents "$(sed -n 's/^scratch=//p' /tmp/hausverwaltung-acceptance.lock/instance)/documents"
+```
+
+It knows the fictional Lindenallee declaration only, exits with 1 when an import does not reach review and
+changes nothing outside the instance's organization.
+
 The tester gets the URL and the sign-in, nothing else. While an instance runs, no backend test
 process may use the test database, because the lock stays with the run until `stop`. Production
 (`docker-compose.prod.yml`) is never involved.

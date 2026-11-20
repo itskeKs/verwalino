@@ -20,6 +20,10 @@ from app.schemas.ai_settings import AiSettingsOut, AiConfirmationOut, AiModelOut
 # the copy lives in the frontend, the reviewed wording follows #26.
 AI_PROVIDER_CONFIRMATION_VERSION = '1'
 
+# Why the declaration import cannot run for an organization (structured, never message text).
+DECLARATION_IMPORT_DISABLED = 'DECLARATION_IMPORT_DISABLED'
+DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING = 'DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING'
+
 CONFIRMATION_REQUIRED_MESSAGE = ('Bitte bestätigen Sie vor dem Speichern, dass Ihre Organisation '
     'den Anbieter selbst ausgewählt und beauftragt hat und den Betreiber anweist, '
     'Dokumente und extrahierte Texte an diesen Anbieter zu übermitteln.')
@@ -48,6 +52,7 @@ class EffectiveAiSettings:
     monthly_limit_usd: Decimal | None = None
     base_url: str | None = None
     request_timeout_seconds: int | None = None
+    document_model: str | None = None
 
 
 def _confirmation_match(provider, base_url):
@@ -65,6 +70,19 @@ async def matching_confirmation(db, organization_id, provider, base_url):
         .limit(1))).first()
 
 
+def declaration_import_blocker(effective: EffectiveAiSettings) -> str | None:
+    """The one decision whether the declaration import may run: None, or the code naming what is missing.
+
+    The import needs the organization's switch, key and extraction model; reading the pages needs the document
+    reading model as well, which an administrator chooses and no upgrade or default ever fills in.
+    """
+    if not effective.import_enabled or not effective.api_key or not effective.model:
+        return DECLARATION_IMPORT_DISABLED
+    if not effective.document_model:
+        return DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING
+    return None
+
+
 async def effective_ai_settings(db, organization_id) -> EffectiveAiSettings:
     row = await OrganizationAiSettingsRepository(db, organization_id).get()
     if row is None:
@@ -79,7 +97,7 @@ async def effective_ai_settings(db, organization_id) -> EffectiveAiSettings:
             # A stored key without a recorded confirmation for its destination
             # stays unused: every AI entry point fails closed on a missing key.
             key = None
-    return EffectiveAiSettings(row.provider, key, row.model, row.import_enabled, row.qa_enabled, row.monthly_limit_usd, row.base_url, row.request_timeout_seconds)
+    return EffectiveAiSettings(row.provider, key, row.model, row.import_enabled, row.qa_enabled, row.monthly_limit_usd, row.base_url, row.request_timeout_seconds, row.document_model)
 
 
 async def worker_ai_settings(organization_id):
@@ -87,7 +105,7 @@ async def worker_ai_settings(organization_id):
     from app.core.db import get_worker_tenant_session
     async with get_worker_tenant_session(organization_id) as db:
         effective = await effective_ai_settings(db, organization_id)
-    if not effective.import_enabled or not effective.api_key or not effective.model:
+    if declaration_import_blocker(effective) is not None:
         raise ValueError('Organization AI import is not configured')
     return effective
 
@@ -98,9 +116,10 @@ def public_settings(row, confirmation=None) -> AiSettingsOut:
         record, confirmer_name = confirmation
         active = AiConfirmationOut(confirmed_by_name=confirmer_name, confirmed_at=record.confirmed_at)
     return AiSettingsOut(request_timeout_seconds=row.request_timeout_seconds if row else None, provider=row.provider if row else 'openai', base_url=row.base_url if row else None, key_set=bool(row and row.encrypted_api_key),
-        model=row.model if row else None, import_enabled=bool(row and row.import_enabled),
+        model=row.model if row else None, document_model=row.document_model if row else None, import_enabled=bool(row and row.import_enabled),
         qa_enabled=bool(row and row.qa_enabled), monthly_limit_usd=row.monthly_limit_usd if row else None,
         price_known=bool(row and model_price(row.model, row.provider)),
+        document_price_known=bool(row and model_price(row.document_model, row.provider)),
         confirmation=active, confirmation_required=bool(row and row.encrypted_api_key and confirmation is None))
 
 

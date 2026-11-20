@@ -93,6 +93,7 @@ TENANT_TABLES = frozenset({
     "declaration_import_document",
     "declaration_extraction_run",
     "declaration_import_pass",
+    "declaration_page_reading",
     "declaration_candidate",
     "declaration_candidate_evidence",
     "declaration_candidate_issue",

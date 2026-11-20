@@ -7,19 +7,70 @@ from playwright.async_api import expect
 from pytest_bdd import given, when, then
 
 from tests.declaration_fixtures import DeclarationProcessingGate
+from tests.offline_declaration_import import fictional_provider, process_queued_imports  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[4]
 
 
+# The journey's two choices; the offline worker must find them in the saved settings, not here.
+READING_MODEL, EXTRACTION_MODEL = 'gpt-5.4-mini', 'gpt-5.6-luna'
+PROVIDER_MODELS = [{'id': model, 'evaluated': False, 'price_known': True} for model in (EXTRACTION_MODEL, READING_MODEL, 'gpt-5.4-nano')]
+DESKTOP, PHONE = {'width': 1440, 'height': 1000}, {'width': 360, 'height': 800}
+
+
+async def _fits_the_width(page):
+    assert not await page.evaluate('document.documentElement.scrollWidth > document.documentElement.clientWidth'), 'horizontal scrolling'
+
+
 @given("the organization enables declaration import with its synthetic AI key")
 def declaration_settings(world):
+    # By the API: the scenarios that only need an enabled import do not exercise the settings screen.
     org = world.act('GET', '/api/organizations/me').json()['id']
     world.data['declaration_org'] = org
     response = world.act('PUT', f'/api/organizations/{org}/ai-settings', json={
-        'api_key':'synthetic-journey-key', 'model':'gpt-5.6-luna', 'import_enabled':True,
+        'api_key':'synthetic-journey-key', 'model':EXTRACTION_MODEL, 'document_model':READING_MODEL, 'import_enabled':True,
         'confirmation':True,
     })
     assert response.status_code == 200, world.describe_response()
+
+
+@when("the administrator chooses different models for reading documents and extracting information in the settings")
+def choose_declaration_models(browser_world):
+    b = browser_world
+    b.world.data['declaration_org'] = b.world.act('GET', '/api/organizations/me').json()['id']
+    async def run():
+        async def provider_models(route):
+            await route.fulfill(status=200, content_type='application/json', body=json.dumps({'models': PROVIDER_MODELS}))
+        # The model list is the provider's answer: there is no provider in this journey.
+        await b.page.route('**/ai-settings/models', provider_models)
+        await b.visit('/einstellungen')
+        await b.page.get_by_label('API-Schlüssel', exact=True).fill('synthetic-journey-key')
+        await b.page.get_by_label(re.compile('Wir haben den Anbieter selbst gewählt')).check()
+        await b.page.get_by_role('button', name='Modelle laden', exact=True).click()
+        await b.select('Dokumente einlesen', READING_MODEL)
+        await b.select('Informationen extrahieren', EXTRACTION_MODEL)
+        await b.page.get_by_label('Teilungserklärungen importieren').check()
+        async with b.page.expect_response(lambda r: r.request.method == 'PUT' and r.url.endswith('/ai-settings')) as saved:
+            await b.page.get_by_role('button', name='KI-Einstellungen speichern', exact=True).click()
+        assert (await saved.value).status == 200, await (await saved.value).text()
+        await expect(b.page.get_by_text('KI-Einstellungen gespeichert.')).to_be_visible()
+    b.run(run())
+
+
+@then("the settings show both choices after a reload")
+def declaration_models_after_reload(browser_world):
+    b = browser_world
+    saved = b.world.act('GET', f"/api/organizations/{b.world.data['declaration_org']}/ai-settings").json()
+    assert (saved['document_model'], saved['model']) == (READING_MODEL, EXTRACTION_MODEL)
+    async def run():
+        for viewport in (DESKTOP, PHONE):
+            await b.page.set_viewport_size(viewport)
+            await b.page.reload()
+            await expect(b.page.get_by_label('Dokumente einlesen', exact=True)).to_have_value(READING_MODEL)
+            await expect(b.page.get_by_label('Informationen extrahieren', exact=True)).to_have_value(EXTRACTION_MODEL)
+            await _fits_the_width(b.page)
+        await b.page.set_viewport_size(DESKTOP)
+    b.run(run())
 
 
 @when("the manager uploads the fictional Lindenallee declaration in the browser")
@@ -43,62 +94,22 @@ def upload_declaration(browser_world):
     b.run(run())
 
 
-def fictional_provider(document_id):
-    from app.declarations.schemas import CoreExtractionOutput, DocumentInventoryOutput, FactPayload, TextValue, IntegerValue, MeaFraction, EvidencePayload, ReconciliationOutput, RuleExtractionOutput, TargetedRecheckOutput
-    from app.declarations.fake_provider import FakeDeclarationProvider
-    facts = []
-    def fact(subject, field, value, quote):
-        unit_quotes = {'unit:1':'1 Wohnung / Erdgeschoss 450 / 1.000',
-                       'unit:2':'2 Wohnung / Obergeschoss 450 / 1.000',
-                       'unit:G1':'G1 Garage / Hof 100 / 1.000'}
-        facts.append(FactPayload(subject_key=subject,field=field,raw_value=quote,normalized_value=value,confidence=.99,
-            evidence=[EvidencePayload(document_key=document_id,pdf_page=1,quote=unit_quotes.get(subject,quote))]))
-    for field,value,quote in [('name','WEG Lindenallee 12','WEG Lindenallee 12'), ('street','Lindenallee 12','Lindenallee 12'),
-                              ('zip_code','01234','01234'), ('city','Musterstadt','Musterstadt'), ('management_type','WEG','WEG Lindenallee 12')]:
-        fact('property:main',field,TextValue(kind='TEXT',value=value),quote)
-    fact('property:main','mea_denominator',IntegerValue(kind='INTEGER',value=1000),'1.000')
-    for number,share,kind,location in [('1',450,'WOHNUNG','Erdgeschoss'),('2',450,'WOHNUNG','Obergeschoss'),('G1',100,'STELLPLATZ','Garage / Hof')]:
-        subject = f'unit:{number}'
-        fact(subject,'number',TextValue(kind='TEXT',value=number),number)
-        fact(subject,'usage_type',TextValue(kind='TEXT',value=kind),'Wohnung' if kind=='WOHNUNG' else 'Garage')
-        fact(subject,'location',TextValue(kind='TEXT',value=location),location)
-        fact(subject,'mea',MeaFraction(kind='MEA',numerator=share,denominator=1000),str(share))
-    return FakeDeclarationProvider(
-        inventory_output=DocumentInventoryOutput(documents=[{'document_key':document_id,'document_type':'DECLARATION','title':'Fiktive Teilungserklärung'}]),
-        core_output=CoreExtractionOutput(facts=facts), rules_output=RuleExtractionOutput(rules=[]),
-        reconciliation_output=ReconciliationOutput(facts=facts,rules=[],mea_set_status='COMPLETE'), recheck_output=TargetedRecheckOutput())
-
-
-@when("the worker finishes processing the slow scan on its first attempt")
-def extract_declaration(world, browser_storage, monkeypatch):
-    from pytesseract import image_to_string
+@when("the offline worker finishes processing the slow scan on its first attempt")
+def extract_declaration(world, browser_storage):
     from sqlalchemy import select
     from app.core.db import get_worker_tenant_session
     from app.core.storage import LocalFsDocumentStore
-    from app.declarations.pipeline import DeclarationPipeline
     from app.models.declaration_import import DeclarationExtractionRun
-    from app.workers.declaration_import import DeclarationImportWorker
     import_id = world.data['declaration_import']
-    documents = world.act('GET', f'/api/declaration-imports/{import_id}/documents')
-    assert documents.status_code == 200, world.describe_response()
-    provider = fictional_provider(documents.json()[0]['id'])
     organization_id = uuid.UUID(world.data['declaration_org'])
 
     async def run():
         gate = DeclarationProcessingGate()
-
-        def slow_ocr(*args, **kwargs):
-            gate.hold()
-            return image_to_string(*args, **kwargs)
-
-        monkeypatch.setattr('pytesseract.image_to_string', slow_ocr)
-        worker = DeclarationImportWorker(
-            DeclarationPipeline(provider, store=LocalFsDocumentStore(browser_storage)),
-            sleep=gate.release_after_renewal,
-        )
-        result = await worker.run_once(organization_id=organization_id)
-        assert gate.released_in_time, 'the lease was not renewed while OCR was active'
-        assert result.code == 'PROCESSED'
+        # The same function the user check runs by hand; the scan has no text layer, so its page is read slowly.
+        processed = await process_queued_imports(organization_id, store=LocalFsDocumentStore(browser_storage), gate=gate)
+        assert gate.released_in_time, 'the lease was not renewed while the page was being read'
+        assert [result.code for result in processed.results] == ['PROCESSED', 'IDLE']
+        world.data['offline_run'] = processed
         async with get_worker_tenant_session(organization_id) as session:
             runs = await session.scalars(select(DeclarationExtractionRun.status).where(
                 DeclarationExtractionRun.import_id == uuid.UUID(import_id),
@@ -108,6 +119,41 @@ def extract_declaration(world, browser_storage, monkeypatch):
     world.run(run())
     state = world.act('GET', f'/api/declaration-imports/{import_id}')
     assert state.json()['status']=='NEEDS_REVIEW', state.text
+
+
+@then("page reading used only the chosen reading model and extraction only the chosen extraction model")
+def models_used_per_stage(world):
+    processed = world.data['offline_run']
+    (records,) = processed.imports
+    document_id = world.act('GET', f"/api/declaration-imports/{world.data['declaration_import']}/documents").json()[0]['id']
+    # The models come from the saved settings, which the browser step saved; the scan has one page.
+    assert (records.reading_model, records.extraction_model) == (READING_MODEL, EXTRACTION_MODEL)
+    assert [(read.model, read.document_key, read.pdf_page) for read in records.reads] == [(READING_MODEL, document_id, 1)]
+    assert {model for _method, model, _pages in records.calls} == {EXTRACTION_MODEL}
+    assert {method for method, _model, _pages in records.calls} >= {'inventory', 'extract_core', 'extract_rules', 'reconcile'}
+    # Extraction reads the transcript of that page: it is the only page any call names.
+    assert {pages for _method, _model, pages in records.calls if pages} == {((document_id, 1),)}
+    run = world.act('GET', f"/api/declaration-imports/{world.data['declaration_import']}").json()['runs'][0]
+    assert [(stage['stage'], stage['model']) for stage in run['stages']] == [('READING', READING_MODEL), ('EXTRACTION', EXTRACTION_MODEL)]
+
+
+@then("the import shows the consumption of both stages")
+def declaration_cost_view(browser_world):
+    b = browser_world
+    async def run():
+        await expect(b.page.get_by_role('heading', name='Teilungserklärung prüfen', exact=True)).to_be_visible(timeout=30_000)
+        view = b.page.get_by_role('region', name='Verbrauch je Importlauf', exact=True)
+        for viewport in (DESKTOP, PHONE):
+            await b.page.set_viewport_size(viewport)
+            for stage, model in (('Dokumente einlesen', READING_MODEL), ('Informationen extrahieren', EXTRACTION_MODEL)):
+                block = view.get_by_role('group', name=stage, exact=True)
+                await expect(block).to_contain_text(model)
+                await expect(block).to_contain_text('Eingabetoken')
+                await expect(block).to_contain_text('Geschätzte Kosten')
+            await expect(view.get_by_role('group', name='Gesamt', exact=True)).to_contain_text('Laufzeit')
+            await _fits_the_width(b.page)
+        await b.page.set_viewport_size(DESKTOP)
+    b.run(run())
 
 
 async def _expect_approval_ready(page, import_id):

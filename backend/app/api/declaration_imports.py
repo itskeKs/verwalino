@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.core.tenant import AuthContext, require_write_dep
 from app.core.live_principal import get_live_writer_db, get_live_publication_db, get_live_review_db
 from app.core.uploads import read_upload_limited
+from app.declarations.provider import READING_PASS_ID
 from app.declarations.review_schemas import (
     ApprovalPreviewOut,
     ApprovalRequest,
@@ -46,15 +47,40 @@ class DeclarationImportCreate(BaseModel):
     target_property_id: uuid.UUID | None = None
 
 
+class DeclarationStageOut(BaseModel):
+    """What one stage of a run (reading pages, extracting information) consumed, with the model that did it."""
+
+    stage: Literal["READING", "EXTRACTION"]
+    model: str
+    # Only what the stage's ledger entries report: some entry reported usage, or none did. A reservation is never here.
+    usage_status: Literal["REPORTED", "UNKNOWN"]
+    reported_input_tokens: int | None
+    reported_output_tokens: int | None
+    input_tokens: int
+    output_tokens: int
+    estimated_cost_usd: Decimal | None
+
+
+class DeclarationUnassignedOut(BaseModel):
+    """What the run's totals hold beyond its stages: a reservation no ledger entry attributes to a stage."""
+
+    input_tokens: int
+    output_tokens: int
+    estimated_cost_usd: Decimal | None
+
+
 class DeclarationRunOut(BaseModel):
     usage_status: Literal["REPORTED", "PARTIAL", "RESERVED", "UNKNOWN"]
     reported_input_tokens: int | None
     reported_output_tokens: int | None
     id: str
     model: str
+    stages: list[DeclarationStageOut]
+    unassigned: DeclarationUnassignedOut | None
     input_tokens: int
     output_tokens: int
     runtime_seconds: float
+    closed: bool
     estimated_cost_usd: Decimal | None
 
 
@@ -291,23 +317,80 @@ async def cancel_import(
     return _import_out(await DeclarationImportService(db, auth.organization_id, auth.user_id).cancel(import_id))
 
 
+def _is_reported(entry) -> bool:
+    return entry["failure_class"] is None or entry["input_tokens"] > 0 or entry["output_tokens"] > 0
+
+
 def _run_out(run, passes=()) -> DeclarationRunOut:
     from app.core.ai_models import model_price
     provider = {"OpenAiDeclarationProvider": "openai", "AnthropicDeclarationProvider": "anthropic"}.get(run.provider)
-    priced = provider is not None and model_price(run.model_name, provider) is not None
-    reported = [entry for entry in passes if entry["failure_class"] is None or entry["input_tokens"] > 0 or entry["output_tokens"] > 0]
+
+    def priced(model: str) -> bool:
+        return provider is not None and model_price(model, provider) is not None
+
+    reported = [entry for entry in passes if _is_reported(entry)]
     input_tokens = sum(entry["input_tokens"] for entry in reported)
     output_tokens = sum(entry["output_tokens"] for entry in reported)
     complete = bool(reported) and len(reported) == len(passes) and (input_tokens, output_tokens) == (run.input_tokens, run.output_tokens)
     usage_status = "REPORTED" if complete else "PARTIAL" if reported else "RESERVED" if run.input_tokens or run.output_tokens else "UNKNOWN"
     end = run.completed_at or datetime.now(timezone.utc)
+    stages, unassigned = _run_stages(run, passes, priced)
+    # The total is priced only when every line that consumed something is; an unpriced model that made no call
+    # does not hide a known cost, and a stage with unknown usage has no cost to price (its reservation is in the
+    # unassigned line, which carries the price rule).
+    lines = [*(stage for stage in stages if stage.usage_status != "UNKNOWN"), *([unassigned] if unassigned else [])]
+    total_priced = all(line.estimated_cost_usd is not None for line in lines) if lines else priced(run.model_name)
     return DeclarationRunOut(id=str(run.id), model=run.model_name,
         usage_status=usage_status,
         reported_input_tokens=input_tokens if reported else None,
         reported_output_tokens=output_tokens if reported else None,
+        stages=stages, unassigned=unassigned,
         input_tokens=run.input_tokens, output_tokens=run.output_tokens,
-        runtime_seconds=max(0, (end - run.started_at).total_seconds()),
-        estimated_cost_usd=run.estimated_cost_usd if priced else None)
+        runtime_seconds=max(0, (end - run.started_at).total_seconds()), closed=run.completed_at is not None,
+        estimated_cost_usd=run.estimated_cost_usd if total_priced else None)
+
+
+def _run_stages(run, passes, is_priced) -> tuple[list[DeclarationStageOut], DeclarationUnassignedOut | None]:
+    """The two stages of a run from the durable pass ledger, and what the ledger does not attribute (ADR 0017).
+
+    A stage shows only what its ledger entries report: the ledger tags every call with its pass, and a stage with
+    no entry made no call and has no block. The run row carries the totals including every reservation that is
+    still held (a call whose usage the provider did not report keeps its reservation, and a worker that stopped
+    between a reservation and its entry leaves one without an entry). Nothing in the ledger says which stage held
+    that remainder, and the import's status does not either, so it is returned apart and never assigned by
+    inference. The stages and the remainder add up to the run's tokens and cost.
+    """
+    reading_model = run.document_model_name or next(
+        (entry["configured_model"] for entry in passes if entry["pass_id"] == READING_PASS_ID), None)
+    models = {"READING": reading_model, "EXTRACTION": run.model_name}
+    entries = {name: [entry for entry in passes if (entry["pass_id"] == READING_PASS_ID) == (name == "READING")] for name in models}
+    reported = {name: [entry for entry in items if _is_reported(entry)] for name, items in entries.items()}
+    sums = {name: (sum(entry["input_tokens"] for entry in items), sum(entry["output_tokens"] for entry in items),
+                   sum((Decimal(entry["estimated_cost_usd"]) for entry in items), Decimal("0")))
+            for name, items in reported.items()}
+    stages = []
+    for name, model in models.items():
+        if not entries[name]:
+            continue
+        has_reported = bool(reported[name])
+        stages.append(DeclarationStageOut(
+            stage=name, model=model, usage_status="REPORTED" if has_reported else "UNKNOWN",
+            reported_input_tokens=sums[name][0] if has_reported else None,
+            reported_output_tokens=sums[name][1] if has_reported else None,
+            input_tokens=sums[name][0], output_tokens=sums[name][1],
+            # A stage whose calls reported nothing has no cost either: its reservation is not shown here, and a
+            # stage line of 0,00 USD would read as a known zero.
+            estimated_cost_usd=sums[name][2].quantize(Decimal("0.000001")) if has_reported and is_priced(model) else None))
+    held_input = max(0, run.input_tokens - sum(total[0] for total in sums.values()))
+    held_output = max(0, run.output_tokens - sum(total[1] for total in sums.values()))
+    held_cost = max(Decimal("0"), Decimal(run.estimated_cost_usd) - sum(total[2] for total in sums.values()))
+    held_cost = held_cost.quantize(Decimal("0.000001"))
+    if not (held_input or held_output or held_cost):
+        return stages, None
+    # Which model's price the remainder was reserved at is as unknown as its stage: it is priced only when both are.
+    known_price = all(is_priced(model) for model in (run.model_name, run.document_model_name) if model)
+    return stages, DeclarationUnassignedOut(
+        input_tokens=held_input, output_tokens=held_output, estimated_cost_usd=held_cost if known_price else None)
 
 
 def _import_out(item: DeclarationImport) -> DeclarationImportOut:

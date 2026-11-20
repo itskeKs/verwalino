@@ -14,6 +14,7 @@ class OrganizationAiSettings(Base):
     request_timeout_seconds: Mapped[int | None] = mapped_column(Integer)
     encrypted_api_key: Mapped[str | None] = mapped_column(Text)
     model: Mapped[str | None] = mapped_column(String(255))
+    document_model: Mapped[str | None] = mapped_column(String(255))
     import_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     qa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     monthly_limit_usd: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))

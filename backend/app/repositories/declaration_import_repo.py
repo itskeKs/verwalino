@@ -13,6 +13,7 @@ from app.models.declaration_import import (
     DeclarationImport,
     DeclarationImportDocument,
     DeclarationImportPass,
+    DeclarationPageReading,
 )
 from app.declarations.observability import PassLedgerEntry
 from app.models.property_document import PropertyDocument
@@ -111,6 +112,44 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
             .where(DeclarationExtractionRun.import_id == import_id)
         )
         return int(result.scalar_one())
+
+    async def job_model_identities(self, import_id: uuid.UUID) -> tuple[str, str] | None:
+        """The extraction and reading model the job's first run started with, if it recorded a reading model.
+
+        A job keeps both identities across its resumes: a later settings change applies to new work only.
+        """
+        row = (await self._session.execute(
+            select(DeclarationExtractionRun.model_name, DeclarationExtractionRun.document_model_name)
+            .where(DeclarationExtractionRun.organization_id == self._org_id)
+            .where(DeclarationExtractionRun.import_id == import_id)
+            .where(DeclarationExtractionRun.document_model_name.isnot(None))
+            .order_by(DeclarationExtractionRun.started_at, DeclarationExtractionRun.id)
+            .limit(1)
+        )).first()
+        return None if row is None else (row[0], row[1])
+
+    async def load_page_readings(self, import_id: uuid.UUID) -> dict[tuple[uuid.UUID, int], list[dict[str, object]]]:
+        """The transcripts of the pages this import's earlier runs finished, by (document id, page)."""
+        rows = await self._session.execute(
+            select(DeclarationPageReading.document_id, DeclarationPageReading.pdf_page, DeclarationPageReading.blocks)
+            .where(DeclarationPageReading.organization_id == self._org_id)
+            .where(DeclarationPageReading.import_id == import_id)
+        )
+        return {(document_id, page): blocks for document_id, page, blocks in rows.all()}
+
+    async def save_page_reading(
+        self,
+        import_id: uuid.UUID,
+        document_id: uuid.UUID,
+        pdf_page: int,
+        model_name: str,
+        blocks: list[dict[str, object]],
+    ) -> None:
+        self._session.add(DeclarationPageReading(
+            organization_id=self._org_id, import_id=import_id, document_id=document_id,
+            pdf_page=pdf_page, model_name=model_name, blocks=blocks,
+        ))
+        await self._session.flush()
 
     async def append_pass_entries(
         self,

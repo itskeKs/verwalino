@@ -213,6 +213,8 @@ class DeclarationExtractionRun(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     status: Mapped[str] = mapped_column(String(12), nullable=False, server_default="RUNNING")
     provider: Mapped[str] = mapped_column(String(100), nullable=False)
     model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # The reading model the run used, beside the extraction model above; NULL for a run that never had one.
+    document_model_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     prompt_version: Mapped[str] = mapped_column(String(120), nullable=False)
     schema_version: Mapped[str] = mapped_column(String(120), nullable=False)
     harness_version: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -240,6 +242,47 @@ class DeclarationExtractionRun(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             ["declaration_import.organization_id", "declaration_import.id"],
             name="fk_declaration_extraction_run_import_tenant",
             ondelete="RESTRICT",
+        ),
+    )
+
+
+class DeclarationPageReading(Base, UUIDPrimaryKeyMixin):
+    """The transcript of one page the reading model finished: working data of a running import.
+
+    It lets a resumed job skip a page it already paid for. Written by the worker only. It is kept as long as the
+    import's documents, until the organization is erased; nothing deletes it earlier. It is not part of the
+    organization export, so after a restore the recorded evaluation cannot re-check the evidence of a scanned
+    import (migration 0196).
+    """
+
+    __tablename__ = "declaration_page_reading"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id", ondelete="RESTRICT"), nullable=False
+    )
+    import_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    pdf_page: Mapped[int] = mapped_column(Integer, nullable=False)
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    blocks: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "import_id", "document_id"],
+            [
+                "declaration_import_document.organization_id",
+                "declaration_import_document.import_id",
+                "declaration_import_document.document_id",
+            ],
+            name="fk_declaration_page_reading_document",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "organization_id", "import_id", "document_id", "pdf_page",
+            name="uq_declaration_page_reading_page",
         ),
     )
 

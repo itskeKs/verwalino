@@ -18,7 +18,6 @@ from app.repositories.property_document_repo import PropertyDocumentRepository
 from app.repositories.property_repo import PropertyRepository
 from app.services.property_document_service import PropertyDocumentService
 
-DECLARATION_IMPORT_DISABLED = "DECLARATION_IMPORT_DISABLED"
 ACTIVE_OR_COMPLETE_STATUSES = {
     "QUEUED", "PREFLIGHT", "EXTRACTING", "RECONCILING", "RETRY_WAIT",
     "NEEDS_REVIEW", "APPLYING", "APPLIED",
@@ -26,11 +25,11 @@ ACTIVE_OR_COMPLETE_STATUSES = {
 
 
 async def require_declaration_import_enabled(db, organization_id) -> None:
-    """Reject write-side import work when the deployment switch is off."""
-    from app.services.ai_settings_service import effective_ai_settings
-    effective = await effective_ai_settings(db, organization_id)
-    if not effective.import_enabled or not effective.api_key or not effective.model:
-        raise HTTPException(status_code=503, detail=DECLARATION_IMPORT_DISABLED)
+    """Reject write-side import work unless the organization's AI settings allow the import to run."""
+    from app.services.ai_settings_service import declaration_import_blocker, effective_ai_settings
+    blocker = declaration_import_blocker(await effective_ai_settings(db, organization_id))
+    if blocker is not None:
+        raise HTTPException(status_code=503, detail=blocker)
 
 
 class DeclarationImportService:
@@ -208,8 +207,14 @@ class DeclarationImportService:
             if (await self._imports.count_extraction_runs(import_id) >= settings.declaration_max_attempts
                 or item.estimated_cost_usd >= item.max_cost_usd):
                 raise HTTPException(status_code=409, detail="RETRY_BUDGET_EXHAUSTED")
+        from app.repositories.organization_ai_settings_repo import OrganizationAiSettingsRepository
         from app.services.ai_settings_service import require_organization_ai_budget
         await require_organization_ai_budget(self._session, self._org_id, item.max_cost_usd)
+        # The worker holds the import's cap against the monthly limit for the reading model as well; refusing here
+        # keeps an import it would end terminally from being accepted.
+        ai_row = await OrganizationAiSettingsRepository(self._session, self._org_id).get()
+        if ai_row is not None and ai_row.document_model:
+            await require_organization_ai_budget(self._session, self._org_id, item.max_cost_usd, model=ai_row.document_model)
         receipt_id = await self._session.scalar(text("SELECT record_declaration_queue_request(:org,:job,:key,:operation)"),
             {"org": self._org_id, "job": import_id, "key": key, "operation": operation})
         await self._session.refresh(item)

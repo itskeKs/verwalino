@@ -23,7 +23,7 @@ _WHITESPACE = re.compile(r"\s+")
 
 
 def normalize_evidence_text(value: str) -> str:
-    """Return the one exact normalization used for quotes and OCR page text."""
+    """Return the one exact normalization used for quotes and page text (text layer or transcript)."""
     normalized = unicodedata.normalize("NFKC", value)
     normalized = "".join("-" if character in _DASHES else character for character in normalized)
     return _WHITESPACE.sub(" ", normalized.replace("\r", "\n")).strip().casefold()

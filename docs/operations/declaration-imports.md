@@ -2,8 +2,9 @@
 
 The declaration of division import is an asynchronous workflow that requires review.
 `DeclarationPipeline` is the fixed, deterministic manager: it runs a bounded local
-precheck, fixed extraction passes, local validations and at most one bounded vision
-recheck. It is not a freely autonomous agent. Document pages, OCR text and model
+precheck, reads every page without a text layer with the reading model, runs fixed
+extraction passes, local validations and at most one bounded vision recheck. It is not a
+freely autonomous agent. Document pages, page transcripts and model
 responses are **untrusted data**; they receive no tools, no action sink and no
 permission to change data. Only **Human Approval** promotes a reviewed draft into
 canonical property, unit or rule data.
@@ -21,16 +22,23 @@ eingerichtet. Bitte wenden Sie sich an Ihre Administration.”
 ## Operating Flow and Model Matrix
 
 ```text
-PDF -> local precheck/OCR -> textual Luna passes -> local evidence/domain validation
+PDF -> local precheck (structure, text layer, limits)
+       -> each page without a text layer: rendered locally, one at a time, as PNG
+          -> reading model ("Dokumente einlesen") -> page transcript
+       -> extraction passes on text-layer text and transcripts -> local evidence/domain validation
        -> RouterDecision(NONE | HUMAN_REVIEW | VISION_RECHECK)
-       -> only selected, locally rendered PNG pages to Mini
+       -> only selected, locally rendered PNG pages to the extraction model
        -> re-validation -> NEEDS_REVIEW -> Human Approval
 ```
 
-| Purpose | Model / reasoning | Permitted input | Limit |
+Which model does what is the organization's choice in Einstellungen (ADR 0017); no model
+is named here by the product:
+
+| Purpose | Model | Permitted input | Limit |
 | --- | --- | --- | --- |
-| regular extraction (`inventory`, `extract_core`, `extract_rules`, `reconcile`) | `gpt-5.6-luna`, `medium` | bounded text/OCR batches or structured intermediate results | no images, no tools, no `previous_response_id` |
-| Vision recheck | `gpt-5.4-mini`, `none` | only locally rendered PNG pages selected by `RouterDecision`, plus bounded context | no regular Luna passes with images; a rendering failure is fail closed |
+| page reading (`read_page`, [Reading stage](#reading-stage-adr-0017)) | the reading model, „Dokumente einlesen“ (`document_model`) | one locally rendered PNG page per request | only pages without a usable text layer; no tools, no fallback to another model |
+| regular extraction (`inventory`, `extract_core`, `extract_rules`, `reconcile`) | the extraction model, „Informationen extrahieren“ (`model`) | bounded text batches (text layer or transcripts) or structured intermediate results | no images, no tools, no `previous_response_id` |
+| Vision recheck | the extraction model | only locally rendered PNG pages selected by `RouterDecision`, plus bounded context | no regular passes with images; a rendering failure is fail closed |
 | Eval candidates | Luna `low`, Terra and Luna with Mini router | exclusively the same gold set | no automatic promotion and no production routing |
 
 The local `route_escalation` router uses only reproducible signals. It is not a learned
@@ -61,21 +69,26 @@ permitted provider failures is passed there, only `HUMAN_REVIEW` is permitted.
 
 A maximum of **25 MiB** applies per PDF (`HV_DECLARATION_MAX_PDF_BYTES`), and by
 default ten documents and 500 pages per import. The precheck rejects unreadable,
-encrypted or active PDFs as well as embedded files. It uses the text layer first and
-OCR only when needed.
+encrypted or active PDFs as well as embedded files. It uses the text layer first; a page with
+fewer than `HV_DECLARATION_TEXT_MIN_CHARS` (40) characters of it is read by the reading model
+instead. There is no local text recognition in this path. The page count and pixel
+bounds of all such pages of all documents of the import are reserved in the precheck, before the
+first model call, so that an import over a bound costs no reading at all. The `HV_DECLARATION_OCR_*` keys keep their names and now bound the rendering
+for the reading model.
 
 | Area | Default limit |
 | --- | ---: |
-| OCR resolution / time per page | 180 DPI / 30 seconds |
-| rendered pixels per page | 20,000,000 |
-| temporary OCR data per import | 256 MiB |
-| OCR pages / pixels per import | 200 / 400,000,000 |
+| render resolution / time per page for reading | 180 DPI / 30 seconds |
+| rendered pixels per page (render bound) | 20,000,000 |
+| pixels of a page image sent to the reading model | 4,000,000 (a larger render is scaled down, never refused) |
+| temporary render data of one page render (released when the render ends) | 256 MiB |
+| pages / pixels read per import | 200 / 800,000,000 (counted from the page size at 180 dpi before scaling to the render ceiling: an A4 page counts 3,132,240 pixels, so 200 A4 pages and the rechecks fit; larger formats reach the bound earlier, A3 at page 128) |
 | precheck deadline | 600 seconds |
 | provider pages / characters per batch | 20 / 80,000 |
-| input / output tokens per import | 500,000 / 60,000 |
+| input / output tokens per import | 2,500,000 / 500,000 |
 | output tokens per provider call | 12,000 |
 | recheck pages / recheck calls | 12 / 2 |
-| candidates / estimated import cost | 5,000 / 1.00 USD |
+| candidates / estimated import cost | 5,000 / 3.00 USD |
 
 Every **Evidence-Quote** must appear locally on the exact
 `(document_key, pdf_page)` given. The validator normalizes Unicode, line breaks,
@@ -88,9 +101,74 @@ ledger, logs or tickets either.
 Common precheck errors are `PDF_SIZE_LIMIT_EXCEEDED`,
 `PDF_PAGE_LIMIT_EXCEEDED`, `PDF_UNREADABLE`, `PDF_ENCRYPTED_FORBIDDEN`,
 `PDF_ACTIVE_CONTENT_FORBIDDEN`, `PDF_EMBEDDED_FILES_FORBIDDEN`,
-`OCR_UNAVAILABLE`, `OCR_TIMEOUT`, `OCR_FAILED`,
+`PAGE_RENDER_UNAVAILABLE`, `PAGE_RENDER_TIMEOUT`,
 `OCR_RENDERED_PIXELS_LIMIT_EXCEEDED`, `OCR_IMPORT_PAGE_LIMIT_EXCEEDED` and
-`OCR_IMPORT_PIXEL_LIMIT_EXCEEDED`.
+`OCR_IMPORT_PIXEL_LIMIT_EXCEEDED`; the render bounds keep their historical `OCR_` prefix.
+`OCR_TIMEOUT`, `OCR_UNAVAILABLE` and `OCR_FAILED` are no longer produced; imports that stored
+`OCR_TIMEOUT` before 0196 keep it and stay retryable.
+
+## Reading Stage (ADR 0017)
+
+`DocumentReadingProvider.read_page` (`declarations/provider.py`) takes one rendered PNG page
+(media type, document key, original page number) and the reading model and returns a
+`PageTranscript`: ordered text, table (rows of cells) and unreadable blocks that copy what is
+visible and mark what cannot be read (`[unreadable]`) without interpreting it. Prompt `reading-v1`
+and schema `reading-1` are versioned constants; the caller assigns the page identity. The
+OpenAI, compatible and Anthropic transports of ADR 0014 implement it with the organization's one
+provider, endpoint, timeout and key. One page is one request; a failed page is read again alone.
+
+- **Both models are needed.** The import runs only when the organization has the switch, a key,
+  the extraction model and the reading model. Without the reading model drafts, uploads and
+  starts answer `DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING`, the worker leaves queued imports
+  untouched, and a job that nevertheless reaches the reading stage ends with
+  `DOCUMENT_MODEL_NOT_CONFIGURED`. Uploaded originals stay.
+- **No fallback.** A model that cannot take the image (recognised by the status 415 or, for a 400
+  or 422, by the structured identifiers of the provider's error object, its `param` naming the image
+  part or an image `code`; never by message text) ends the job with
+  `PROVIDER_IMAGE_INPUT_UNSUPPORTED`; any other rejected request with `OPENAI_REQUEST_FAILED`, as in
+  the extraction passes; a refusal or malformed answer with `PROVIDER_REFUSAL` or `PROVIDER_SCHEMA_FAILURE`. The application
+  never switches model or provider. A reading failure ends the run; the job is `RETRY_WAIT` for
+  a retryable code and `FAILED` otherwise.
+- **Metering.** Before each call the worker reserves the page at the reading model's price (an
+  image from its pixel dimensions by the provider's documented formula) in the same ledger as the
+  extraction passes, so reading and extraction count together against the per-import token and
+  cost limits and the organization's monthly limit (`IMPORT_TOKEN_BUDGET_EXCEEDED`,
+  `IMPORT_COST_BUDGET_EXCEEDED`, `ORGANIZATION_AI_BUDGET_EXCEEDED`). A failed call keeps the
+  usage the provider reported; when it reported none, the reservation stays recorded. An
+  unpriced model is not limited and shown as „kein Preis bekannt“. The token limits (2,500,000
+  input, 500,000 output) are sized for the 200 dense scanned pages the page limit permits, with the
+  derivation beside them in `app/core/config.py`; the cost limit of 3.00 USD stays the money guard
+  and is reached first on a dearer model. The upload limit of 25 MiB per PDF bounds a large scan
+  first: 200 pages in high resolution can exceed it before the page limit is reached. The
+  organization's monthly limit counts a running import at its cap when its extraction model or its
+  reading model is priced. A running import therefore holds up to the per-import cost limit (3.00 USD)
+  against the monthly limit, and an organization whose monthly limit is lower cannot start an import
+  with a priced model: start and retry refuse it with `ORGANIZATION_AI_BUDGET_EXCEEDED`, checked for the
+  extraction and for the reading model.
+- **Resume.** Each finished page transcript is saved with the call's settled usage in one
+  transaction (`declaration_page_reading`, migration 0196; working data of the import, written by
+  the worker only). A transcript is kept as long as the import's documents, until the organization
+  is erased; nothing deletes it earlier. It is not part of the organization export
+  ([export](organization-export.md)), so after a restore the evidence re-check of a scanned import
+  in the recorded evaluation is `UNAVAILABLE`. A resumed job neither asks for nor pays for a page it
+  already holds. A job keeps the extraction and reading
+  model of its first run (`declaration_extraction_run.model_name`, `document_model_name`): a
+  settings change applies to new jobs only.
+- **Outcome on the import screen.** Every failure above has a German sentence in
+  `pages/DeclarationImportPage.tsx` (the one map of job codes to text): what happened, that the
+  uploaded original is kept and nothing was applied, and what to do (choose another model, reduce
+  the import, contact the operator). An unknown code shows only the generic sentence, never the
+  code.
+- **Cost view.** `GET /api/declaration-imports/{id}` lists per run the stages `READING` and
+  `EXTRACTION` (model, usage status, reported and conservatively recorded tokens, cost or none for an
+  unpriced model) built from the pass ledger (`pass_id` `read_page` for reading) and the run row; a
+  stage that made no call, such as the reading of a text-layer document, has no entry. A stage shows
+  only what its ledger entries report. What the run total holds beyond that (a reservation that no
+  entry attributes, for example of a call that was cancelled) is the separate `unassigned` item
+  (tokens and cost, or no cost when a model of the run has no price), never assigned to a stage by
+  inference; it is absent when zero. The stages and `unassigned` add up to the run's tokens and cost.
+  The import and review screens show them as „Dokumente einlesen“, „Informationen extrahieren“ and
+  „Nicht zugeordnet“ before the run total.
 
 ## Provider Failures, Recovery and Safe Telemetry
 
@@ -106,9 +184,10 @@ not be merged into a single “four outcomes” schema:
 | `PROVIDER_USAGE_INVALID` (concretely `OPENAI_USAGE_INVALID` in the OpenAI adapter) | separate usage metering; cost/usage contract fails closed, no publication |
 
 The worker claims jobs per tenant with a lease, token and generation.
-Heartbeats extend only the current generation. Preflight OCR and selected-page
-recheck rendering run off the event loop so the heartbeat can renew the lease
-during local processing. They share the existing preflight deadline and resource
+Heartbeats extend only the current generation. Preflight, page rendering for
+reading and selected-page recheck rendering run off the event loop, and the reading
+requests are awaited while the heartbeat keeps running, so the lease is renewed
+during local processing and during a slow model call. They share the existing preflight deadline and resource
 budgets. On cancellation or lease loss, the worker waits for the active local
 operation and its temporary-file cleanup before releasing its processing slot.
 The interrupted operation's result is discarded.
@@ -169,7 +248,7 @@ The Python and DB contracts must therefore be changed together.
 Only technical metadata is permitted, such as pass ID, attempt number, model,
 reasoning effort, prompt/schema/harness version and hash, token partition,
 estimated cost, latency, retry counter, `route_action`, reason codes and
-failure class. Not permitted are prompt text, OCR/PDF text, quote, image,
+failure class. Not permitted are prompt text, page transcript/PDF text, quote, image,
 response body, local path, tenant/property/user ID, headers, API key and
 exception text. Status endpoints stay with their aggregated metadata.
 
@@ -192,10 +271,12 @@ API, and never included in logs, product archives or tickets. Rotating
 `SESSION_SECRET` therefore makes every stored key unreadable until each
 organization re-enters its key (the known 503 message); the declaration import
 worker skips such organizations with one `AI_KEY_UNREADABLE` log line per
-organization and keeps claiming for the others instead of stalling their queue. The same selected
-model is used for extraction, escalation and Q&A. Each request/job reads the current
-organization settings; clients are closed after the request/job. Only after the local
-precheck are bounded, permitted page contents sent to the provider.
+organization and keeps claiming for the others instead of stalling their queue. The extraction
+model is used for extraction, escalation, vision recheck and Q&A; a second model reads the pages
+(see [Reading Stage](#reading-stage-adr-0017)). Each request reads the current organization
+settings; a job keeps the two model identities of its first run; clients are closed after the
+request/job. Only after the local precheck are bounded, permitted page contents (text of
+the text layer and, for pages without one, the rendered page image) sent to the provider.
 `store=false` is set, **is not ZDR** and triggers no retention commitment.
 API data is not used for training by default; without approved extended controls,
 abuse monitoring may retain content for up to 30
@@ -359,7 +440,7 @@ workers, closes running extraction records, and preserves source originals and
 persisted budget reservations. Both pipeline- and heartbeat-origin cancellation
 are reported as permission changes. Already-dispatched provider work cannot be
 recalled; its output cannot publish after revocation. No database transaction is
-held across PDF parsing, OCR or provider I/O. Populated downgrade refuses to erase
+held across PDF parsing, page rendering or provider I/O. Populated downgrade refuses to erase
 queue history; repair forward. Worker readiness requires the new queue column.
 
 This is an organization-level live-principal prerequisite. It does not grant a
@@ -534,14 +615,16 @@ prices are enforced; unknown-price models remain selectable and the page explain
 that they are not limited. Known requests explicitly use the standard service tier
 and no implicit SDK retry. Monetary unknowns are recorded as unpriced zero estimates,
 not as a claim that OpenAI is free. Token/time limits remain bounded. The extraction
-harness version is `3`, with wire schema version `2`. The adapter converts only
+harness version is `4` (compatible endpoints `8`, Anthropic fingerprint `v5`), with wire schema version `2`. The adapter converts only
 the two known, disjoint `kind` unions to `anyOf` after the SDK's strict-schema
 transformation. Parsing, reservations and schema fingerprints use that same
 wire model; inherited local validation remains unchanged. Offline SDK transport
 checks verify serialization, not live provider acceptance. Pass metadata uses `default`
 when reasoning is omitted for a model with no known effort contract.
 
-Prompt version `declaration-v3` supplies the exact fixed-core subject-prefix and
+Prompt version `declaration-v4` also tells the extraction passes that a page may be a
+transcript with `[table]` blocks and `[unreadable]` markers (the reading stage's own prompt
+is `reading-v1`). It supplies the exact fixed-core subject-prefix and
 field pairs to core extraction, reconciliation and recheck. The instructions
 and local validator read one immutable contract; existing subject-key forms,
 value-type checks, evidence requirements and wire schemas remain unchanged.

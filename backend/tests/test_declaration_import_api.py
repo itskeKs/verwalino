@@ -144,7 +144,7 @@ async def test_unpriced_running_import_does_not_reserve_the_next_known_models_mo
     from app.services.ai_settings_service import require_organization_ai_budget
     org = seed_data['org_a_id']
     path = f'/api/organizations/{org}/ai-settings'
-    assert (await client_a_admin.put(path,json={'model':'future-model','import_enabled':True,'monthly_limit_usd':'1.00'})).status_code==200
+    assert (await client_a_admin.put(path,json={'model':'future-model','document_model':'gpt-5.4-mini','import_enabled':True,'monthly_limit_usd':'1.00'})).status_code==200
     created = await client_a_admin.post('/api/declaration-imports',json={'mode':'NEW_PROPERTY'})
     assert created.status_code==201,created.text
     await _set_organization(migrator_session,org)
@@ -970,6 +970,51 @@ async def test_start_is_idempotent_and_queues_without_extraction(client_a_admin)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["start", "retry"])
+@pytest.mark.parametrize(("extraction_model", "reading_model", "refused"), [
+    ("unpriced-extraction-model", "gpt-5.4-mini", True),  # only the reading model is priced: it counts like the other
+    ("gpt-5.6-luna", "unpriced-vision-model", True),  # as before: a priced extraction model
+    ("unpriced-extraction-model", "unpriced-vision-model", False),  # as before: nothing priced, nothing held
+])
+async def test_start_and_retry_check_the_monthly_limit_for_the_extraction_and_the_reading_model(
+    client_a_admin, seed_data, operation, extraction_model, reading_model, refused
+) -> None:
+    from tests.test_scoped_account_statements import fetch, mutate
+    org = seed_data["org_a_id"]
+    created = await client_a_admin.post("/api/declaration-imports", json={"mode": "NEW_PROPERTY"})
+    import_id = created.json()["id"]
+    if operation == "start":
+        uploaded = await client_a_admin.post(
+            f"/api/declaration-imports/{import_id}/documents",
+            files={"file": ("teilung.pdf", b"%PDF-1.4\n%%EOF", "application/pdf")},
+            data={"document_role": "DECLARATION", "sequence_no": "1"},
+        )
+        assert uploaded.status_code == 201
+    else:
+        await mutate(text("UPDATE declaration_import SET status='FAILED', error_code='PROVIDER_TIMEOUT' WHERE id=:job"),
+                     {"job": uuid.UUID(import_id)})
+    configured_ai(org, model=extraction_model, document_model=reading_model, monthly_limit_usd=Decimal("0.00"))
+    headers = {"Idempotency-Key": str(uuid.uuid4())}
+
+    response = await client_a_admin.post(f"/api/declaration-imports/{import_id}/{operation}", headers=headers)
+
+    if not refused:
+        assert response.status_code == 200 and response.json()["status"] == "QUEUED", response.text
+        return
+    # The worker would refuse it terminally; the request is refused up front, with the existing code.
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "ORGANIZATION_AI_BUDGET_EXCEEDED"
+    params = {"job": uuid.UUID(import_id)}
+    assert await fetch("SELECT count(*) FROM declaration_extraction_run WHERE import_id=:job", params) == 0
+    assert await fetch("SELECT count(*) FROM declaration_queue_request WHERE import_id=:job", params) == 0
+    assert await fetch("SELECT status FROM declaration_import WHERE id=:job", params) == ("DRAFT" if operation == "start" else "FAILED")
+    # Raising the limit makes the same import, with the same request key, startable again.
+    configured_ai(org, model=extraction_model, document_model=reading_model, monthly_limit_usd=None)
+    again = await client_a_admin.post(f"/api/declaration-imports/{import_id}/{operation}", headers=headers)
+    assert again.status_code == 200 and again.json()["status"] == "QUEUED", again.text
+
+
+@pytest.mark.asyncio
 async def test_upload_rejects_duplicate_sequence_and_non_draft_update(client_a_admin) -> None:
     created = await client_a_admin.post(
         "/api/declaration-imports", json={"mode": "NEW_PROPERTY"}
@@ -1536,6 +1581,61 @@ async def test_declaration_import_disabled_blocks_create_upload_and_start(
     )
 
     for response in (blocked_create, blocked_upload, blocked_start):
+        assert response.status_code == 503
+        assert response.json()["detail"] == "DECLARATION_IMPORT_DISABLED"
+
+
+@pytest.mark.asyncio
+async def test_declaration_import_needs_the_document_reading_model_and_keeps_the_originals(
+    client_a_admin, seed_data, configured_ai
+) -> None:
+    created = await client_a_admin.post(
+        "/api/declaration-imports", json={"mode": "NEW_PROPERTY"}
+    )
+    assert created.status_code == 201
+    import_id = created.json()["id"]
+    uploaded = await client_a_admin.post(
+        f"/api/declaration-imports/{import_id}/documents",
+        files={"file": ("teilung.pdf", b"%PDF-1.4\n%%EOF", "application/pdf")},
+        data={"document_role": "DECLARATION", "sequence_no": "1"},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    document_id = uploaded.json()["id"]
+
+    # The extraction model alone, as after the upgrade, no longer lets an import run.
+    configured_ai(seed_data["org_a_id"], document_model=None)
+    blocked = [
+        await client_a_admin.post("/api/declaration-imports", json={"mode": "NEW_PROPERTY"}),
+        await client_a_admin.post(
+            f"/api/declaration-imports/{import_id}/documents",
+            files={"file": ("teilung.pdf", b"%PDF-1.4\n%%EOF", "application/pdf")},
+            data={"document_role": "DECLARATION", "sequence_no": "2"},
+        ),
+        await client_a_admin.post(
+            f"/api/declaration-imports/{import_id}/start", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"}
+        ),
+    ]
+    for response in blocked:
+        assert response.status_code == 503
+        assert response.json()["detail"] == "DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING"
+
+    # The uploaded original stays readable and listed while the configuration is incomplete.
+    assert (await client_a_admin.get(f"/api/declaration-imports/{import_id}")).status_code == 200
+    listed = await client_a_admin.get(f"/api/declaration-imports/{import_id}/documents")
+    assert [item["id"] for item in listed.json()] == [document_id]
+
+    # Choosing the reading model is all that is missing.
+    configured_ai(seed_data["org_a_id"], document_model="gpt-5.4-mini")
+    assert (await client_a_admin.post("/api/declaration-imports", json={"mode": "NEW_PROPERTY"})).status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_declaration_import_without_key_model_or_switch_is_still_reported_as_not_set_up(
+    client_a_admin, seed_data, configured_ai
+) -> None:
+    for updates in ({"import_enabled": False, "document_model": None}, {"model": None, "import_enabled": False, "qa_enabled": False}):
+        configured_ai(seed_data["org_a_id"], **updates)
+        response = await client_a_admin.post("/api/declaration-imports", json={"mode": "NEW_PROPERTY"})
         assert response.status_code == 503
         assert response.json()["detail"] == "DECLARATION_IMPORT_DISABLED"
 

@@ -6,7 +6,7 @@ from sqlalchemy import select, text
 
 from app.models.audit_event import AuditEvent
 from app.models.declaration_candidate import DeclarationCandidate, DeclarationCandidateEvidence, DeclarationCandidateIssue
-from app.models.declaration_import import DeclarationImport, DeclarationImportDocument, DeclarationExtractionRun, DeclarationImportPass, DeclarationQueueRequest
+from app.models.declaration_import import DeclarationImport, DeclarationImportDocument, DeclarationExtractionRun, DeclarationImportPass, DeclarationPageReading, DeclarationQueueRequest
 from app.models.property_document import PropertyDocument
 
 
@@ -25,6 +25,7 @@ class RecordedImportSnapshot:
     evidence: tuple
     issues: tuple
     reviewed: bool
+    readings: tuple = ()
 
 
 class DeclarationEvaluationRepository:
@@ -66,6 +67,9 @@ class DeclarationEvaluationRepository:
         reviewed = bool(await self.session.scalar(select(AuditEvent.id).where(
             AuditEvent.organization_id == self.org, AuditEvent.entity_id == import_id,
             AuditEvent.action == 'declaration_import.candidate_reviewed').limit(1)))
-        if len(candidates) > 1000 or len(evidence) > 10000 or len(issues) > 1000 or len(passes) > 64:
+        # The page transcripts the quotes were taken from; none for a document with a text layer.
+        readings = tuple((await self.session.scalars(select(DeclarationPageReading).where(
+            DeclarationPageReading.organization_id == self.org, DeclarationPageReading.import_id == import_id).limit(501))).all())
+        if len(candidates) > 1000 or len(evidence) > 10000 or len(issues) > 1000 or len(passes) > 64 or len(readings) > 500:
             raise RecordedCaptureUnavailable('CAPTURE_LIMIT_EXCEEDED')
-        return RecordedImportSnapshot(item, documents, runs, queues, passes, candidates, evidence, issues, reviewed)
+        return RecordedImportSnapshot(item, documents, runs, queues, passes, candidates, evidence, issues, reviewed, readings)

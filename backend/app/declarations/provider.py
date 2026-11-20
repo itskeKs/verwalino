@@ -11,6 +11,7 @@ from app.declarations.observability import ProviderPassMetadata
 from app.declarations.schemas import (
     CoreExtractionOutput,
     DocumentInventoryOutput,
+    PageTranscript,
     ReconciliationOutput,
     RuleExtractionOutput,
     TargetedRecheckOutput,
@@ -27,6 +28,16 @@ class PageInput:
 
 
 @dataclass(frozen=True)
+class PageImage:
+    """One rendered page for the reading stage: the image bytes with their media type and the page's identity."""
+
+    document_key: str
+    pdf_page: int
+    media_type: str
+    data: bytes
+
+
+@dataclass(frozen=True)
 class DocumentInput:
     document_key: str
     pages: Sequence[PageInput]
@@ -39,6 +50,13 @@ PROVIDER_INCOMPLETE = "PROVIDER_INCOMPLETE"
 PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
 PROVIDER_SCHEMA_FAILURE = "PROVIDER_SCHEMA_FAILURE"
 PROVIDER_CONNECTION_ERROR = "PROVIDER_CONNECTION_ERROR"
+# The selected model cannot take the page image. Classified by the HTTP status of the rejected request, never by
+# message text; there is no other model, provider or text path to fall back to.
+PROVIDER_IMAGE_INPUT_UNSUPPORTED = "PROVIDER_IMAGE_INPUT_UNSUPPORTED"
+# The reading stage's pass in provider metadata (observability._PASS_IDS lists the same literal).
+READING_PASS_ID = "read_page"
+# Rendered pages reach the transports as PNG only: the validator and the Anthropic envelope accept nothing else.
+READING_IMAGE_MEDIA_TYPE = "image/png"
 
 
 @dataclass(frozen=True)
@@ -192,3 +210,19 @@ class DeclarationExtractionProvider(Protocol):
         *,
         max_output_tokens: int,
     ) -> ProviderCallResult[TargetedRecheckOutput]: ...
+
+
+class DocumentReadingProvider(Protocol):
+    """The reading stage: one rendered page per request, copied into a typed transcript.
+
+    ``model`` is the organization's document reading model; the call never substitutes another model.
+    Failures are ``ProviderFailure`` with a stable code and, when the provider reported any, its usage.
+    """
+
+    async def read_page(
+        self,
+        page: PageImage,
+        *,
+        model: str,
+        max_output_tokens: int,
+    ) -> ProviderCallResult[PageTranscript]: ...

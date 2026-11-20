@@ -10,6 +10,7 @@ import ipaddress
 import json
 import re
 import socket
+from dataclasses import replace
 from decimal import Decimal
 from types import SimpleNamespace
 from urllib.parse import urlsplit
@@ -20,9 +21,13 @@ from pydantic import ValidationError
 
 from app.core.config import settings
 from app.core.ai_models import model_price, endpoint_request_timeout
+from app.declarations.provider import ProviderFailure
 
 ORIGINS = {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com/v1"}
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+# An error response is read only for the structured identifiers of its error object, never for its message.
+MAX_ERROR_BYTES = 64 * 1024
+_ERROR_IDENTIFIER = re.compile(r"^[A-Za-z0-9_.\[\]-]{1,128}$")
 MAX_MODEL_PAGES = 20
 MODEL_ID = re.compile(r"^[A-Za-z0-9._:/-]{1,255}$")
 
@@ -104,6 +109,29 @@ def _schema_instruction(schema):
             "do not emit the example values or invent facts.")
 
 
+async def _error_identifiers(response) -> dict[str, str] | None:
+    """The ``type``, ``code`` and ``param`` of an error response's error object, each only as a short identifier.
+
+    The message and every other field are dropped unread; an unreadable, oversized or unexpected body gives no
+    evidence at all, never a failure of its own.
+    """
+    content = bytearray()
+    try:
+        async for chunk in response.aiter_bytes():
+            content.extend(chunk)
+            if len(content) > MAX_ERROR_BYTES:
+                return None
+        body = json.loads(content)
+    except Exception:
+        return None
+    error = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(error, dict):
+        return None
+    found = {name: error[name] for name in ("type", "code", "param")
+             if isinstance(error.get(name), str) and _ERROR_IDENTIFIER.fullmatch(error[name])}
+    return found or None
+
+
 class ProviderClient:
     """Small Responses-shaped facade; each call uses one configured API only."""
     def __init__(self, *, provider, api_key, base_url=None, transport=None):
@@ -133,10 +161,11 @@ class ProviderClient:
                 url = url.copy_with(host=ips[0])
             async with self._http.stream(method, url, json=body, params=params, headers=headers, timeout=timeout, extensions=extensions) as response:
                 if response.status_code >= 300:
-                    # Discard response bodies: SDK exceptions must never contain credentials/documents.
+                    # Discard response bodies: SDK exceptions must never contain credentials/documents. Only the
+                    # type, code and param identifiers of the error object are kept (as the SDK exposes them).
                     safe_response = httpx.Response(response.status_code, request=httpx.Request(method, original))
                     error_type = RateLimitError if response.status_code == 429 else APIStatusError
-                    raise error_type("Provider request failed", response=safe_response, body=None)
+                    raise error_type("Provider request failed", response=safe_response, body=await _error_identifiers(response))
                 content = bytearray()
                 async for chunk in response.aiter_bytes():
                     content.extend(chunk)
@@ -251,7 +280,16 @@ def create_extraction_provider(effective, *, configured_settings=None):
     return provider_type(effective, configured_settings=configured_settings)
 
 
-from app.declarations.openai_provider import OpenAiDeclarationProvider, _Rates
+from app.declarations.openai_provider import OpenAiDeclarationProvider, _Rates, png_dimensions, reserved_image_tokens
+
+
+def create_reading_provider(effective, *, configured_settings=None):
+    """The reading stage's transport: the extraction transport of the same provider, endpoint, key and timeout,
+    bound to the document reading model. Without a reading model there is none; the extraction model never
+    stands in for it."""
+    if not effective.document_model:
+        raise ProviderFailure("DOCUMENT_MODEL_NOT_CONFIGURED", False, "No document reading model is configured.")
+    return create_extraction_provider(replace(effective, model=effective.document_model), configured_settings=configured_settings)
 
 
 class CompatibleDeclarationProvider(OpenAiDeclarationProvider):
@@ -261,7 +299,7 @@ class CompatibleDeclarationProvider(OpenAiDeclarationProvider):
         self._price_provider = effective.provider
         super().__init__(client=ProviderClient(provider=effective.provider, api_key=effective.api_key.get_secret_value(), base_url=effective.base_url), primary_model=effective.model, escalation_model=effective.model, token_encoder=_ByteEncoder(), configured_settings=configured_settings, timeout_seconds=endpoint_request_timeout(effective.provider, effective.request_timeout_seconds))
         if effective.provider == "openai_compatible":
-            self._harness_version = "7"
+            self._harness_version = "8"
 
     def _configured_rates(self, configured):
         price = model_price(self._primary_model, self._price_provider)
@@ -284,15 +322,18 @@ class CompatibleDeclarationProvider(OpenAiDeclarationProvider):
             schema = _anthropic_schema(schema)
         if self._provider_name == "openai_compatible":
             developer_prompt += "\n\n" + _schema_instruction(schema)
-            harness = "declaration-openai_compatible-v7|structured-output|schema-in-system|core-contract-reminder|subject-key-syntax|utf8-byte-reservation|no-tools|bounded-schema-repair|fixed-pass-manager"
+            harness = "declaration-openai_compatible-v8|structured-output|schema-in-system|core-contract-reminder|subject-key-syntax|utf8-byte-reservation|no-tools|bounded-schema-repair|fixed-pass-manager"
         else:
-            harness = f"declaration-{self._provider_name}-v4|structured-output|utf8-byte-reservation|no-tools|bounded-schema-repair|fixed-pass-manager"
+            harness = f"declaration-{self._provider_name}-v5|structured-output|utf8-byte-reservation|no-tools|bounded-schema-repair|fixed-pass-manager"
         return fingerprint_static_contract(developer_prompt=developer_prompt, schema=schema, harness=harness)
 
     def _estimate_input_tokens(self, pass_id, model, developer_prompt, input_payload, output_type, max_output_tokens):
-        body = ProviderClient.envelope(self._provider_name, model=model, input=input_payload, schema=self._sdk_text_format(output_type)["schema"], max_output_tokens=max_output_tokens)
-        # UTF-8 bytes conservatively cover tokenizers and base64 vision payloads.
-        return len(json.dumps(body, ensure_ascii=False).encode("utf-8"))
+        images = [block for message in input_payload for block in message.get("content", []) if block.get("type") == "input_image"]
+        body = ProviderClient.envelope(self._provider_name, model=model, input=self._input_for_text_estimation(input_payload) if images else input_payload, schema=self._sdk_text_format(output_type)["schema"], max_output_tokens=max_output_tokens)
+        # UTF-8 bytes conservatively cover tokenizers; an image is reserved from its pixel dimensions by the
+        # provider's formula (never from the length of its base64 payload).
+        return len(json.dumps(body, ensure_ascii=False).encode("utf-8")) + sum(
+            reserved_image_tokens(self._provider_name, model, *png_dimensions(block["image_url"])) for block in images)
 
 class AnthropicDeclarationProvider(CompatibleDeclarationProvider):
     """Distinct provenance for Anthropic's official API and scoped prices."""

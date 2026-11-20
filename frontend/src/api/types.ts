@@ -205,15 +205,39 @@ export type DeclarationImportStatus =
   | "FAILED"
   | "CANCELLED";
 
+export type DeclarationUsageStatus = 'REPORTED' | 'PARTIAL' | 'RESERVED' | 'UNKNOWN';
+
+/** What one stage of a run consumed: reading the pages ("READING") or extracting the information ("EXTRACTION"). */
+export interface DeclarationRunStage {
+  stage: 'READING' | 'EXTRACTION';
+  model: string;
+  usage_status: DeclarationUsageStatus;
+  reported_input_tokens: number | null;
+  reported_output_tokens: number | null;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost_usd: string | null;
+}
+
+/** What a run's totals hold beyond its stages: a reservation that no ledger entry attributes to a stage. */
+export interface DeclarationRunUnassigned {
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost_usd: string | null;
+}
+
 export interface DeclarationRunBudget {
-  usage_status: 'REPORTED' | 'PARTIAL' | 'RESERVED' | 'UNKNOWN';
+  usage_status: DeclarationUsageStatus;
   reported_input_tokens: number | null;
   reported_output_tokens: number | null;
   id: string;
   model: string;
+  stages: DeclarationRunStage[];
+  unassigned: DeclarationRunUnassigned | null;
   input_tokens: number;
   output_tokens: number;
   runtime_seconds: number;
+  closed: boolean;
   estimated_cost_usd: string | null;
 }
 
@@ -1983,12 +2007,14 @@ export interface OrganizationAiSettings {
   base_url: string | null;
   key_set: boolean;
   model: string | null;
+  document_model: string | null;
   import_enabled: boolean;
   qa_enabled: boolean;
   monthly_limit_usd: string | null;
   price_known: boolean;
+  document_price_known: boolean;
   confirmation: OrganizationAiConfirmation | null;
   confirmation_required: boolean;
 }
 export interface AiModel { id: string; evaluated: boolean; price_known: boolean }
-export type OrganizationAiSettingsBody = Omit<OrganizationAiSettings, 'key_set' | 'price_known' | 'confirmation' | 'confirmation_required'> & { api_key?: string | null; confirmation?: boolean };
+export type OrganizationAiSettingsBody = Omit<OrganizationAiSettings, 'key_set' | 'price_known' | 'document_price_known' | 'confirmation' | 'confirmation_required'> & { api_key?: string | null; confirmation?: boolean };

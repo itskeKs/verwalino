@@ -102,22 +102,41 @@ class Settings(BaseSettings):
     declaration_ocr_max_pixels_per_page: int = 20_000_000
     declaration_ocr_max_temp_bytes: int = 256 * 1024 * 1024
     declaration_ocr_max_pages_per_import: int = 200
-    declaration_ocr_max_pixels_per_import: int = 400_000_000
+    # The count is taken from the page size at 180 dpi, before the image is scaled to the render ceiling of
+    # 4,000,000 pixels (READING_MAX_IMAGE_PIXELS in the preflight). An A4 page (595 x 842 points) counts 3,132,240
+    # pixels, so 200 A4 pages and the rechecks fit; larger formats reach the bound earlier (A3 at page 128).
+    # A scan reaches that many pages only within the upload limit of 25 MiB per PDF (declaration_max_pdf_bytes).
+    declaration_ocr_max_pixels_per_import: int = 800_000_000
     declaration_preflight_deadline_seconds: int = 600
 
     # --- Declaration import / OpenAI provider ---
     # Server-only secret. Do not place a real value in the project .env.
-    declaration_prompt_version: str = "declaration-v3"
+    declaration_prompt_version: str = "declaration-v4"
     declaration_schema_version: str = "2"
-    declaration_harness_version: str = "3"
+    declaration_harness_version: str = "4"
     declaration_provider_timeout_seconds: int = 60
-    declaration_max_cost_usd: Decimal = Decimal("1.00")
+    declaration_max_cost_usd: Decimal = Decimal("3.00")
     declaration_max_recheck_pages: int = 12
     declaration_max_recheck_calls: int = 2
     declaration_provider_batch_pages: int = 20
     declaration_provider_batch_chars: int = 80_000
-    declaration_max_input_tokens: int = 500_000
-    declaration_max_output_tokens: int = 60_000
+    # Per-import token limits (input, output), sized for the 200 scanned pages the page limit permits
+    # (declaration_ocr_max_pages_per_import) now that reading costs tokens per page (issue #499, ADR 0017). Derivation
+    # for 200 dense scanned A4 pages (1,489 x 2,105 pixels at 180 dpi, about 4,000 characters each), as reported:
+    # * reading, one call per page: about 5,000 input (image 3,000 on OpenAI's patch models, 4,100 by Anthropic's
+    #   formula, plus about 700 for prompt, schema and wrapper) and about 2,000 output (the transcript as JSON,
+    #   1,000 to 1,900 for prose to table pages) -> 1,000,000 in, 400,000 out.
+    # * extraction, three passes (inventory, core, rules) over every transcript page: 12 batches of at most 19
+    #   pages and 80,000 characters, one boundary page repeated per batch, so 211 page sends per pass at about
+    #   1,500 input each, plus about 5,600 for prompt and schema per batch round -> 1,017,000 in, 54,000 out;
+    #   reconciliation up to 40,000 in, 6,000 out. Extraction thus keeps the former 60,000 output limit as its share.
+    # * total 2,060,000 in, 460,000 out. A reservation settles to the reported usage after its call, so the
+    #   peak is that plus ONE outstanding worst-case reservation, up to 200,000 input (an 80,000 character batch
+    #   counted twice, bytes as tokens, on a compatible endpoint) -> 2,200,000. Round numbers with at most 25 %
+    #   headroom. The cost limit above stays the money guard; dearer models reach it first. The upload limit of
+    #   25 MiB per PDF bounds a large scan before the page limit: 200 pages in high resolution can exceed it.
+    declaration_max_input_tokens: int = 2_500_000
+    declaration_max_output_tokens: int = 500_000
     declaration_provider_max_output_tokens_per_call: int = 12_000
     declaration_max_candidates: int = 5_000
     # --- Declaration import / background worker ---
