@@ -24,6 +24,12 @@ AI_PROVIDER_CONFIRMATION_VERSION = '1'
 DECLARATION_IMPORT_DISABLED = 'DECLARATION_IMPORT_DISABLED'
 DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING = 'DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING'
 
+# Why the model-assisted invoice path cannot run for an organization. They are stored as the reason of the invoice's
+# processing attempt, so they follow its lower-case vocabulary; classify by them, never by message text.
+INVOICE_AI_IMPORT_DISABLED = 'ai_import_disabled'
+INVOICE_AI_DOCUMENT_MODEL_MISSING = 'ai_document_model_missing'
+INVOICE_AI_KEY_UNREADABLE = 'ai_key_unreadable'
+
 CONFIRMATION_REQUIRED_MESSAGE = ('Bitte bestätigen Sie vor dem Speichern, dass Ihre Organisation '
     'den Anbieter selbst ausgewählt und beauftragt hat und den Betreiber anweist, '
     'Dokumente und extrahierte Texte an diesen Anbieter zu übermitteln.')
@@ -80,6 +86,21 @@ def declaration_import_blocker(effective: EffectiveAiSettings) -> str | None:
         return DECLARATION_IMPORT_DISABLED
     if not effective.document_model:
         return DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING
+    return None
+
+
+def invoice_import_blocker(effective: EffectiveAiSettings, *, needs_reading: bool) -> str | None:
+    """The one decision whether an unstructured invoice may reach the organization's provider: None, or the code
+    naming what is missing.
+
+    The invoice path shares the organization's AI import switch, confirmed key and extraction model with the
+    declaration import; no upgrade or default turns them on. Reading a page that has no text layer needs the document
+    reading model as well, which an administrator chooses; a document whose pages all have a text layer needs none.
+    """
+    if not effective.import_enabled or not effective.api_key or not effective.model:
+        return INVOICE_AI_IMPORT_DISABLED
+    if needs_reading and not effective.document_model:
+        return INVOICE_AI_DOCUMENT_MODEL_MISSING
     return None
 
 

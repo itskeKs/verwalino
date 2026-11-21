@@ -100,9 +100,12 @@ async def check_readiness(stages):
     if 'intake_inspection' in stages:
         from app.core.intake_inspection import check_scanner_readiness
         await asyncio.to_thread(check_scanner_readiness)
-    if 'intake_extraction' in stages or 'invoice_extraction' in stages:
+    if 'invoice_extraction' in stages:
         from app.workers.invoice_extraction import check_readiness as check_extractor
         await check_extractor()
+    if 'intake_extraction' in stages:
+        from app.workers.intake_extraction import check_ocr_readiness
+        await asyncio.to_thread(check_ocr_readiness)
     claims={'intake_inspection':'claim_intake_inspection(uuid)',
             'outbox':'claim_outbox_delivery(uuid)','intake_extraction':'claim_intake_extraction(uuid)'}
     async with get_worker_unscoped_session() as session:

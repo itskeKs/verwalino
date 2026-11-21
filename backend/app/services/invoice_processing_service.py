@@ -100,6 +100,36 @@ class InvoiceProcessingService:
                 "storage_uri": document.storage_uri, "sha256": document.content_sha256,
                 "mime_type": document.mime_type}
 
+    async def renew(self, claim, seconds):
+        """Extend the live lease of a claimed attempt before a paid model request and re-check its principal.
+
+        True only for the attempt that still holds the claim's token with an unexpired lease and an authorized
+        initiating user; otherwise False and nothing is requested. An initiator who lost permission cancels the
+        attempt here, as in ``finish``, so the caller commits this transaction and does not roll it back.
+        """
+        from app.services.financial_scope_service import FinancialScopeService
+        await FinancialScopeService(self.session, self.org_id, None).lock_inputs()
+        pending = await self.attempts.principal_metadata(claim['attempt_id'])
+        if pending is None or pending.document_id != claim['document_id'] or pending.token != claim['token']:
+            return False
+        if not await self._enter_principal(pending):
+            await self._cancel_denied(pending, fence=claim['token'])
+            return False
+        # The document before the attempt, the order of claim and finish.
+        document = await self.documents.get_by_id_for_update(claim["document_id"])
+        if document is None:
+            await self._cancel_denied(pending, fence=claim['token'])
+            return False
+        if document.released_at or document.status != "active":
+            return False
+        attempt = await self.attempts.get_by_id_for_update(claim["attempt_id"])
+        now = datetime.now(timezone.utc)
+        if attempt is None or attempt.status != "running" or attempt.token != claim["token"] or attempt.lease_until < now:
+            return False
+        attempt.lease_until = now + timedelta(seconds=seconds)
+        await self.session.flush()
+        return True
+
     async def finish(self, claim, result):
         from app.services.financial_scope_service import FinancialScopeService
         await FinancialScopeService(self.session, self.org_id, None).lock_inputs()
@@ -118,11 +148,11 @@ class InvoiceProcessingService:
         if attempt is None or attempt.status != "running" or attempt.token != claim["token"] or attempt.lease_until < now:
             return False
         if document.released_at or document.status != "active":
-            from app.core.invoice_ocr import outcome
+            from app.core.invoice_pdf import outcome
             result = outcome("canceled", "source_no_longer_editable")
         from app.core.extraction_evidence import valid_invoice_outcome
         if not valid_invoice_outcome(result):
-            from app.core.invoice_ocr import outcome
+            from app.core.invoice_pdf import outcome
             result = outcome("failed", "processor_failed")
         attempt.status = result["status"]
         attempt.error_code = result.get("error_code")

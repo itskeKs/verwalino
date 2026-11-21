@@ -1,6 +1,8 @@
 """Fenced logical-source extraction; no transaction spans processor work."""
 import hashlib
 import json
+import shutil
+import subprocess
 import uuid
 
 from app.workers.error_tracking import report_recorded_failure, tracked_job
@@ -10,6 +12,15 @@ from app.core.db import set_tenant_context
 from app.core.intake_extraction import run_isolated_extraction,valid_result,outcome
 from app.core.storage import get_store
 from app.core.worker_process import run_bounded_processor
+
+
+def check_ocr_readiness():
+    """The local German text recognition this worker still runs (the inbox moves to model reading in #501)."""
+    if not shutil.which("pdftoppm") or not shutil.which("tesseract"):
+        raise RuntimeError("ocr_unavailable")
+    languages = subprocess.run(["tesseract", "--list-langs"], capture_output=True, text=True, check=True, timeout=10)
+    if "deu" not in languages.stdout.splitlines():
+        raise RuntimeError("ocr_german_unavailable")
 
 
 async def process_once(session_factory,org_id,*,processor=run_isolated_extraction):

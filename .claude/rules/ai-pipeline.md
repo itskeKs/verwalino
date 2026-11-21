@@ -6,6 +6,7 @@ paths:
   - "backend/app/evals/**"
   - "backend/app/core/runtime_budget.py"
   - "backend/app/core/invoice_ocr.py"
+  - "backend/app/core/invoice_pdf.py"
   - "backend/app/core/pdf_extraction.py"
   - "backend/app/core/visual_extract.py"
   - "backend/app/core/intake_extraction.py"
@@ -18,7 +19,8 @@ paths:
   `backend/app/declarations/provider.py` for imports, `KnowledgeAnswerProvider` in
   `declarations/knowledge_provider.py` for property questions, `DocumentReadingProvider` in
   `declarations/provider.py` for reading a rendered page into a typed transcript with the organization's
-  document reading model. Do not import the OpenAI SDK elsewhere.
+  document reading model, `InvoiceExtractionProvider` in `declarations/provider.py` for the extraction stage of
+  an unstructured invoice. Do not import the OpenAI SDK elsewhere.
 - Reservation, usage and cost accounting live in `declarations/pipeline.py` (`add_usage`,
   `settle_reservation`, `charge_reservation`) with the per-run cap `declaration_max_cost_usd`;
   `core/runtime_budget.py` holds the QA policy checks. The pipeline fails closed when a cap or
@@ -38,6 +40,10 @@ paths:
   `core/visual_extract.py` and `core/intake_extraction.py`. A path that reads with a model renders its
   pages with poppler the same bounded way (`declarations/preflight.py`) and has no Tesseract step. Keep
   every new path bounded the same way.
+- The invoice worker sends an unstructured PDF to the organization's models only when its AI import switch, key
+  and models allow it (`ai_settings_service.invoice_import_blocker`); structured invoices never reach a model. Each
+  request is reserved and settled in `invoice_model_call` (`declarations/invoice_pipeline.py`), outside any
+  transaction, within the documented per-invoice bounds; the path has no Tesseract step.
 - A stage that calls a model meters it in the shared ledger by the model that made the call (reserve
   before, settle after, keep the usage of failed calls) and records it in the pass ledger with its
   `pass_id`; a view of per-stage usage reads that ledger and the run row in one aggregation
