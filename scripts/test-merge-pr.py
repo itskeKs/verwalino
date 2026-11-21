@@ -21,11 +21,13 @@ from installer_test_process import install_interrupt_handlers, managed_process, 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/merge-pr.sh"
 BASH = shutil.which("bash")
+GIT = shutil.which("git")
 REPO = "itskeKs/verwalino"
 # The script keeps its fixed locations and limits in these constants; the sandbox rewrites exactly these lines.
 CONSTANTS = ("MAINTAINER_LOCK", "MERGE_LOCK", "SCRATCH_PREFIX",
-             "LOCK_WAIT_SECONDS", "LOCK_POLL_SECONDS", "CI_WAIT_SECONDS", "CI_POLL_SECONDS")
-SANDBOX_LIMITS = {"LOCK_WAIT_SECONDS": "10", "LOCK_POLL_SECONDS": "0.05", "CI_WAIT_SECONDS": "20", "CI_POLL_SECONDS": "0.05"}
+             "LOCK_WAIT_SECONDS", "LOCK_POLL_SECONDS", "CI_WAIT_SECONDS", "CI_POLL_SECONDS", "FETCH_RETRY_SECONDS")
+SANDBOX_LIMITS = {"LOCK_WAIT_SECONDS": "10", "LOCK_POLL_SECONDS": "0.05", "CI_WAIT_SECONDS": "20", "CI_POLL_SECONDS": "0.05",
+                  "FETCH_RETRY_SECONDS": "0.05"}
 NOTE = "Merged as is.\n\n- Checked and fine: everything.\n\nCI green on the reviewed commit; user check none.\n"
 ISSUE_BODY = """## What
 
@@ -200,6 +202,24 @@ save()
 FAKE_LSOF = r'''#!/bin/sh
 printf 'p1\nfcwd\nn/\n'
 if [ -f "@BASE@/state/lsof_extra" ]; then cat "@BASE@/state/lsof_extra"; fi
+'''
+
+
+# Stands in for git only in the tests that install it. Every call goes to the real git, except the fetch of the main
+# checkout once the PR is merged: that one is logged, and the first fetch_failures of them fail the way git fails when
+# another session's fetch holds the lock on the same ref.
+FAKE_GIT = r'''#!/bin/sh
+state="@BASE@/state"
+if [ "$1" = "-C" ] && [ "$2" = "@CHECKOUT@" ] && [ "$3" = "fetch" ] && grep -q '"state": "MERGED"' "$state/github.json"; then
+  echo fetch >> "$state/verifying_fetches"
+  failures="$(cat "$state/fetch_failures")"
+  if [ "$failures" -gt 0 ]; then
+    echo $((failures - 1)) > "$state/fetch_failures"
+    echo "error: cannot lock ref 'refs/remotes/origin/main': Unable to create '@CHECKOUT@/.git/refs/remotes/origin/main.lock': File exists." >&2
+    exit 1
+  fi
+fi
+exec "@GIT@" "$@"
 '''
 
 
@@ -547,6 +567,51 @@ class MergeTests(MergePrCase):
 
 
 class AfterTheMergeTests(MergePrCase):
+    def fail_the_verifying_fetch(self, times):
+        """The next `times` fetches of the main checkout after the merge fail with git's lock error."""
+        fake = self.bin / "git"
+        fake.write_text(FAKE_GIT.replace("@BASE@", str(self.base)).replace("@CHECKOUT@", str(self.checkout))
+                        .replace("@GIT@", GIT))
+        fake.chmod(0o755)
+        (self.state_dir / "fetch_failures").write_text(f"{times}\n")
+
+    def verifying_fetches(self):
+        path = self.state_dir / "verifying_fetches"
+        return path.read_text().splitlines() if path.exists() else []
+
+    def test_the_verifying_fetch_is_tried_once_more_when_another_fetch_holds_the_lock(self):
+        self.fail_the_verifying_fetch(1)
+        result = self.script(*self.arguments())
+        self.assertMerged(result)
+        self.assertEqual(len(self.verifying_fetches()), 2)
+        self.assertIn("cannot lock ref 'refs/remotes/origin/main'", result.stderr)
+        self.assertIn("trying once more", result.stdout)
+        self.assertNotIn("merge-pr:", result.stderr)
+        # The merge is verified on the second try, so the cleanup that depends on it runs.
+        self.assertIn(f"Removed the worktree {self.worktree}.", result.stdout)
+        self.assertFalse(self.worktree.exists())
+        self.assertEqual(self.git(self.checkout, "branch", "--list", "feat/thing"), "")
+        self.assertEqual(self.github()["issues"]["12"], {"state": "CLOSED", "body": ISSUE_BODY_TICKED})
+        self.assertFalse(self.merge_lock.exists())
+        self.assertEqual(self.scratch_dirs(), [])
+
+    def test_a_verifying_fetch_that_fails_twice_is_reported_and_the_merge_is_not_called_verified(self):
+        self.fail_the_verifying_fetch(2)
+        result = self.script(*self.arguments())
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        # One retry and no more; the failure is reported as before, and the merge commit is not on origin/main here.
+        self.assertEqual(len(self.verifying_fetches()), 2)
+        self.assertIn("cannot fetch origin to verify the merge commit", result.stderr)
+        self.assertIn("is not on origin/main after the fetch", result.stderr)
+        self.assertEqual(self.github()["prs"]["7"]["state"], "MERGED")
+        self.assertIn(self.github()["prs"]["7"]["merge_commit"], result.stdout)
+        # Nothing that depends on the verified merge ran: the worktree and its branch stay.
+        self.assertNotIn("Removed the worktree", result.stdout)
+        self.assertTrue(self.worktree.is_dir())
+        self.assertIn("feat/thing", self.git(self.checkout, "branch", "--list", "feat/thing"))
+        self.assertFalse(self.merge_lock.exists())
+        self.assertEqual(self.scratch_dirs(), [])
+
     def test_a_branch_that_is_still_on_the_remote_is_reported_and_the_rest_is_finished(self):
         self.change_github(keep_branch=True)
         result = self.script(*self.arguments())
