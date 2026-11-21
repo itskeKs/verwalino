@@ -4,6 +4,7 @@ import json
 import math
 import re
 from app.core.extraction import ExtractionResult
+from app.core.invoice_pdf import PROCESSOR_VERSIONS
 
 FIELD_TYPES={
     'vendor_name':'text','document_number':'text','suggested_category_code':'text',
@@ -26,7 +27,7 @@ def _valid_invoice_outcome(result):
     if not isinstance(result,dict) or set(result)!={'status','error_code','payload','processor_version'}:
         return False
     status=result['status'];error=result['error_code'];payload=result['payload']
-    if not isinstance(status,str) or status not in STATUSES or result['processor_version']!='invoice-local-v1':
+    if not isinstance(status,str) or status not in STATUSES or result['processor_version'] not in PROCESSOR_VERSIONS:
         return False
     if status=='succeeded':
         if error is not None or payload is None:return False
