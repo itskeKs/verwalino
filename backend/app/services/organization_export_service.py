@@ -106,7 +106,9 @@ async def inventory(db):
         "user_second_factor", "user_recovery_code",
         "organization_deletion", "organization_ai_settings",
         # Working data of the declaration import: copies of text the exported originals already hold.
-        "declaration_page_reading"}}
+        "declaration_page_reading",
+        # The metering ledger of the model-assisted invoice path: only the worker role writes it (migration 0197).
+        "invoice_model_call"}}
 
 
 def export_predicate(name, columns):

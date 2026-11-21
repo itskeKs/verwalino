@@ -6,7 +6,7 @@ import { api } from '../api/client';
 const auth = vi.hoisted(() => ({ session: { user_id:'admin', organization_id:'org-a', role:'OWNER_ADMIN' } }));
 vi.mock('../auth/useAuth', () => ({ useAuth: () => auth }));
 vi.mock('../design/useDesignTheme', () => ({ useDesignTheme: () => ({ theme:'klar', loaded:true, loading:false, saving:false, error:null, save:vi.fn(), reload:vi.fn() }) }));
-const initial = { provider:'openai', base_url:null, key_set:false, model:null, import_enabled:false, qa_enabled:false, monthly_limit_usd:null, price_known:false };
+const initial = { provider:'openai', base_url:null, key_set:false, model:null, import_enabled:false, qa_enabled:false, monthly_limit_usd:null, price_known:false, invoice_processing_enabled:true };
 const byUrl = (value: object) => vi.spyOn(api, 'get').mockImplementation(async (url: string) => (url.includes('/legal-assents') ? [] : value) as never);
 beforeEach(() => {
   vi.restoreAllMocks(); auth.session.role = 'OWNER_ADMIN';
@@ -25,7 +25,7 @@ it('allows every listed model, explains unknown prices and clears a saved key', 
   expect(within(screen.getByLabelText('Dokumente einlesen')).getByRole('option',{name:'evaluated-model · geprüft'})).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText('Informationen extrahieren'),{target:{value:'future-model-with-a-long-name-2026-11-07'}});
   expect(screen.getByText(/Für das Modell „Informationen extrahieren“ ist kein Preis bekannt/)).toBeVisible();
-  fireEvent.click(screen.getByLabelText('Teilungserklärungen importieren'));
+  fireEvent.click(screen.getByLabelText('Teilungserklärungen importieren und Rechnungen auswerten'));
   fireEvent.click(screen.getByLabelText('Fragen zum Objektwissen'));
   fireEvent.change(screen.getByLabelText('Monatliches Limit in USD (optional)'),{target:{value:'12.50'}});
   fireEvent.click(screen.getByRole('button',{name:'KI-Einstellungen speichern'}));

@@ -115,6 +115,7 @@ const callCases: CallCase[] = [
   { name: "retryInvoiceExtraction", run: () => endpoints.retryInvoiceExtraction("d1"), method: "post", args: ["/api/invoice-documents/d1/retry"] },
   { name: "listInvoiceDocuments encodes the filter", run: () => endpoints.listInvoiceDocuments("c 1"), method: "get", args: ["/api/invoice-documents?cost_entry_id=c%201"] },
   { name: "getInvoiceDocument", run: () => endpoints.getInvoiceDocument("d1"), method: "get", args: ["/api/invoice-documents/d1"] },
+  { name: "getInvoiceModelUsage", run: () => endpoints.getInvoiceModelUsage("d1"), method: "get", args: ["/api/invoice-documents/d1/model-usage"] },
   { name: "verifyInvoiceDocument", run: () => endpoints.verifyInvoiceDocument("d1"), method: "get", args: ["/api/invoice-documents/d1/verify"] },
 ];
 

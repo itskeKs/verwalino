@@ -154,6 +154,7 @@ __all__ = [
     "PropertyKnowledgeQueryRun",
     "OperationReceipt",
     "InvoiceProcessingAttempt",
+    "InvoiceModelCall",
     "CoverageDeclaration",
     "AccountingScope",
     "AccountingScopeUnit",
@@ -182,6 +183,7 @@ __all__ = [
 
 from app.models.operation_receipt import OperationReceipt
 from app.models.invoice_processing_attempt import InvoiceProcessingAttempt
+from app.models.invoice_model_call import InvoiceModelCall
 from app.models.coverage_declaration import CoverageDeclaration
 
 from app.models.accounting_scope import AccountingScope, AccountingScopeUnit, AccountingScopeBinding, ScopeMigrationException

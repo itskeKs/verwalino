@@ -1,8 +1,9 @@
-"""The declaration import has no Tesseract step and no fallback to one (issue #499, ADR 0017).
+"""The declaration import and the invoice worker have no Tesseract step and no fallback to one (issues #499 and #500,
+ADR 0017).
 
-Class guard: the declaration modules and the declaration worker never name Tesseract and never import the modules
-that still run it (the invoice, intake and PDF text extraction). Those keep their own use until #500 and #502
-replace it; they are not scanned.
+Class guard: the declaration modules, the declaration worker, the invoice worker and the local invoice inspection never
+name Tesseract and never import the modules that still run it (the legacy invoice OCR, the intake and the PDF text
+extraction). Those keep their own use until #501 and #502 replace it; they are not scanned.
 """
 import ast
 from pathlib import Path
@@ -10,7 +11,12 @@ from pathlib import Path
 import pytest
 
 BACKEND = Path(__file__).resolve().parents[1]
-SCANNED = [*sorted((BACKEND / "app" / "declarations").rglob("*.py")), BACKEND / "app" / "workers" / "declaration_import.py"]
+SCANNED = [
+    *sorted((BACKEND / "app" / "declarations").rglob("*.py")),
+    BACKEND / "app" / "workers" / "declaration_import.py",
+    BACKEND / "app" / "workers" / "invoice_extraction.py",
+    BACKEND / "app" / "core" / "invoice_pdf.py",
+]
 
 pytestmark = pytest.mark.no_db
 
@@ -32,16 +38,17 @@ def ocr_imports(source: str) -> set[str]:
 
 def test_the_guard_scans_the_declaration_modules_and_the_worker() -> None:
     names = {path.name for path in SCANNED}
-    assert {"pipeline.py", "preflight.py", "openai_provider.py", "declaration_import.py"} <= names
+    assert {"pipeline.py", "preflight.py", "openai_provider.py", "declaration_import.py",
+            "invoice_pipeline.py", "invoice_extraction.py", "invoice_pdf.py"} <= names
 
 
 @pytest.mark.parametrize("path", SCANNED, ids=lambda path: str(path.relative_to(BACKEND)))
-def test_no_tesseract_in_the_declaration_path(path: Path) -> None:
+def test_no_tesseract_in_the_declaration_and_invoice_paths(path: Path) -> None:
     assert "tesseract" not in path.read_text(encoding="utf-8").lower()
 
 
 @pytest.mark.parametrize("path", SCANNED, ids=lambda path: str(path.relative_to(BACKEND)))
-def test_the_declaration_path_imports_no_module_that_runs_tesseract(path: Path) -> None:
+def test_the_declaration_and_invoice_paths_import_no_module_that_runs_tesseract(path: Path) -> None:
     assert ocr_imports(path.read_text(encoding="utf-8")) == set()
 
 

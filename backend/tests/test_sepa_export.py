@@ -33,6 +33,15 @@ def test_sepa_invalid_iban(value):
         validate_iban(value)
 
 
+def test_the_sepa_export_and_the_invoice_proposals_share_one_iban_validator():
+    """Issue #500 reads the vendor's IBAN with the check of the SEPA export; a second validator would drift."""
+    from app.core import iban
+    from app.declarations.schemas import InvoiceIbanField
+    from app.services import sepa_export
+    assert sepa_export.validate_iban is iban.validate_iban
+    assert InvoiceIbanField(value='de89 3704 0044 0532 0130 00', confidence=1).value == sepa_export.validate_iban(IBAN)
+
+
 def test_sepa_creditor_checksum_excludes_business_code():
     from app.services.sepa_export import validate_creditor_id
     assert validate_creditor_id(CREDITOR) == CREDITOR

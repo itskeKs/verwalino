@@ -11,6 +11,7 @@ from app.declarations.observability import ProviderPassMetadata
 from app.declarations.schemas import (
     CoreExtractionOutput,
     DocumentInventoryOutput,
+    InvoiceExtractionOutput,
     PageTranscript,
     ReconciliationOutput,
     RuleExtractionOutput,
@@ -43,6 +44,14 @@ class DocumentInput:
     pages: Sequence[PageInput]
 
 
+@dataclass(frozen=True)
+class InvoiceCategory:
+    """One cost category the extraction model may propose for an invoice: the seeded code and its label."""
+
+    code: str
+    label: str
+
+
 T = TypeVar("T")
 
 PROVIDER_REFUSAL = "PROVIDER_REFUSAL"
@@ -55,6 +64,8 @@ PROVIDER_CONNECTION_ERROR = "PROVIDER_CONNECTION_ERROR"
 PROVIDER_IMAGE_INPUT_UNSUPPORTED = "PROVIDER_IMAGE_INPUT_UNSUPPORTED"
 # The reading stage's pass in provider metadata (observability._PASS_IDS lists the same literal).
 READING_PASS_ID = "read_page"
+# The invoice extraction stage's pass in provider metadata (observability._PASS_IDS lists the same literal).
+INVOICE_PASS_ID = "extract_invoice"
 # Rendered pages reach the transports as PNG only: the validator and the Anthropic envelope accept nothing else.
 READING_IMAGE_MEDIA_TYPE = "image/png"
 
@@ -226,3 +237,24 @@ class DocumentReadingProvider(Protocol):
         model: str,
         max_output_tokens: int,
     ) -> ProviderCallResult[PageTranscript]: ...
+
+
+class InvoiceExtractionProvider(Protocol):
+    """The invoice extraction stage: the text of one invoice's pages in, the typed fields of the invoice out.
+
+    ``model`` is the organization's extraction model; the call never substitutes another model. Failures are
+    ``ProviderFailure`` with a stable code and, when the provider reported any, its usage.
+    """
+
+    def estimate_reservation(
+        self, method: str, *, max_output_tokens: int, **request: object
+    ) -> ProviderReservationEstimate: ...
+
+    async def extract_invoice(
+        self,
+        documents: Sequence[DocumentInput],
+        *,
+        categories: Sequence[InvoiceCategory],
+        model: str,
+        max_output_tokens: int,
+    ) -> ProviderCallResult[InvoiceExtractionOutput]: ...

@@ -19,38 +19,12 @@ from fastapi import HTTPException
 from lxml import etree
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
+from app.core.iban import SEPA_COUNTRIES, compact as _compact, mod97 as _mod97, validate_iban
+
 NAMESPACE = 'urn:iso:std:iso:20022:tech:xsd:pain.008.001.08'
 ET.register_namespace('', NAMESPACE)
 EPC_SCHEMA = Path(__file__).resolve().parent.parent / 'resources' / 'sepa' / 'EPC130-08_2025_V1.0_pain.008.001.08.xsd'
-# EPC geographical scope; an IBAN checksum does not establish account existence.
-SEPA_COUNTRIES = frozenset('AD AL AT BE BG CH CY CZ DE DK EE ES FI FR GB GI GR HR HU IE IS IT LI LT LU LV MC MD ME MK MT NL NO PL PT RO RS SE SI SK SM VA'.split())
 EEA_COUNTRIES = frozenset('AT BE BG CY CZ DE DK EE ES FI FR GR HR HU IE IS IT LI LT LU LV MT NL PL PT RO SE SI SK IS LI NO'.split())
-
-
-def _compact(value):
-    if not isinstance(value, str):
-        raise ValueError('A bank identifier must be a string')
-    return value.replace(' ', '').upper()
-
-
-def _mod97(value):
-    remainder = 0
-    for character in value:
-        digits = character if character.isascii() and character.isdigit() else str(ord(character)-55)
-        for digit in digits:
-            remainder = (remainder * 10 + int(digit)) % 97
-    return remainder
-
-
-def validate_iban(value) -> str:
-    value = _compact(value)
-    if re.fullmatch(r'[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}',value) is None or value[:2] not in SEPA_COUNTRIES:
-        raise ValueError('Provide a SEPA-country IBAN of 15–34 characters')
-    if value[:2] == 'DE' and (len(value) != 22 or not value[4:].isdigit()):
-        raise ValueError('A German IBAN has 22 characters and a numeric BBAN')
-    if _mod97(value[4:] + value[:4]) != 1:
-        raise ValueError('Invalid IBAN checksum')
-    return value
 
 
 def validate_creditor_id(value) -> str:

@@ -1,33 +1,32 @@
 #!/usr/bin/env node
-/* T10: upload a synthetic invoice through the UI and await the real local worker.
+/* T10: upload a synthetic structured invoice through the UI and await the real local worker.
+ * A structured invoice (XRechnung) is read by the deterministic parser: no provider, key or model is involved.
  * Start scripts/dev-local.sh first. No API writes outside login/upload, fixtures,
  * extraction overrides, cost adoption, production access or persisted reports.
  */
 'use strict';
 const assert = require('node:assert/strict');
-const { readFileSync } = require('node:fs');
 const { randomUUID } = require('node:crypto');
 const { chromium } = require(process.env.HV_PLAYWRIGHT_PACKAGE || 'playwright');
 const base = 'http://127.0.0.1:13000';
-const filename = `T10-synthetic-${randomUUID()}.pdf`;
+const filename = `T10-synthetic-${randomUUID()}.xml`;
 
 function syntheticInvoice() {
-  const lines = ['Stadtwerke Test GmbH - SYNTHETIC INVOICE',
-    'Rechnungsdatum: 01.06.2025', 'Gesamtbetrag: 119,00 EUR'];
-  const stream = `BT /F1 16 Tf 60 750 Td 40 TL\n${lines.map((line, i) =>
-    `${i ? 'T* ' : ''}(${line}) Tj`).join('\n')}\nET\n`;
-  const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-    `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}endstream`];
-  let pdf = '%PDF-1.4\n';
-  const offsets = [];
-  objects.forEach((object, i) => { offsets.push(Buffer.byteLength(pdf)); pdf += `${i + 1} 0 obj\n${object}\nendobj\n`; });
-  const xref = Buffer.byteLength(pdf);
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  pdf += offsets.map(offset => `${String(offset).padStart(10, '0')} 00000 n \n`).join('');
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-  return Buffer.from(pdf);
+  return Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
+         xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
+         xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2">
+  <cbc:ID>T10-SYNTHETIC</cbc:ID>
+  <cbc:IssueDate>2025-06-01</cbc:IssueDate>
+  <cac:AccountingSupplierParty><cac:Party><cac:PartyName><cbc:Name>Stadtwerke Test GmbH - SYNTHETIC INVOICE</cbc:Name></cac:PartyName></cac:Party></cac:AccountingSupplierParty>
+  <cac:TaxTotal><cbc:TaxAmount currencyID="EUR">19.00</cbc:TaxAmount>
+    <cac:TaxSubtotal><cac:TaxCategory><cbc:Percent>19.0</cbc:Percent></cac:TaxCategory></cac:TaxSubtotal>
+  </cac:TaxTotal>
+  <cac:LegalMonetaryTotal>
+    <cbc:TaxInclusiveAmount currencyID="EUR">119.00</cbc:TaxInclusiveAmount>
+    <cbc:PayableAmount currencyID="EUR">119.00</cbc:PayableAmount>
+  </cac:LegalMonetaryTotal>
+</Invoice>`);
 }
 
 (async () => {
@@ -69,8 +68,7 @@ function syntheticInvoice() {
     await page.getByRole('button', { name: 'Anmelden', exact: true }).click();
     assert.equal((await login).status(), 200);
     await page.getByRole('heading', { name: 'Belege', exact: true }).waitFor();
-    const buffer = process.env.HV_T10_INVOICE_PDF ? readFileSync(process.env.HV_T10_INVOICE_PDF) : syntheticInvoice();
-    await page.getByLabel('Belegdatei', { exact: true }).setInputFiles({ name: filename, mimeType: 'application/pdf', buffer });
+    await page.getByLabel('Belegdatei', { exact: true }).setInputFiles({ name: filename, mimeType: 'application/xml', buffer: syntheticInvoice() });
     const upload = page.waitForResponse(response => response.request().method() === 'POST' &&
       new URL(response.url()).pathname === '/api/invoice-documents/upload');
     await page.getByRole('button', { name: 'Hochladen', exact: true }).click();

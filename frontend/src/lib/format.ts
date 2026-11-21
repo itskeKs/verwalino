@@ -75,6 +75,14 @@ export function formatDateTime(iso: string): string {
   return `${parts.day}.${parts.month}.${parts.year}, ${parts.hour}:${parts.minute} Uhr`;
 }
 
+/** Percentage contract `19 %`: decimal comma, no trailing zeros, a normal space; a value that is not a plain decimal renders as stored. */
+export function formatPercent(value: string): string {
+  const match = /^(-?\d+)(?:\.(\d+))?$/.exec(value);
+  if (!match) return value;
+  const fraction = (match[2] ?? "").replace(/0+$/, "");
+  return `${match[1]}${fraction ? `,${fraction}` : ""} %`;
+}
+
 /** IBAN contract: group the stored value in blocks of four. */
 export function formatIban(iban: string): string {
   return iban.replace(/\s/g, "").replace(/(.{4})/g, "$1 ").trim();

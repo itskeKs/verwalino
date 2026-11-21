@@ -6,6 +6,7 @@ globs:
   - "backend/app/evals/**"
   - "backend/app/core/runtime_budget.py"
   - "backend/app/core/invoice_ocr.py"
+  - "backend/app/core/invoice_pdf.py"
   - "backend/app/core/pdf_extraction.py"
   - "backend/app/core/visual_extract.py"
   - "backend/app/core/intake_extraction.py"
@@ -19,7 +20,8 @@ alwaysApply: false
   `backend/app/declarations/provider.py` for imports, `KnowledgeAnswerProvider` in
   `declarations/knowledge_provider.py` for property questions, `DocumentReadingProvider` in
   `declarations/provider.py` for reading a rendered page into a typed transcript with the organization's
-  document reading model. Do not import the OpenAI SDK elsewhere.
+  document reading model, `InvoiceExtractionProvider` in `declarations/provider.py` for the extraction stage of
+  an unstructured invoice. Do not import the OpenAI SDK elsewhere.
 - Reservation, usage and cost accounting live in `declarations/pipeline.py` (`add_usage`,
   `settle_reservation`, `charge_reservation`) with the per-run cap `declaration_max_cost_usd`;
   `core/runtime_budget.py` holds the QA policy checks. The pipeline fails closed when a cap or
@@ -31,7 +33,10 @@ alwaysApply: false
 - A change to prompts, schemas or the harness bumps the matching version: the settings
   `declaration_prompt_version`, `declaration_schema_version`, `declaration_harness_version`
   (`core/config.py`, defaults mirrored in `.env.example` and `docker-compose.prod.yml`) or the
-  knowledge constants `KNOWLEDGE_QA_PROMPT_VERSION` and `KNOWLEDGE_ANSWER_SCHEMA_VERSION`; extend
+  knowledge constants `KNOWLEDGE_QA_PROMPT_VERSION` and `KNOWLEDGE_ANSWER_SCHEMA_VERSION`; the reading and
+  invoice stages version their own prompt and schema in constants (`READING_PROMPT_VERSION`,
+  `READING_SCHEMA_VERSION`, `INVOICE_PROMPT_VERSION`, `INVOICE_SCHEMA_VERSION`), and a model-made
+  invoice proposal carries `MODEL_PROCESSOR_VERSION` (`core/invoice_pdf.py`); extend
   `backend/tests/fixtures/declaration_eval_cases.json` for extraction changes. Evidence, review
   and approval records stay reproducible from stored inputs.
 - Local text recognition is Tesseract (`deu`) with poppler and qpdf, run as bounded subprocesses (DPI,
@@ -39,12 +44,20 @@ alwaysApply: false
   `core/visual_extract.py` and `core/intake_extraction.py`. A path that reads with a model renders its
   pages with poppler the same bounded way (`declarations/preflight.py`) and has no Tesseract step. Keep
   every new path bounded the same way.
+- The invoice worker sends an unstructured PDF to the organization's models only when its AI import switch, key
+  and models allow it (`ai_settings_service.invoice_import_blocker`); structured invoices never reach a model. Each
+  request is reserved and settled in `invoice_model_call` (`declarations/invoice_pipeline.py`), outside any
+  transaction, within the documented per-invoice bounds (constants there, not settings); the path has no
+  Tesseract step. The confirmation text that names invoices governs transmission, so an organization that
+  confirmed an older text keeps its invoices on the host until it confirms again. A retry reads and pays
+  again: page transcripts of an invoice are not stored.
 - A stage that calls a model meters it in the shared ledger by the model that made the call (reserve
   before, settle after, keep the usage of failed calls) and records it in the pass ledger with its
   `pass_id`; a view of per-stage usage reads that ledger and the run row in one aggregation
   (`api/declaration_imports.py`), never a second counter.
-- Documents and extracted text leave the host only to the configured provider inside the
-  declaration-worker network boundary (`DEPLOY.md`); respect `HV_DATA_REGION`. Observability
+- Documents and extracted text leave the host only to the configured provider from a worker that
+  has the provider network (the declaration worker; the invoice worker where Compose gives it the same
+  `backend` and `egress` networks, never wider; `DEPLOY.md`); respect `HV_DATA_REGION`. Observability
   records (`declarations/observability.py`) and logs carry identifiers, versions, hashes and
   usage, never document text.
 - The provider-neutral runtime (#66) uses the existing typed interfaces and deterministic

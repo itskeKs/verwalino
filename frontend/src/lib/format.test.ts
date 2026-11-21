@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { centsFromDecimal, formatDate, formatDateTime, formatIban, formatMoney } from "./format";
+import { centsFromDecimal, formatDate, formatDateTime, formatIban, formatMoney, formatPercent } from "./format";
 
 describe("formatMoney", () => {
   it("groups thousands with a dot and suffixes the euro sign", () => {
@@ -92,5 +92,22 @@ describe("formatIban", () => {
 
   it("accepts already grouped input", () => {
     expect(formatIban("DE75 5121 0800 1245 1261 99")).toBe("DE75 5121 0800 1245 1261 99");
+  });
+});
+
+describe("formatPercent", () => {
+  it("prints a stored rate with the decimal comma, without trailing zeros, and a space before the sign", () => {
+    expect(formatPercent("19")).toBe("19 %");
+    expect(formatPercent("19.00")).toBe("19 %");
+    expect(formatPercent("7.0")).toBe("7 %");
+    expect(formatPercent("5.50")).toBe("5,5 %");
+    expect(formatPercent("2.75")).toBe("2,75 %");
+    expect(formatPercent("0.00")).toBe("0 %");
+  });
+
+  it("returns a value that is not a plain decimal as stored", () => {
+    expect(formatPercent("19 Prozent")).toBe("19 Prozent");
+    expect(formatPercent("19,00")).toBe("19,00");
+    expect(formatPercent("")).toBe("");
   });
 });

@@ -803,6 +803,8 @@ export interface ExtractionPayload {
   service_period_from: string | null;
   service_period_to: string | null;
   suggested_category_code: string | null;
+  /** The issuer's IBAN as a valid, space-free value; absent on a proposal that was stored before the field existed. */
+  vendor_iban?: string | null;
   confidence: number;
   field_confidences: Record<string, number>;
   raw_text: string | null;
@@ -810,6 +812,8 @@ export interface ExtractionPayload {
   is_einvoice?: boolean;
   /** M5: concrete format, e.g. "XRECHNUNG_UBL", "XRECHNUNG_CII", "ZUGFERD". */
   source_format?: string | null;
+  /** Present only on a proposal a processing attempt made; the empty stub every upload starts with has none. */
+  attempt_id?: string;
 }
 
 export interface InvoiceDocument {
@@ -832,6 +836,17 @@ export interface InvoiceDocument {
   retention_until: string | null;
   superseded_at: string | null;
   extraction_payload: ExtractionPayload | null;
+}
+
+/** What one stage of an invoice's model-assisted processing consumed, over all its attempts (issue #500). */
+export interface InvoiceUsageStage extends DeclarationRunStage {
+  calls: number;
+}
+
+/** `total` is null while no request has been made. Unreported usage is its reservation; an unknown price has no cost. */
+export interface InvoiceModelUsage {
+  stages: InvoiceUsageStage[];
+  total: Omit<DeclarationRunStage, 'stage' | 'model'> | null;
 }
 
 export interface VerifyResult {
@@ -2015,6 +2030,10 @@ export interface OrganizationAiSettings {
   document_price_known: boolean;
   confirmation: OrganizationAiConfirmation | null;
   confirmation_required: boolean;
+  /** This installation processes invoices with the organization's models; where it does not, the card names no invoices. */
+  invoice_processing_enabled: boolean;
+  /** A stored key whose confirmation does not name invoices (none, or one of an earlier text), where invoices are processed: they stay on the host. */
+  invoice_confirmation_required: boolean;
 }
 export interface AiModel { id: string; evaluated: boolean; price_known: boolean }
-export type OrganizationAiSettingsBody = Omit<OrganizationAiSettings, 'key_set' | 'price_known' | 'document_price_known' | 'confirmation' | 'confirmation_required'> & { api_key?: string | null; confirmation?: boolean };
+export type OrganizationAiSettingsBody = Omit<OrganizationAiSettings, 'key_set' | 'price_known' | 'document_price_known' | 'confirmation' | 'confirmation_required' | 'invoice_processing_enabled' | 'invoice_confirmation_required'> & { api_key?: string | null; confirmation?: boolean };

@@ -14,22 +14,35 @@ Status: **Draft for confirmation by the human — no code yet, no commit**
 
 ## Local Invoice Worker (T10)
 
-Invoice extraction runs as its own process, independent of the declaration-of-division
-provider. The API stores the original and durably enqueues the job;
+Invoice extraction runs as its own process, apart from the declaration-of-division
+worker. The API stores the original and durably enqueues the job;
 `invoice_extraction` by default determines the organization IDs in every round and
 processes them serially under the isolated `app_worker` role. `--organization`
 restricts the selection. Claim and result completion remain short, separate
 transactions with the existing principal/source RLS, lease and fencing checks;
-PDF/XML/OCR runs outside the DB transaction in the time-limited child process.
+parsing and page rendering run outside the DB transaction in the time-limited child process.
 Proposals change neither costs nor manual inputs or approvals.
 
-The dedicated healthcheck verifies local OCR, storage and DB role without queue consumption
+The worker first inspects the original locally (`core/invoice_pdf.py`). A valid structured invoice
+(XRechnung, or a PDF with embedded ZUGFeRD/Factur-X data) goes to the deterministic parser and never
+to a model. An unstructured PDF goes to the organization's two models (ADR 0017, `declarations/invoice_pipeline.py`):
+pages without a text layer are rendered with Poppler and read by the document reading model, then the
+extraction model fills the ten invoice fields (the vendor's IBAN among them, kept only when valid) and proposes one cost category. There is no Tesseract step
+or fallback in this path. The path is opt-in per organization (AI import switch, key, models and a provider
+confirmation that names invoices). Each request is reserved before it leaves and settled in the ledger
+`invoice_model_call` (0197), outside any transaction, within documented per-invoice bounds (10 pages, 60,000
+characters, 300,000 input and 64,000 output tokens, 0.25 USD); the monthly organization limit counts both
+stages. Details and outcomes: [invoice extraction](operations/invoice-extraction.md).
+
+The dedicated healthcheck verifies storage, the worker role, queue access and the PDF renderer
+(`pdftoppm`; no Tesseract) without queue consumption
 or a provider call. SIGTERM lets a running bounded extraction run out, without
 adopting results after an abort; the existing lease recovery applies.
 The local launcher manages API, UI and worker with a shared, isolated
 `/tmp` document storage and exclusively the test DB `:55432`. The owner's local
-production Compose service uses only the internal network and a readable original
-volume; no provider, web, review or migrator credentials. The portable and hosted
+production Compose service reads originals from a read-only volume and, to reach the organization's
+provider, joins the same `backend` and `egress` networks as the declaration worker and takes the session
+secret that decrypts the organization's key; it has no web, review or migrator credentials. The portable and hosted
 stack does not start this worker and disables automatic extraction.
 Operating details and release boundaries: [DEPLOY.md](../DEPLOY.md).
 No schema/RLS change.
@@ -153,7 +166,7 @@ before migration. Web app, private PostgreSQL DB and one-off migration/admin job
 use the existing image; only Ops receives migrator rights. The default is
 loopback HTTP; optionally Caddy takes over HTTPS on a separate proxy network.
 Secrets are generated locally and not loaded as shell code. AI, SMTP and
-invoice OCR are disabled here. The explicit `update` command stops app writers,
+automatic invoice processing are disabled here. The explicit `update` command stops app writers,
 one-off migration/admin jobs and any existing optional inbox worker,
 backs up database/documents, migrates and checks readiness, automatically restoring
 the previous image and backup on failure. See

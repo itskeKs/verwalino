@@ -220,8 +220,10 @@ async def test_disabled_worker_still_stores_manual_review_source(client_a_admin,
         set_store(None)
 
 
-def test_embedded_xml_bypasses_ocr(monkeypatch):
+def zugferd_pdf(cii=None):
+    """A PDF with an embedded Factur-X invoice (CII): the structured data that replaces any reading of its pages."""
     from tests.test_m5_einvoice import CII
+    CII = cii or CII
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(factur-x.xml) 4 0 R] >> >> >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -238,6 +240,11 @@ def test_embedded_xml_bypasses_ocr(monkeypatch):
     data += f"xref\n0 {len(objects)+1}\n0000000000 65535 f \n".encode()
     data += b"".join(f"{offset:010d} 00000 n \n".encode() for offset in offsets)
     data += f"trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    return data
+
+
+def test_embedded_xml_bypasses_ocr(monkeypatch):
+    data = zugferd_pdf()
     def forbidden(*args):
         raise AssertionError("Embedded XML must bypass OCR")
     monkeypatch.setattr("app.core.invoice_ocr.ocr_page", forbidden)
@@ -341,14 +348,25 @@ async def test_worker_healthcheck_cli_does_not_consume_queue(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_worker_readiness_checks_ocr_and_database(tmp_path, monkeypatch):
+async def test_worker_readiness_checks_the_renderer_and_database_and_needs_no_text_recognition(tmp_path, monkeypatch):
     from app.core.config import settings
     from app.workers import invoice_extraction as worker
     monkeypatch.setattr(settings, "document_storage_root", str(tmp_path))
     await worker.check_readiness()
+    # Pages without a text layer are rendered for the reading model; nothing else is required.
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/pdftoppm" if name == "pdftoppm" else None)
+    await worker.check_readiness()
     monkeypatch.setattr("shutil.which", lambda _: None)
-    with pytest.raises(RuntimeError, match="ocr_unavailable"):
+    with pytest.raises(RuntimeError, match="pdf_renderer_unavailable"):
         await worker.check_readiness()
+
+
+@pytest.mark.asyncio
+async def test_the_inbox_readiness_keeps_its_text_recognition_requirement(monkeypatch):
+    from app.workers import intake_extraction as worker
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/pdftoppm" if name == "pdftoppm" else None)
+    with pytest.raises(RuntimeError, match="ocr_unavailable"):
+        worker.check_ocr_readiness()
 
 
 def test_local_launcher_owns_worker_and_isolated_storage():
@@ -364,21 +382,31 @@ def test_local_launcher_owns_worker_and_isolated_storage():
     assert '"$INVOICE_WORKER_PID"' in launcher
 
 
-def test_invoice_compose_service_is_offline_and_least_privilege():
+def test_invoice_compose_service_reaches_the_provider_like_the_declaration_worker_and_is_least_privilege():
     from pathlib import Path
     import yaml
     compose = yaml.safe_load((Path(__file__).resolve().parents[2] / "docker-compose.prod.yml").read_text())
     services = compose["services"]
     worker = services["invoice-worker"]
+    declaration_worker = services["worker"]
     environment = worker["environment"]
     assert worker["image"] == services["app"]["image"]
     assert worker["entrypoint"] == ["/usr/local/bin/worker-entrypoint.sh"]
     assert environment["HV_WORKER_KIND"] == "invoice_extraction"
-    assert environment["HV_DATABASE_URL_WORKER"] == services["worker"]["environment"]["HV_DATABASE_URL_WORKER"]
+    assert environment["HV_DATABASE_URL_WORKER"] == declaration_worker["environment"]["HV_DATABASE_URL_WORKER"]
     assert environment["HV_INVOICE_EXTRACTION_ENABLED"] == services["app"]["environment"]["HV_INVOICE_EXTRACTION_ENABLED"]
     assert "HV_DECLARATION_IMPORT_ENABLED" not in environment
-    assert not {"HV_DATABASE_URL", "HV_DATABASE_URL_SYNC", "HV_DATABASE_URL_REVIEW", "HV_OPENAI_API_KEY", "HV_SESSION_SECRET"} & environment.keys()
-    assert worker["networks"] == ["backend"]
+    # The organization's key is stored encrypted under the session secret: the worker needs it to call the provider,
+    # exactly as the declaration worker takes it. Nothing else is added; in particular HV_DATA_REGION has no reader
+    # in the invoice worker, so it is not set there.
+    assert environment["HV_SESSION_SECRET"] == declaration_worker["environment"]["HV_SESSION_SECRET"]
+    assert "HV_DATA_REGION" not in environment
+    assert not {"HV_DATABASE_URL", "HV_DATABASE_URL_SYNC", "HV_DATABASE_URL_REVIEW", "HV_OPENAI_API_KEY"} & environment.keys()
+    # The same route to the provider as the declaration worker has, and no other network: the egress is not wider.
+    assert worker["networks"] == declaration_worker["networks"] == {"backend": {"gw_priority": 0}, "egress": {"gw_priority": 1}}
+    assert compose["networks"]["egress"] == {"internal": False}
+    assert compose["networks"]["backend"] == {"internal": True}
+    assert [name for name, service in services.items() if "egress" in service.get("networks", ())] == ["worker", "invoice-worker"]
     assert worker["volumes"] == ["documents:/data/documents:ro"]
     assert not worker.get("ports")
     assert worker["read_only"] is True

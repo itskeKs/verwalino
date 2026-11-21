@@ -1260,7 +1260,7 @@ Synthetic finalized report from the test database (1280 and 360 px):
 | After | [View](docs/assets/design/asset-report-reserve/asset-report-1280.png) | [View](docs/assets/design/asset-report-reserve/asset-report-360.png) |
 
 `frontend/src/lib/format.ts` provides the shared display helpers below; every
-displayed money, date, datetime and IBAN value renders through them.
+displayed money, date, datetime, percentage and IBAN value renders through them.
 `frontend/src/lib/format.test.ts` tests the helpers, and
 `frontend/src/lib/callSites.test.ts` fails when a hand-rolled date, a `toLocaleDateString`
 call, an amount followed by `EUR` or a raw date or timestamp field returns to a call site.
@@ -1274,6 +1274,7 @@ Inputs show and accept what the user types: they are not display call sites.
 | Long date | weekday and month in words ("Freitag, 30. Oktober 2026") | `dateLabel` in `DashboardPage.tsx` |
 | Plain numbers | `Intl.NumberFormat("de-DE")` / `toLocaleString("de-DE")` (`1.234.567`) | `PropertyDetailPage.tsx`, `AttachmentsPanel.tsx`, `IntakeBatchPage.tsx` |
 | File size | `1.5 KB` / `1.0 MB` with a dot (`toFixed(1)`); mandates use whole KB (`12 KB`, `toFixed(0)`). Attachments show `1.234 Bytes` (`Intl.NumberFormat("de-DE")`); intake shows `1,5 KiB` (`toLocaleString("de-DE")`) | `formatBytes()` in `InvoiceDocumentsPage.tsx`, `formatSize()` in `MandateDetailPage.tsx`, `AttachmentsPanel.tsx`, `IntakeBatchPage.tsx` |
+| Percentage | `19 %`, `5,5 %`: decimal comma, no trailing zeros, a normal space before the sign; a value that is no plain decimal renders as stored | Shared `formatPercent(value)` in `lib/format.ts`; used by the rate of the invoice proposal |
 | IBAN | grouped in blocks of four (`DE75 5121 0800 1245 1261 99`); SEPA confirmation input removes whitespace and upper-cases it, so pasting grouped or ungrouped is accepted | Shared `formatIban(iban)` in `lib/format.ts` for displays; `normalizedIban` in `components/SepaExport.tsx` for the confirmation input |
 | Empty value | `—` (kit, newer pages), `-` (older tables), `–` (`BankTransactionsPage.tsx`) | `MandatePage.tsx`, `InvoiceDocumentsPage.tsx`, `BankTransactionsPage.tsx`, respectively |
 | Money input | accept `1234,56` and `1234.56`, send `1234.56` | `moneyInput`, `exactCents`, `normalizePlanAmount` (see above) |
@@ -2307,11 +2308,17 @@ Storing or replacing the key requires the provider confirmation: a checkbox at t
 key field states that the organization chose and contracted the provider itself
 (data processing, storage location and no training use) and instructs the operator
 of this installation to transmit documents and extracted text to that provider; the
-wording is provisional until the reviewed AV-Vertrag of #26. Saving without the tick
+wording is provisional until the reviewed AV-Vertrag of #26 and names „Dokumente (Teilungserklärungen und Rechnungen)“
+since text version 2 (#500) where the installation processes invoices (`invoice_processing_enabled`); where it does not
+(`HV_INVOICE_EXTRACTION_ENABLED=false`, the portable stack) it names only „Dokumente“, the refusal message likewise, and
+the confirmation is recorded as text version 1, so it does not cover invoices if processing is switched on later. Saving without the tick
 is refused with a German message at the field (structured code
 `ORGANIZATION_AI_CONFIRMATION_REQUIRED`) and no key is stored. A key stored before
 this requirement keeps the checkbox visible without re-entering it and stays unused
-until confirmed once; the confirmed state names who confirmed and when. Removing the
+until confirmed once; the confirmed state names who confirmed and when. A key confirmed with the first text keeps the
+declaration import and asks again for invoices: while `invoice_confirmation_required` is set, the key field shows the checkbox
+again with the sentence „Die Bestätigung vom … von … galt, bevor Rechnungen ausgewertet wurden. …“ (declarations are not
+affected; invoices stay on the host until the tick is saved, without entering the key again). Removing the
 key ends the instruction; the record of earlier confirmations stays. The form
 uses existing Button, Input, Label, card, spacing and error/status styles; it stays
 usable at 360 px with long model names. Personal settings screenshots above include
@@ -2331,6 +2338,72 @@ the administrator's organization card after this change.
 | Import on, reading model not chosen | [view](docs/assets/design/ai-settings/models-missing-reading-model-1280.png) | [view](docs/assets/design/ai-settings/models-missing-reading-model-360.png) |
 | Import screen without a reading model | [view](docs/assets/design/ai-settings/models-import-refused-1280.png) | [view](docs/assets/design/ai-settings/models-import-refused-360.png) |
 
+The one switch of the card is labelled „Teilungserklärungen importieren und Rechnungen auswerten“ and described
+(`aria-describedby`) in one paragraph: invoices without structured e-invoice data (scans, PDFs) go to the chosen provider,
+XRechnung and ZUGFeRD are read directly and not sent, invoices are sent only after the current confirmation text was
+accepted, every request counts towards the monthly limit and an invoice shows its own usage. The intro of the card says the
+same for invoices, and the sentence about a missing „Dokumente einlesen“ model adds that scanned invoices are then not read.
+Where the installation does not process invoices (`invoice_processing_enabled` false) the card is about declarations alone:
+the switch reads „Teilungserklärungen importieren“ without a description paragraph, and the intro, the
+missing-model sentence and the confirmation name no invoices; the invoice paragraph, the earlier-confirmation sentence and
+`invoice_confirmation_required` do not appear. Until the settings are loaded the intro claims nothing about invoices.
+
+### Invoice processing: outcomes and usage (#500)
+
+The invoice screen (`/belege/:id`) states how the processing ended under its status line, in one paragraph from one map
+(`lib/invoiceProcessing.ts`, `INVOICE_PROCESSING_MESSAGES`, keyed by the reason code the backend stores with the attempt;
+`backend/tests/test_invoice_reason_texts.py` fails for a stored code without a text): what happened, that the original is kept
+and nothing was applied (“Das Original bleibt erhalten; es wurde nichts übernommen.”), and what to do (enter the values by hand
+with „Kostenposition erstellen“, start again, change settings, ask the operator). Texts that follow a request to a model add
+that starting again „verursacht erneut Kosten“. There is no text while the invoice waits, runs or succeeded; a code without a
+text shows “Die Verarbeitung konnte nicht abgeschlossen werden. …”, never the code. The organization's consent is read again
+before every request, so the four setup reasons (switch off, confirmation, reading model, key) can also end an invoice that is
+already being read: their text says „Es wird nichts (mehr) an einen KI-Anbieter übermittelt“ and points to the usage card for
+what was requested before, instead of claiming that nothing was sent. So does a provider, endpoint, key or model that was replaced
+during the run (`ai_settings_changed`): its text says the settings were changed while the invoice was being read, that the
+current settings apply to a new start and that starting again „verursacht erneut Kosten“. „Dokument ansehen“ stays in every state.
+The retry button reads „Verarbeitung erneut starten“ and is also offered after a cancellation caused by a lost permission; a
+refused start (all three attempts used) is explained in German, not with the server's message.
+
+The card „Verbrauch der KI-Verarbeitung“ (`components/InvoiceModelUsage.tsx`, from `GET /api/invoice-documents/{id}/model-usage`)
+sits below the actions and appears once a request was made. It reuses the blocks of „Verbrauch je Importlauf“: one block
+per stage and model („Dokumente einlesen“ with the number of calls, „Informationen extrahieren“) and „Gesamt“, over all attempts
+of the invoice including failed and ended ones. Usage the provider did not report is shown as „Reservierte Eingabetoken“ with
+„Konservative Kostenschätzung“, a model without a price as „kein Preis bekannt“, never as 0,00 USD. It loads again when the
+status changes; if it cannot be loaded the card is replaced by one alert sentence and no amount.
+
+The card „Extrahierte Felder“ of a proposal lists ten rows, each with its value and the certainty of the model or of the parser
+in brackets, and „nicht erkannt“ in grey italics where the invoice states nothing (an unchanged wording for every row). The
+values are shown as a person reviews them against the invoice, in the formats of "Number, money, date and size formats":
+„Rechnungsdatum“ and both „Leistungszeitraum“ rows as `15.01.2026`, „Bruttobetrag“ and „USt-Betrag“ as `312,00 €`, „USt-Satz“ as
+`19 %` and „Kategorievorschlag“ as the label of the category from the cost categories the page loads for „Kostenposition
+erstellen“ (the code where the list has no such category). A stored value that a format cannot read, as an older proposal may hold,
+is shown as stored, never as an invalid date or `NaN`. The last row is „IBAN des Rechnungsstellers“: the issuer's account as
+the invoice states it, grouped in blocks of four like every IBAN (`formatIban`), for the person to compare with the invoice
+before paying. Only a valid IBAN reaches the row; one the model misread, or one with a wrong check digit, reads „nicht erkannt“,
+as does a proposal that was stored before the field existed. Nothing else uses the value: it is not copied into the cost
+position and matches no bank line.
+
+The rows are a definition list (`.extraction-fields`), not an `info-table`: label and value share a line where the row is at
+least about 450 px wide, otherwise the value sits below its label and has the whole line, as the labels of „Hausgeld-Abgleich“ wrap
+above their amounts. So a vendor name, a date, a document number or an amount never breaks inside a word at 360 px; only a value
+wider than a line by itself, such as a long code, breaks inside the word (`overflow-wrap: break-word`), and the IBAN breaks only
+between its groups of four. The journey twin checks at both widths that no word of a value is cut across two lines.
+
+Screenshots come from the real-browser twin of Journey 2 on the test database with synthetic data
+(`features/journeys/invoice_model_processing.feature`; `VERWALINO_CAPTURE_DESIGN=1` writes the "after" files, the same
+run with `VERWALINO_CAPTURE_STATE=before` against the previous frontend the "before" files):
+
+| Invoice screen (#500) | Before, 1280 px | Before, 360 px | After, 1280 px | After, 360 px |
+|---|---|---|---|---|
+| Processing failed at the provider: explanation, retry, original kept | [view](docs/assets/design/invoice-processing/invoice-provider-failure-before-1280.png) | [view](docs/assets/design/invoice-processing/invoice-provider-failure-before-360.png) | [view](docs/assets/design/invoice-processing/invoice-provider-failure-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-provider-failure-after-360.png) |
+| AI evaluation not set up: explanation, nothing sent | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-before-1280.png) | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-before-360.png) | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-after-360.png) |
+| Scan read by both models: proposal and usage card below the actions | [view](docs/assets/design/invoice-processing/invoice-proposal-before-1280.png) | [view](docs/assets/design/invoice-processing/invoice-proposal-before-360.png) | [view](docs/assets/design/invoice-processing/invoice-proposal-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-proposal-after-360.png) |
+| Card „Extrahierte Felder“ of the scan with the row „IBAN des Rechnungsstellers“ (no such row before; the card itself is not captured before) | none | none | [view](docs/assets/design/invoice-processing/invoice-fields-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-fields-after-360.png) |
+| Card „Verbrauch der KI-Verarbeitung“ (no such card before) | none | none | [view](docs/assets/design/invoice-processing/invoice-usage-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-usage-after-360.png) |
+| AI settings card of an installation that processes invoices: one switch for declarations and invoices, invoice paragraph | [view](docs/assets/design/invoice-processing/settings-card-before-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-before-360.png) | [view](docs/assets/design/invoice-processing/settings-card-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-after-360.png) |
+| AI settings card of an installation that processes no invoices (the local stack, as the portable one): declarations only; the before files are the card above, which named invoices there | [view](docs/assets/design/invoice-processing/settings-card-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-after-360.png) | [view](docs/assets/design/invoice-processing/settings-card-no-invoices-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-no-invoices-after-360.png) |
+
 ### Declaration import: consumption per stage and failure explanations
 
 The card „Verbrauch je Importlauf“ (import screen and review screen, a kit `card` with an `h2`)
@@ -2340,7 +2413,7 @@ the model name (wrapping), its tokens and its cost; then a „Gesamt“ block wi
 the runtime. Every block is a definition list that is one column up to 640 px and two columns
 above, with the usage vocabulary of the total: „Eingabetoken“/„Ausgabetoken“ for provider-reported
 usage; „Reservierte …“ while usage is unknown, with the sentence that the Reservierung stays in
-the budget; „Gemeldete …“ and „Konservativ erfasste …“ together when only part was reported;
+the budget („Die Reservierung bleibt vorsorglich im Budget erfasst.“; nothing promises a later clarification, none happens); „Gemeldete …“ and „Konservativ erfasste …“ together when only part was reported;
 „Tokenverbrauch unbekannt“ when nothing is known, without a cost row (there is nothing to price).
 The cost reads „Geschätzte Kosten“ for reported
 usage and „Konservative Kostenschätzung“ otherwise, in USD with at most six decimals, or „kein

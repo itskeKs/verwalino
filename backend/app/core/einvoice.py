@@ -27,7 +27,10 @@ from decimal import Decimal, InvalidOperation
 import xml.etree.ElementTree as ET
 
 from app.core.extraction import DocumentExtractor, ExtractionResult
+from app.core.iban import validate_iban
 
+# Structured data is read, not guessed: every field it states carries this certainty.
+STRUCTURED_CONFIDENCE = 0.99
 # Embedded-file names used by ZUGFeRD / Factur-X / XRechnung-in-PDF.
 _ZUGFERD_XML_NAMES = ("factur-x.xml", "zugferd-invoice.xml", "xrechnung.xml", "facturx.xml")
 
@@ -67,6 +70,21 @@ def _norm_date(value: str | None, fmt: str | None = None) -> str | None:
     return m.group(1) if m else v
 
 
+def _payee_iban(root: ET.Element, path: str) -> str | None:
+    """The one valid IBAN the payment data names for the payee, else None.
+
+    Only the payee's account counts (never the payer's of a direct debit). An entry that is no valid IBAN and an
+    invoice that names two different valid accounts both leave the field empty: a wrong IBAN is worse than none.
+    """
+    found = set()
+    for element in root.findall(path):
+        try:
+            found.add(validate_iban(element.text or ""))
+        except ValueError:
+            continue
+    return found.pop() if len(found) == 1 else None
+
+
 # ---------------------------------------------------------------------------
 # CII (CrossIndustryInvoice) -- ZUGFeRD / Factur-X / XRechnung-CII
 # ---------------------------------------------------------------------------
@@ -89,7 +107,8 @@ def _parse_cii(root: ET.Element, source_format: str) -> ExtractionResult:
         sp_from = _norm_date(sf.text, sf.get("format"))
     if st is not None:
         sp_to = _norm_date(st.text, st.get("format"))
-    return _build(number, invoice_date, seller, gross, vat, rate, sp_from, sp_to, source_format)
+    iban = _payee_iban(root, ".//{*}SpecifiedTradeSettlementPaymentMeans/{*}PayeePartyCreditorFinancialAccount/{*}IBANID")
+    return _build(number, invoice_date, seller, gross, vat, rate, sp_from, sp_to, source_format, iban)
 
 
 # ---------------------------------------------------------------------------
@@ -109,10 +128,11 @@ def _parse_ubl(root: ET.Element) -> ExtractionResult:
     rate = _amount(_text(root, ".//{*}TaxTotal/{*}TaxSubtotal/{*}TaxCategory/{*}Percent"))
     sp_from = _norm_date(_text(root, ".//{*}InvoicePeriod/{*}StartDate"))
     sp_to = _norm_date(_text(root, ".//{*}InvoicePeriod/{*}EndDate"))
-    return _build(number, invoice_date, seller, gross, vat, rate, sp_from, sp_to, "XRECHNUNG_UBL")
+    iban = _payee_iban(root, ".//{*}PaymentMeans/{*}PayeeFinancialAccount/{*}ID")
+    return _build(number, invoice_date, seller, gross, vat, rate, sp_from, sp_to, "XRECHNUNG_UBL", iban)
 
 
-def _build(number, invoice_date, seller, gross, vat, rate, sp_from, sp_to, source_format) -> ExtractionResult:
+def _build(number, invoice_date, seller, gross, vat, rate, sp_from, sp_to, source_format, iban=None) -> ExtractionResult:
     conf = {}
     for k, v in (
         ("document_number", number), ("invoice_date", invoice_date), ("vendor_name", seller),
@@ -120,7 +140,7 @@ def _build(number, invoice_date, seller, gross, vat, rate, sp_from, sp_to, sourc
         ("service_period_from", sp_from), ("service_period_to", sp_to),
     ):
         if v is not None:
-            conf[k] = 0.99  # structured data: high confidence
+            conf[k] = STRUCTURED_CONFIDENCE
     overall = 0.95 if gross is not None and invoice_date is not None else 0.6
     return ExtractionResult(
         vendor_name=seller,
@@ -137,7 +157,22 @@ def _build(number, invoice_date, seller, gross, vat, rate, sp_from, sp_to, sourc
         raw_text=None,
         is_einvoice=True,
         source_format=source_format,
+        vendor_iban=iban,
     )
+
+
+def invoice_proposal(result: ExtractionResult, source_pages: list[int]) -> dict:
+    """The invoice worker's proposal of a structured invoice: the shared fields and the payee's IBAN.
+
+    The IBAN is a key of the proposal even when the invoice states none (null, without a certainty); ``to_dict()``
+    stays as the inbox's database function fixes it.
+    """
+    payload = result.to_dict()
+    payload["source_pages"] = source_pages
+    payload["vendor_iban"] = result.vendor_iban
+    if result.vendor_iban is not None:
+        payload["field_confidences"] = {**payload["field_confidences"], "vendor_iban": STRUCTURED_CONFIDENCE}
+    return payload
 
 
 def parse_en16931_xml(xml_bytes: bytes) -> ExtractionResult | None:
@@ -266,7 +301,7 @@ def _with_format(r: ExtractionResult, fmt: str) -> ExtractionResult:
         service_period_from=r.service_period_from, service_period_to=r.service_period_to,
         suggested_category_code=r.suggested_category_code, confidence=r.confidence,
         field_confidences=r.field_confidences, raw_text=r.raw_text,
-        is_einvoice=r.is_einvoice, source_format=fmt,
+        is_einvoice=r.is_einvoice, source_format=fmt, vendor_iban=r.vendor_iban,
     )
 
 

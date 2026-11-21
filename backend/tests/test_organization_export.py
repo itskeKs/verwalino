@@ -75,6 +75,15 @@ async def test_admin_exports_visible_rows_without_credentials_or_foreign_data(re
         assert (await foreign.get(f"/api/organizations/export/{response.headers['X-Export-ID']}")).status_code == 404
 
 
+async def test_the_invoice_model_ledger_is_working_data_and_not_exported(rent_db):
+    from app.services.organization_export_service import inventory
+    # The ledger carries organization_id, so only the exclusion in the inventory keeps it out of an archive.
+    carries_organization = await rent_db.scalar(text(
+        "SELECT count(*) FROM pg_attribute WHERE attrelid='public.invoice_model_call'::regclass AND attname='organization_id'"))
+    assert carries_organization == 1
+    assert 'invoice_model_call' not in await inventory(rent_db)
+
+
 @pytest.mark.parametrize("actor", ["reader", "clerk"])
 async def test_export_requires_an_owner_administrator(rent_world, actor, export_store):
     async with api_client(rent_world, actor) as api:

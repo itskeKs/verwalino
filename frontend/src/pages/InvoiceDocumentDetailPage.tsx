@@ -20,6 +20,7 @@ import {
   listProperties,
 } from "../api/endpoints";
 import type {
+  ExtractionPayload,
   InvoiceDocument,
   VerifyResult,
   CostCategory,
@@ -28,9 +29,11 @@ import type {
 } from "../api/types";
 import { ApiError } from "../api/client";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
-import { InvoiceProcessingStatus } from "../components/InvoiceProcessingStatus";
+import { InvoiceModelUsage } from "../components/InvoiceModelUsage";
+import { InvoiceProcessingExplanation, InvoiceProcessingStatus } from "../components/InvoiceProcessingStatus";
+import { INVOICE_RETRY_FAILED, INVOICE_RETRY_REFUSED } from "../lib/invoiceProcessing";
 import { Badge } from "../components/ui/badge";
-import { formatDate, formatDateTime } from "../lib/format";
+import { centsFromDecimal, formatDate, formatDateTime, formatIban, formatMoney, formatPercent } from "../lib/format";
 
 /** Human-readable short label for source_format values from the e-invoice parser. */
 const FORMAT_LABELS: Record<string, string> = {
@@ -38,6 +41,12 @@ const FORMAT_LABELS: Record<string, string> = {
   XRECHNUNG_CII: "XRechnung",
   ZUGFERD: "ZUGFeRD",
 };
+
+/** A proposal of an attempt, or fields a person or an earlier release stored; the stub every upload starts with is neither. */
+function hasProposal(ext: ExtractionPayload): boolean {
+  return Boolean(ext.attempt_id) || ext.is_einvoice === true || [ext.vendor_name, ext.invoice_date, ext.document_number, ext.gross_amount,
+    ext.vat_amount, ext.vat_rate, ext.service_period_from, ext.service_period_to, ext.suggested_category_code, ext.vendor_iban].some(value => value != null);
+}
 
 function confidenceColor(c: number): string {
   if (c >= 0.8) return "#2e7d32";
@@ -51,6 +60,18 @@ function confidenceLabel(c: number): string {
   if (c > 0) return "Niedrig";
   return "-";
 }
+
+/** A proposal's value in the project's display format; a stored value the format cannot read (an older proposal) is shown as stored. */
+function shown(value: string | null | undefined, format: (value: string) => string): string | null {
+  if (value == null) return null;
+  try {
+    return format(value);
+  } catch {
+    return value;
+  }
+}
+
+const asMoney = (value: string) => formatMoney(centsFromDecimal(value));
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -135,7 +156,7 @@ export function InvoiceDocumentDetailPage() {
     setActionLoading(true);
     setActionError(null);
     try { setDoc(await retryInvoiceExtraction(docId)); }
-    catch (err) { setActionError(err instanceof ApiError ? err.message : String(err)); }
+    catch (err) { setActionError(err instanceof ApiError && err.status === 409 ? INVOICE_RETRY_REFUSED : INVOICE_RETRY_FAILED); }
     finally { setActionLoading(false); }
   }
 
@@ -243,8 +264,9 @@ export function InvoiceDocumentDetailPage() {
         </Link>
       </p>
       <p><InvoiceProcessingStatus document={doc} /></p>
-      {["legacy", "needs_review", "unsupported", "unavailable", "timeout", "failed"].includes(doc.processing_status) && !doc.released_at && doc.status === "active" && (
-        <button className="btn" onClick={handleRetry} disabled={actionLoading}>Texterkennung erneut starten</button>
+      <InvoiceProcessingExplanation document={doc} />
+      {["legacy", "needs_review", "unsupported", "unavailable", "timeout", "failed", "canceled"].includes(doc.processing_status) && !doc.released_at && doc.status === "active" && (
+        <button className="btn" onClick={handleRetry} disabled={actionLoading}>Verarbeitung erneut starten</button>
       )}
       <h1>
         Beleg: {doc.original_filename ?? "Ohne Name"}{" "}
@@ -417,8 +439,11 @@ export function InvoiceDocumentDetailPage() {
         </div>
       )}
 
-      {/* Extraction payload review */}
-      {ext && (
+      {/* What the model-assisted processing of this invoice has cost so far */}
+      <InvoiceModelUsage documentId={doc.id} processingStatus={doc.processing_status} />
+
+      {/* Extraction payload review: not for the empty stub of an upload, which no attempt has filled */}
+      {ext && hasProposal(ext) && (
         <div className="card" style={{ marginBottom: "1.5rem" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
             <h2 style={{ margin: 0 }}>Extrahierte Felder</h2>
@@ -439,55 +464,58 @@ export function InvoiceDocumentDetailPage() {
               {confidenceLabel(ext.confidence)} ({(ext.confidence * 100).toFixed(0)}%)
             </span>
           </p>
-          <table className="info-table">
-            <tbody>
-              <ExtractionRow
-                label="Lieferant"
-                value={ext.vendor_name}
-                fieldConf={ext.field_confidences?.vendor_name}
-              />
-              <ExtractionRow
-                label="Rechnungsdatum"
-                value={ext.invoice_date}
-                fieldConf={ext.field_confidences?.invoice_date}
-              />
-              <ExtractionRow
-                label="Belegnummer"
-                value={ext.document_number}
-                fieldConf={ext.field_confidences?.document_number}
-              />
-              <ExtractionRow
-                label="Bruttobetrag"
-                value={ext.gross_amount}
-                fieldConf={ext.field_confidences?.gross_amount}
-              />
-              <ExtractionRow
-                label="USt-Betrag"
-                value={ext.vat_amount}
-                fieldConf={ext.field_confidences?.vat_amount}
-              />
-              <ExtractionRow
-                label="USt-Satz"
-                value={ext.vat_rate}
-                fieldConf={ext.field_confidences?.vat_rate}
-              />
-              <ExtractionRow
-                label="Leistungszeitraum von"
-                value={ext.service_period_from}
-                fieldConf={ext.field_confidences?.service_period_from}
-              />
-              <ExtractionRow
-                label="Leistungszeitraum bis"
-                value={ext.service_period_to}
-                fieldConf={ext.field_confidences?.service_period_to}
-              />
-              <ExtractionRow
-                label="Kategorievorschlag"
-                value={ext.suggested_category_code}
-                fieldConf={ext.field_confidences?.suggested_category_code}
-              />
-            </tbody>
-          </table>
+          <dl className="extraction-fields">
+            <ExtractionRow
+              label="Lieferant"
+              value={ext.vendor_name}
+              fieldConf={ext.field_confidences?.vendor_name}
+            />
+            <ExtractionRow
+              label="Rechnungsdatum"
+              value={shown(ext.invoice_date, formatDate)}
+              fieldConf={ext.field_confidences?.invoice_date}
+            />
+            <ExtractionRow
+              label="Belegnummer"
+              value={ext.document_number}
+              fieldConf={ext.field_confidences?.document_number}
+            />
+            <ExtractionRow
+              label="Bruttobetrag"
+              value={shown(ext.gross_amount, asMoney)}
+              fieldConf={ext.field_confidences?.gross_amount}
+            />
+            <ExtractionRow
+              label="USt-Betrag"
+              value={shown(ext.vat_amount, asMoney)}
+              fieldConf={ext.field_confidences?.vat_amount}
+            />
+            <ExtractionRow
+              label="USt-Satz"
+              value={shown(ext.vat_rate, formatPercent)}
+              fieldConf={ext.field_confidences?.vat_rate}
+            />
+            <ExtractionRow
+              label="Leistungszeitraum von"
+              value={shown(ext.service_period_from, formatDate)}
+              fieldConf={ext.field_confidences?.service_period_from}
+            />
+            <ExtractionRow
+              label="Leistungszeitraum bis"
+              value={shown(ext.service_period_to, formatDate)}
+              fieldConf={ext.field_confidences?.service_period_to}
+            />
+            <ExtractionRow
+              label="Kategorievorschlag"
+              value={shown(ext.suggested_category_code, code => categories.find(c => c.code === code)?.label ?? code)}
+              fieldConf={ext.field_confidences?.suggested_category_code}
+            />
+            <ExtractionRow
+              label="IBAN des Rechnungsstellers"
+              value={ext.vendor_iban ? formatIban(ext.vendor_iban) : null}
+              fieldConf={ext.field_confidences?.vendor_iban}
+            />
+          </dl>
         </div>
       )}
 
@@ -728,9 +756,9 @@ function ExtractionRow({
   fieldConf?: number;
 }) {
   return (
-    <tr>
-      <td>{label}</td>
-      <td>
+    <div>
+      <dt>{label}</dt>
+      <dd>
         {value ?? (
           <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>
             nicht erkannt
@@ -743,12 +771,13 @@ function ExtractionRow({
               fontSize: "0.75rem",
               color: confidenceColor(fieldConf),
               fontWeight: 500,
+              whiteSpace: "nowrap",
             }}
           >
             ({(fieldConf * 100).toFixed(0)}%)
           </span>
         )}
-      </td>
-    </tr>
+      </dd>
+    </div>
   );
 }

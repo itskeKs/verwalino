@@ -7,8 +7,10 @@ from datetime import date
 from types import MappingProxyType
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_core import PydanticCustomError
+
+from app.core.iban import validate_iban
 
 
 class StrictModel(BaseModel):
@@ -291,3 +293,75 @@ def transcript_text(blocks: "Sequence[ReadingBlock]") -> str:
         else:
             lines.append(UNREADABLE_MARKER)
     return "\n".join(lines)
+
+
+# ---- invoice extraction stage (issue #500, ADR 0017) -------------------------------------------
+
+INVOICE_SCHEMA_VERSION = "invoice-1"
+# The value formats the review boundary of an invoice proposal accepts (``core/extraction_evidence.py``): a decimal
+# number with a dot and at most 16 integer and 6 fractional digits, and an ISO date.
+_INVOICE_AMOUNT = r"^-?(0|[1-9][0-9]{0,15})(\.[0-9]{1,6})?$"
+_INVOICE_DATE = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+
+
+class InvoiceTextField(StrictModel):
+    value: str | None = Field(min_length=1, max_length=4_000)
+    confidence: float = Field(ge=0, le=1)
+
+    @field_validator("value")
+    @classmethod
+    def no_nul(cls, value: str | None) -> str | None:
+        if value is not None and "\x00" in value:
+            raise ValueError("a text value holds no NUL character")
+        return value
+
+
+class InvoiceDateField(StrictModel):
+    value: str | None = Field(pattern=_INVOICE_DATE)
+    confidence: float = Field(ge=0, le=1)
+
+    @field_validator("value")
+    @classmethod
+    def a_real_date(cls, value: str | None) -> str | None:
+        if value is not None:
+            date.fromisoformat(value)
+        return value
+
+
+class InvoiceAmountField(StrictModel):
+    value: str | None = Field(pattern=_INVOICE_AMOUNT)
+    confidence: float = Field(ge=0, le=1)
+
+
+# The vendor's IBAN as the invoice prints it. A wrong IBAN is worse than none: a value that is not a valid IBAN
+# (country, length, check digits) is not stated, which leaves the rest of the answer as it is; a valid one is kept
+# without spaces and in upper case. The wire schema allows any text, so that a misread value costs no repair request.
+# Nothing here logs or raises the value. (No docstring: it would become a description of the wire schema.)
+class InvoiceIbanField(StrictModel):
+    value: str | None
+    confidence: float = Field(ge=0, le=1)
+
+    @field_validator("value")
+    @classmethod
+    def a_valid_iban_or_not_stated(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            return validate_iban(value)
+        except ValueError:
+            return None
+
+
+class InvoiceExtractionOutput(StrictModel):
+    # The ten fields of the invoice proposal, each with its value (null when the invoice does not state it) and the
+    # model's certainty. The wire schema carries no description: every request pays for it twice.
+    vendor_name: InvoiceTextField
+    invoice_date: InvoiceDateField
+    document_number: InvoiceTextField
+    gross_amount: InvoiceAmountField
+    vat_amount: InvoiceAmountField
+    vat_rate: InvoiceAmountField
+    service_period_from: InvoiceDateField
+    service_period_to: InvoiceDateField
+    suggested_category_code: InvoiceTextField
+    vendor_iban: InvoiceIbanField

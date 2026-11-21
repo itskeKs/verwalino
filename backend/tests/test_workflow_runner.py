@@ -60,8 +60,10 @@ async def test_shared_invoice_adapter_preserves_live_lease_then_reconciles_expir
     from app.core.invoice_ocr import extract_invoice
     from app.services.invoice_processing_service import InvoiceProcessingService
     from app.workers.workflow_runner import WorkflowRunner,build_adapters
+    from tests.test_m5_einvoice import UBL
     api,ids=worker_tenant;org=ids['org_a_id']
-    document=(await api.post('/api/invoice-documents/upload',files={'file':('invoice.pdf',pdf_bytes(),'application/pdf')})).json()
+    # A structured invoice: the shared adapter reads it directly, without a model and so without any configuration.
+    document=(await api.post('/api/invoice-documents/upload',files={'file':('invoice.xml',UBL,'application/xml')})).json()
     factory=get_worker_session_factory()
     async with factory() as db,db.begin():
         await set_tenant_context(db,org);old_claim=await InvoiceProcessingService(db,org).claim()
@@ -76,7 +78,7 @@ async def test_shared_invoice_adapter_preserves_live_lease_then_reconciles_expir
     assert [item['status'] for item in attempts]==['succeeded','timeout']
     async with factory() as db,db.begin():
         await set_tenant_context(db,org)
-        assert not await InvoiceProcessingService(db,org).finish(old_claim,extract_invoice(pdf_bytes(),'application/pdf'))
+        assert not await InvoiceProcessingService(db,org).finish(old_claim,extract_invoice(UBL,'application/xml'))
     ref=(await api.get('/api/document-refs/page',params={'source_id':document['id']})).json()['items'][0]
     assert len((await api.get('/api/document-refs/'+ref['id']+'/extractions')).json()['items'])==1
 
@@ -91,10 +93,11 @@ async def test_invoice_completion_exhaustion_reports_failure_then_recovers_its_d
     from app.services.invoice_processing_service import InvoiceProcessingService
     from app.workers.workflow_runner import WorkflowRunner, build_adapters
 
+    from tests.test_m5_einvoice import UBL
     api, ids = worker_tenant
     org = ids['org_a_id']
     document = (await api.post('/api/invoice-documents/upload',
-        files={'file': ('invoice.pdf', pdf_bytes(), 'application/pdf')})).json()
+        files={'file': ('invoice.xml', UBL, 'application/xml')})).json()
     original = InvoiceProcessingService.finish
     blocked = AsyncMock(side_effect=locking.LockTimeoutError('completion remains locked'))
     monkeypatch.setattr(InvoiceProcessingService, 'finish', blocked)
