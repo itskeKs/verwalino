@@ -111,13 +111,13 @@ what Verwalino does not assign by itself.
   cost has 0.00 € remaining bank coverage, and the year still counts 60.00 € once.
 - The private Amazon booking (34.99 €) belongs to nothing and is counted nowhere.
 - If Sabine uploads the same file a second time, no booking is created twice.
-- **The building-insurance invoice.** Sabine uploads the insurer's scanned invoice of 312.00 €, dated
+- **The building-insurance invoice.** Sabine uploads the insurer's scanned invoice of 312,00 €, dated
   15.01.2026, vendor „Musterversicherung AG“ (the IBAN it prints is the one of the statement's debit line), under
   „Belege“ and opens it. Nothing is posted by the upload, and „Dokument ansehen“ always shows the original.
   - Where the invoice worker runs and an administrator has switched on „Teilungserklärungen importieren und
     Rechnungen auswerten“ (provider key and confirmation, a model under „Dokumente einlesen“ and one under
     „Informationen extrahieren“), the scan is read by the reading model and the fields are filled by the extraction
-    model. The page reads „Felder vorbereitet · bitte prüfen“ and proposes **312.00**, **2026-01-15**,
+    model. The page reads „Felder vorbereitet · bitte prüfen“ and proposes **312,00 €**, **15.01.2026**,
     „Musterversicherung AG“, the number RE-2026-0042 and, in the row „IBAN des Rechnungsstellers“, the insurer's IBAN of
     the statement's debit line in groups of four; the card „Verbrauch der KI-Verarbeitung“ lists the
     reading and the extraction model with their usage. Sabine reviews the proposal, the IBAN included, and creates the
@@ -149,7 +149,7 @@ The full-year account cutoff is automated at 1280 and 360 px in
 [rent_account_due.feature](../../features/journeys/rent_account_due.feature).
 The building-insurance invoice is automated in
 [invoice_model_processing.feature](../../features/journeys/invoice_model_processing.feature) with the real worker and
-fake providers: the scan read by both models (proposal 312.00 / 2026-01-15 / „Musterversicherung AG“ and the IBAN of the
+fake providers: the scan read by both models (proposal 312,00 € / 15.01.2026 / „Musterversicherung AG“ and the IBAN of the
 statement's debit line in „IBAN des Rechnungsstellers“ at 1280 and 360 px, the usage of both models, the IBAN that the
 invoice prints reaching the extraction model and the stored source text), XRechnung and ZUGFeRD read with no provider built
 and the same IBAN read from their payment data, a provider failure and the

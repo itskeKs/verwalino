@@ -1260,7 +1260,7 @@ Synthetic finalized report from the test database (1280 and 360 px):
 | After | [View](docs/assets/design/asset-report-reserve/asset-report-1280.png) | [View](docs/assets/design/asset-report-reserve/asset-report-360.png) |
 
 `frontend/src/lib/format.ts` provides the shared display helpers below; every
-displayed money, date, datetime and IBAN value renders through them.
+displayed money, date, datetime, percentage and IBAN value renders through them.
 `frontend/src/lib/format.test.ts` tests the helpers, and
 `frontend/src/lib/callSites.test.ts` fails when a hand-rolled date, a `toLocaleDateString`
 call, an amount followed by `EUR` or a raw date or timestamp field returns to a call site.
@@ -1274,6 +1274,7 @@ Inputs show and accept what the user types: they are not display call sites.
 | Long date | weekday and month in words ("Freitag, 30. Oktober 2026") | `dateLabel` in `DashboardPage.tsx` |
 | Plain numbers | `Intl.NumberFormat("de-DE")` / `toLocaleString("de-DE")` (`1.234.567`) | `PropertyDetailPage.tsx`, `AttachmentsPanel.tsx`, `IntakeBatchPage.tsx` |
 | File size | `1.5 KB` / `1.0 MB` with a dot (`toFixed(1)`); mandates use whole KB (`12 KB`, `toFixed(0)`). Attachments show `1.234 Bytes` (`Intl.NumberFormat("de-DE")`); intake shows `1,5 KiB` (`toLocaleString("de-DE")`) | `formatBytes()` in `InvoiceDocumentsPage.tsx`, `formatSize()` in `MandateDetailPage.tsx`, `AttachmentsPanel.tsx`, `IntakeBatchPage.tsx` |
+| Percentage | `19 %`, `5,5 %`: decimal comma, no trailing zeros, a normal space before the sign; a value that is no plain decimal renders as stored | Shared `formatPercent(value)` in `lib/format.ts`; used by the rate of the invoice proposal |
 | IBAN | grouped in blocks of four (`DE75 5121 0800 1245 1261 99`); SEPA confirmation input removes whitespace and upper-cases it, so pasting grouped or ungrouped is accepted | Shared `formatIban(iban)` in `lib/format.ts` for displays; `normalizedIban` in `components/SepaExport.tsx` for the confirmation input |
 | Empty value | `—` (kit, newer pages), `-` (older tables), `–` (`BankTransactionsPage.tsx`) | `MandatePage.tsx`, `InvoiceDocumentsPage.tsx`, `BankTransactionsPage.tsx`, respectively |
 | Money input | accept `1234,56` and `1234.56`, send `1234.56` | `moneyInput`, `exactCents`, `normalizePlanAmount` (see above) |
@@ -2372,13 +2373,22 @@ of the invoice including failed and ended ones. Usage the provider did not repor
 status changes; if it cannot be loaded the card is replaced by one alert sentence and no amount.
 
 The card „Extrahierte Felder“ of a proposal lists ten rows, each with its value and the certainty of the model or of the parser
-in brackets, and „nicht erkannt“ in grey italics where the invoice states nothing (an unchanged wording for every row). The last
-row is „IBAN des Rechnungsstellers“: the issuer's account as the invoice states it, grouped in blocks of four like every IBAN
-(`formatIban`), for the person to compare with the invoice before paying. Only a valid IBAN reaches the row; one the model
-misread, or one with a wrong check digit, reads „nicht erkannt“, as does a proposal that was stored before the field existed.
-Nothing else uses the value: it is not copied into the cost position and matches no bank line. A value in a row breaks inside
-the card instead of running out of it (`overflow-wrap: anywhere`), so that the end of a long code or IBAN is still readable at
-360 px.
+in brackets, and „nicht erkannt“ in grey italics where the invoice states nothing (an unchanged wording for every row). The
+values are shown as a person reviews them against the invoice, in the formats of "Number, money, date and size formats":
+„Rechnungsdatum“ and both „Leistungszeitraum“ rows as `15.01.2026`, „Bruttobetrag“ and „USt-Betrag“ as `312,00 €`, „USt-Satz“ as
+`19 %` and „Kategorievorschlag“ as the label of the category from the cost categories the page loads for „Kostenposition
+erstellen“ (the code where the list has no such category). A stored value that a format cannot read, as an older proposal may hold,
+is shown as stored, never as an invalid date or `NaN`. The last row is „IBAN des Rechnungsstellers“: the issuer's account as
+the invoice states it, grouped in blocks of four like every IBAN (`formatIban`), for the person to compare with the invoice
+before paying. Only a valid IBAN reaches the row; one the model misread, or one with a wrong check digit, reads „nicht erkannt“,
+as does a proposal that was stored before the field existed. Nothing else uses the value: it is not copied into the cost
+position and matches no bank line.
+
+The rows are a definition list (`.extraction-fields`), not an `info-table`: label and value share a line where the row is at
+least about 450 px wide, otherwise the value sits below its label and has the whole line, as the labels of „Hausgeld-Abgleich“ wrap
+above their amounts. So a vendor name, a date, a document number or an amount never breaks inside a word at 360 px; only a value
+wider than a line by itself, such as a long code, breaks inside the word (`overflow-wrap: break-word`), and the IBAN breaks only
+between its groups of four. The journey twin checks at both widths that no word of a value is cut across two lines.
 
 Screenshots come from the real-browser twin of Journey 2 on the test database with synthetic data
 (`features/journeys/invoice_model_processing.feature`; `VERWALINO_CAPTURE_DESIGN=1` writes the "after" files, the same

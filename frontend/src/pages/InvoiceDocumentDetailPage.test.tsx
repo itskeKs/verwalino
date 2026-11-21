@@ -198,11 +198,12 @@ function failedInvoice(status: string, code: string | null, over: object = {}): 
     released_by: null, retention_until: null, superseded_at: null, processing_status: status, processing_error_code: code, extraction_payload: null, ...over };
 }
 
-function openInvoice(document: InvoiceDocument, usage: unknown = { stages: [], total: null }) {
+function openInvoice(document: InvoiceDocument, usage: unknown = { stages: [], total: null }, categories: unknown[] = []) {
   vi.spyOn(api, "get").mockImplementation(async path => {
     if (path === `/api/invoice-documents/${document.id}`) return document as never;
     if (path === `/api/invoice-documents/${document.id}/model-usage`) return usage as never;
-    if (path === "/api/cost-categories" || path === "/api/properties") return [] as never;
+    if (path === "/api/cost-categories") return categories as never;
+    if (path === "/api/properties") return [] as never;
     throw new Error(`Unexpected GET ${path}`);
   });
   render(<MemoryRouter initialEntries={[`/belege/${document.id}`]}><Routes>
@@ -278,13 +279,17 @@ it("shows no extracted fields for the empty stub of an upload, and the fields of
   expect(await screen.findByText("Extrahierte Felder")).toBeVisible();
 });
 
+/** The row of the card „Extrahierte Felder“ with this label: its term and its value. */
+const fieldRow = async (label: string) => (await screen.findByText(label, { selector: "dt" })).closest("div")!;
+const fieldValue = async (label: string) => (await fieldRow(label)).querySelector("dd")!.textContent;
+
 const proposalFields = { vendor_name: "Musterversicherung AG", invoice_date: "2026-01-15", document_number: "RE-2026-0042", gross_amount: "312.00",
   vat_amount: null, vat_rate: null, service_period_from: "2026-01-01", service_period_to: "2026-12-31", suggested_category_code: null,
   confidence: 0.84, raw_text: "Rechnung", is_einvoice: false, source_format: null, attempt_id: "attempt-1" };
 
 it("shows the issuer's IBAN grouped in blocks of four, with the certainty of the model, for review", async () => {
   openInvoice(failedInvoice("succeeded", null, { extraction_payload: { ...proposalFields, vendor_iban: "DE02120300000000202051", field_confidences: { gross_amount: 0.98, vendor_iban: 0.9 } } }));
-  const row = (await screen.findByRole("cell", { name: "IBAN des Rechnungsstellers" })).closest("tr")!;
+  const row = await fieldRow("IBAN des Rechnungsstellers");
   expect(row).toHaveTextContent("DE02 1203 0000 0000 2020 51");
   expect(row).toHaveTextContent("(90%)");
 });
@@ -294,7 +299,7 @@ it.each([
   ["a proposal stored before the field existed", { field_confidences: {} }],
 ])("says that the IBAN is not recognised for %s, as it does for every other field", async (_name, extra) => {
   openInvoice(failedInvoice("succeeded", null, { extraction_payload: { ...proposalFields, ...extra } }));
-  const row = (await screen.findByRole("cell", { name: "IBAN des Rechnungsstellers" })).closest("tr")!;
+  const row = await fieldRow("IBAN des Rechnungsstellers");
   expect(row).toHaveTextContent("nicht erkannt");
   expect(row).not.toHaveTextContent("%");
 });
@@ -302,7 +307,50 @@ it.each([
 it("shows the IBAN of a structured invoice with the certainty of its parser", async () => {
   openInvoice(failedInvoice("succeeded", null, { extraction_payload: { ...proposalFields, is_einvoice: true, source_format: "XRECHNUNG_UBL",
     vendor_iban: "DE02120300000000202051", field_confidences: { vendor_iban: 0.99 } } }));
-  const row = (await screen.findByRole("cell", { name: "IBAN des Rechnungsstellers" })).closest("tr")!;
+  const row = await fieldRow("IBAN des Rechnungsstellers");
   expect(row).toHaveTextContent("DE02 1203 0000 0000 2020 51");
   expect(row).toHaveTextContent("(99%)");
+});
+
+const insurance = { id: "cat-ins", plan_version: 1, code: "GEBAEUDEVERSICHERUNG", label: "Gebaeudeversicherung", cost_group: "UMLAGEFAEHIG", tenant_apportionability_default: "UMLAGEFAEHIG",
+  owner_billing_relevant_default: true, owner_distribution_key_default: "MEA", tenant_distribution_key_default: "WOHNFLAECHE", reserve_relevant: false, legal_hint: null, sort_order: 130, is_active: true };
+
+it("shows the proposal in the display formats of the project, not as stored: dates, amounts, rate and the label of the category", async () => {
+  openInvoice(failedInvoice("succeeded", null, { extraction_payload: { ...proposalFields, vat_amount: "49.82", vat_rate: "19.00", suggested_category_code: "GEBAEUDEVERSICHERUNG",
+    service_period_to: "2026-12-31", field_confidences: {} } }), undefined, [insurance]);
+  expect(await fieldValue("Lieferant")).toBe("Musterversicherung AG");
+  expect(await fieldValue("Rechnungsdatum")).toBe("15.01.2026");
+  expect(await fieldValue("Belegnummer")).toBe("RE-2026-0042");
+  expect(await fieldValue("Bruttobetrag")).toBe("312,00 €");
+  expect(await fieldValue("USt-Betrag")).toBe("49,82 €");
+  expect(await fieldValue("USt-Satz")).toBe("19 %");
+  expect(await fieldValue("Leistungszeitraum von")).toBe("01.01.2026");
+  expect(await fieldValue("Leistungszeitraum bis")).toBe("31.12.2026");
+  expect(await fieldValue("Kategorievorschlag")).toBe("Gebaeudeversicherung");
+});
+
+it("keeps the certainty of a formatted value beside it", async () => {
+  openInvoice(failedInvoice("succeeded", null, { extraction_payload: { ...proposalFields, field_confidences: { gross_amount: 0.98, invoice_date: 0.97 } } }));
+  expect(await fieldValue("Bruttobetrag")).toBe("312,00 €(98%)");
+  expect(await fieldValue("Rechnungsdatum")).toBe("15.01.2026(97%)");
+});
+
+it("shows what an older proposal stored as stored, never as an invalid date or NaN", async () => {
+  openInvoice(failedInvoice("succeeded", null, { extraction_payload: { ...proposalFields, invoice_date: "15.01.2026", gross_amount: "312,00 EUR", vat_amount: "n/a",
+    vat_rate: "19 Prozent", service_period_from: "nach Vereinbarung", service_period_to: "", suggested_category_code: "UNBEKANNT", field_confidences: {} } }), undefined, [insurance]);
+  expect(await fieldValue("Rechnungsdatum")).toBe("15.01.2026");
+  expect(await fieldValue("Bruttobetrag")).toBe("312,00 EUR");
+  expect(await fieldValue("USt-Betrag")).toBe("n/a");
+  expect(await fieldValue("USt-Satz")).toBe("19 Prozent");
+  expect(await fieldValue("Leistungszeitraum von")).toBe("nach Vereinbarung");
+  expect(await fieldValue("Leistungszeitraum bis")).toBe("");
+  expect(await fieldValue("Kategorievorschlag")).toBe("UNBEKANNT");
+  expect(document.body).not.toHaveTextContent(/Invalid Date|NaN|undefined/);
+});
+
+it("says that nothing was recognised in the row of every field the proposal leaves empty", async () => {
+  openInvoice(failedInvoice("needs_review", "missing_fields", { extraction_payload: { ...proposalFields, vendor_name: null, invoice_date: null, document_number: null, gross_amount: null,
+    service_period_from: null, service_period_to: null, vendor_iban: null, field_confidences: {} } }));
+  for (const label of ["Lieferant", "Rechnungsdatum", "Belegnummer", "Bruttobetrag", "USt-Betrag", "USt-Satz", "Leistungszeitraum von", "Leistungszeitraum bis", "Kategorievorschlag", "IBAN des Rechnungsstellers"])
+    expect(await fieldValue(label)).toBe("nicht erkannt");
 });

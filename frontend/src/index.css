@@ -397,6 +397,42 @@ code {
   color: hsl(var(--muted-foreground));
 }
 
+/* --- Extracted fields of an invoice proposal (key-value) ---
+   Label and value share a line when the row is wide enough; otherwise the value sits below its label and has the
+   whole line, so an ordinary value never breaks inside a word at 360 px (labels wrap above values as in
+   .weg-owner-balance). Only a value wider than a line by itself, such as a long code, breaks inside the word. */
+
+.extraction-fields {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.extraction-fields > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 1rem;
+  padding: 0.55rem 0.2rem;
+  border-bottom: 1px solid hsl(var(--ui-border));
+}
+
+.extraction-fields > div:last-child {
+  border-bottom: none;
+}
+
+.extraction-fields dt {
+  flex: 1 1 180px;
+  min-width: 0;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+}
+
+.extraction-fields dd {
+  flex: 999 1 16rem;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: break-word;
+}
+
 /* --- Data table --- */
 
 .data-table {

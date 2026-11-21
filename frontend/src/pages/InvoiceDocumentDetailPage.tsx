@@ -33,7 +33,7 @@ import { InvoiceModelUsage } from "../components/InvoiceModelUsage";
 import { InvoiceProcessingExplanation, InvoiceProcessingStatus } from "../components/InvoiceProcessingStatus";
 import { INVOICE_RETRY_FAILED, INVOICE_RETRY_REFUSED } from "../lib/invoiceProcessing";
 import { Badge } from "../components/ui/badge";
-import { formatDate, formatDateTime, formatIban } from "../lib/format";
+import { centsFromDecimal, formatDate, formatDateTime, formatIban, formatMoney, formatPercent } from "../lib/format";
 
 /** Human-readable short label for source_format values from the e-invoice parser. */
 const FORMAT_LABELS: Record<string, string> = {
@@ -60,6 +60,18 @@ function confidenceLabel(c: number): string {
   if (c > 0) return "Niedrig";
   return "-";
 }
+
+/** A proposal's value in the project's display format; a stored value the format cannot read (an older proposal) is shown as stored. */
+function shown(value: string | null | undefined, format: (value: string) => string): string | null {
+  if (value == null) return null;
+  try {
+    return format(value);
+  } catch {
+    return value;
+  }
+}
+
+const asMoney = (value: string) => formatMoney(centsFromDecimal(value));
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -452,60 +464,58 @@ export function InvoiceDocumentDetailPage() {
               {confidenceLabel(ext.confidence)} ({(ext.confidence * 100).toFixed(0)}%)
             </span>
           </p>
-          <table className="info-table">
-            <tbody>
-              <ExtractionRow
-                label="Lieferant"
-                value={ext.vendor_name}
-                fieldConf={ext.field_confidences?.vendor_name}
-              />
-              <ExtractionRow
-                label="Rechnungsdatum"
-                value={ext.invoice_date}
-                fieldConf={ext.field_confidences?.invoice_date}
-              />
-              <ExtractionRow
-                label="Belegnummer"
-                value={ext.document_number}
-                fieldConf={ext.field_confidences?.document_number}
-              />
-              <ExtractionRow
-                label="Bruttobetrag"
-                value={ext.gross_amount}
-                fieldConf={ext.field_confidences?.gross_amount}
-              />
-              <ExtractionRow
-                label="USt-Betrag"
-                value={ext.vat_amount}
-                fieldConf={ext.field_confidences?.vat_amount}
-              />
-              <ExtractionRow
-                label="USt-Satz"
-                value={ext.vat_rate}
-                fieldConf={ext.field_confidences?.vat_rate}
-              />
-              <ExtractionRow
-                label="Leistungszeitraum von"
-                value={ext.service_period_from}
-                fieldConf={ext.field_confidences?.service_period_from}
-              />
-              <ExtractionRow
-                label="Leistungszeitraum bis"
-                value={ext.service_period_to}
-                fieldConf={ext.field_confidences?.service_period_to}
-              />
-              <ExtractionRow
-                label="Kategorievorschlag"
-                value={ext.suggested_category_code}
-                fieldConf={ext.field_confidences?.suggested_category_code}
-              />
-              <ExtractionRow
-                label="IBAN des Rechnungsstellers"
-                value={ext.vendor_iban ? formatIban(ext.vendor_iban) : null}
-                fieldConf={ext.field_confidences?.vendor_iban}
-              />
-            </tbody>
-          </table>
+          <dl className="extraction-fields">
+            <ExtractionRow
+              label="Lieferant"
+              value={ext.vendor_name}
+              fieldConf={ext.field_confidences?.vendor_name}
+            />
+            <ExtractionRow
+              label="Rechnungsdatum"
+              value={shown(ext.invoice_date, formatDate)}
+              fieldConf={ext.field_confidences?.invoice_date}
+            />
+            <ExtractionRow
+              label="Belegnummer"
+              value={ext.document_number}
+              fieldConf={ext.field_confidences?.document_number}
+            />
+            <ExtractionRow
+              label="Bruttobetrag"
+              value={shown(ext.gross_amount, asMoney)}
+              fieldConf={ext.field_confidences?.gross_amount}
+            />
+            <ExtractionRow
+              label="USt-Betrag"
+              value={shown(ext.vat_amount, asMoney)}
+              fieldConf={ext.field_confidences?.vat_amount}
+            />
+            <ExtractionRow
+              label="USt-Satz"
+              value={shown(ext.vat_rate, formatPercent)}
+              fieldConf={ext.field_confidences?.vat_rate}
+            />
+            <ExtractionRow
+              label="Leistungszeitraum von"
+              value={shown(ext.service_period_from, formatDate)}
+              fieldConf={ext.field_confidences?.service_period_from}
+            />
+            <ExtractionRow
+              label="Leistungszeitraum bis"
+              value={shown(ext.service_period_to, formatDate)}
+              fieldConf={ext.field_confidences?.service_period_to}
+            />
+            <ExtractionRow
+              label="Kategorievorschlag"
+              value={shown(ext.suggested_category_code, code => categories.find(c => c.code === code)?.label ?? code)}
+              fieldConf={ext.field_confidences?.suggested_category_code}
+            />
+            <ExtractionRow
+              label="IBAN des Rechnungsstellers"
+              value={ext.vendor_iban ? formatIban(ext.vendor_iban) : null}
+              fieldConf={ext.field_confidences?.vendor_iban}
+            />
+          </dl>
         </div>
       )}
 
@@ -746,10 +756,9 @@ function ExtractionRow({
   fieldConf?: number;
 }) {
   return (
-    <tr>
-      <td>{label}</td>
-      {/* A long value (a category code, an IBAN) breaks inside the card at 360 px instead of cutting off its end. */}
-      <td style={{ overflowWrap: "anywhere" }}>
+    <div>
+      <dt>{label}</dt>
+      <dd>
         {value ?? (
           <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>
             nicht erkannt
@@ -762,12 +771,13 @@ function ExtractionRow({
               fontSize: "0.75rem",
               color: confidenceColor(fieldConf),
               fontWeight: 500,
+              whiteSpace: "nowrap",
             }}
           >
             ({(fieldConf * 100).toFixed(0)}%)
           </span>
         )}
-      </td>
-    </tr>
+      </dd>
+    </div>
   );
 }

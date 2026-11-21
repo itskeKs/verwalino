@@ -136,7 +136,30 @@ async def _open_invoice(browser_world, invoice_id: str):
 
 
 def _row(page, label: str):
-    return page.get_by_role("row").filter(has=page.get_by_role("cell", name=label, exact=True))
+    """The row of the card „Extrahierte Felder“ with this label."""
+    return page.locator(".extraction-fields > div").filter(has=page.get_by_text(label, exact=True))
+
+
+# A value of the card stays whole when it fits a line of its own: no word of it is cut across two lines.
+_CUT_WORDS = r"""() => {
+  const cut = [];
+  for (const value of document.querySelectorAll(".extraction-fields dd")) {
+    const walker = document.createTreeWalker(value, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      for (const word of node.textContent.matchAll(/\S+/g)) {
+        const range = document.createRange();
+        range.setStart(node, word.index);
+        range.setEnd(node, word.index + word[0].length);
+        if (range.getClientRects().length > 1) cut.push(word[0]);
+      }
+    }
+  }
+  return cut;
+}"""
+
+
+async def _values_stay_whole(page):
+    assert await page.evaluate(_CUT_WORDS) == [], "a value of the card is broken inside a word"
 
 
 @when("the administrator opens the AI settings of the organization")
@@ -205,7 +228,7 @@ def process_structured(world):
     _process(world, count=2)
 
 
-@then(parsers.parse('the invoice page proposes 312,00 EUR dated 2026-01-15 from "{vendor}" and the IBAN of the statement\'s insurer line at 1280 and 360 pixels'))
+@then(parsers.parse('the invoice page proposes 312,00 € dated 15.01.2026 from "{vendor}" and the IBAN of the statement\'s insurer line at 1280 and 360 pixels'))
 @browser_step
 async def scan_proposal(browser_world, vendor):
     page = browser_world.page
@@ -220,12 +243,17 @@ async def scan_proposal(browser_world, vendor):
         await _open_invoice(browser_world, browser_world.world.data["invoice"])
         await expect(page.get_by_text("Felder vorbereitet · bitte prüfen")).to_be_visible()
         await expect(_row(page, "Lieferant")).to_contain_text(vendor)
-        await expect(_row(page, "Rechnungsdatum")).to_contain_text("2026-01-15")
+        await expect(_row(page, "Rechnungsdatum")).to_contain_text("15.01.2026")
         await expect(_row(page, "Belegnummer")).to_contain_text("RE-2026-0042")
-        await expect(_row(page, "Bruttobetrag")).to_contain_text("312.00")
+        await expect(_row(page, "Bruttobetrag")).to_contain_text("312,00 €")
+        # The category by its label, not by its code; a period as a German date.
+        await expect(_row(page, "Kategorievorschlag")).to_contain_text("Gebaeudeversicherung")
+        await expect(_row(page, "Kategorievorschlag")).not_to_contain_text("GEBAEUDEVERSICHERUNG")
+        await expect(_row(page, "Leistungszeitraum von")).to_contain_text("01.01.2026")
         # The account a person reviews before paying is the one the statement shows the insurer's debit from.
         await expect(_row(page, "IBAN des Rechnungsstellers")).to_contain_text(_printed_iban(iban))
         await _fits_the_width(page)
+        await _values_stay_whole(page)
     await page.set_viewport_size(DESKTOP)
 
 
@@ -307,7 +335,7 @@ async def disabled_explanation(browser_world):
     await page.set_viewport_size(DESKTOP)
 
 
-@then(parsers.parse('both invoice pages propose 312,00 EUR dated 2026-01-15 from "{vendor}" and the IBAN of the statement\'s insurer line as E-Rechnung'))
+@then(parsers.parse('both invoice pages propose 312,00 € dated 15.01.2026 from "{vendor}" and the IBAN of the statement\'s insurer line as E-Rechnung'))
 @browser_step
 async def structured_proposals(browser_world, vendor):
     page = browser_world.page
@@ -316,8 +344,8 @@ async def structured_proposals(browser_world, vendor):
         await _open_invoice(browser_world, invoice_id)
         await expect(page.get_by_text("Als E-Rechnung erkannt")).to_be_visible()
         await expect(_row(page, "Lieferant")).to_contain_text(vendor)
-        await expect(_row(page, "Rechnungsdatum")).to_contain_text("2026-01-15")
-        await expect(_row(page, "Bruttobetrag")).to_contain_text("312.00")
+        await expect(_row(page, "Rechnungsdatum")).to_contain_text("15.01.2026")
+        await expect(_row(page, "Bruttobetrag")).to_contain_text("312,00 €")
         await expect(_row(page, "IBAN des Rechnungsstellers")).to_contain_text(_printed_iban(iban))
 
 

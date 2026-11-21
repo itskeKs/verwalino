@@ -10,7 +10,7 @@ Feature: The building-insurance invoice of Journey 2 reaches the organization's 
     And the organization has enabled the AI import with its own key and both models
     When the administrator uploads the scanned building-insurance invoice
     And the worker processes the scan with the offline models
-    Then the invoice page proposes 312,00 EUR dated 2026-01-15 from "Musterversicherung AG" and the IBAN of the statement's insurer line at 1280 and 360 pixels
+    Then the invoice page proposes 312,00 € dated 15.01.2026 from "Musterversicherung AG" and the IBAN of the statement's insurer line at 1280 and 360 pixels
     And the invoice page shows the usage of the reading and of the extraction model
     And the models received what the invoice prints, including the IBAN of the insurer's bank statement line
     And nothing is posted and the original can be opened
@@ -26,7 +26,7 @@ Feature: The building-insurance invoice of Journey 2 reaches the organization's 
     And the organization has enabled the AI import with its own key and both models
     When the administrator uploads the building-insurance invoice as XRechnung and as ZUGFeRD
     And the worker processes both without any model
-    Then both invoice pages propose 312,00 EUR dated 2026-01-15 from "Musterversicherung AG" and the IBAN of the statement's insurer line as E-Rechnung
+    Then both invoice pages propose 312,00 € dated 15.01.2026 from "Musterversicherung AG" and the IBAN of the statement's insurer line as E-Rechnung
     And no provider was built and no invoice page shows a usage
 
   Scenario: A provider failure keeps the original and the usage already incurred
