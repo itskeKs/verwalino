@@ -1,6 +1,6 @@
 # Feature status
 
-Current feature catalog of Verwalino by area. Status as of 2026-11-20, migration head `0196`.
+Current feature catalog of Verwalino by area. Status as of 2026-11-21, migration head `0197`.
 Status: ✅ implemented and reachable in the running app, 🟡 partial (reason given), ❌ not implemented.
 Short paths: `api/ services/ engine/ models/ workers/ core/` are under
 `backend/app/`, `pages/ components/ lib/` under `frontend/src/`; other paths are relative to the
@@ -9,7 +9,7 @@ history). Update this page in the same PR whenever a feature's status changes.
 
 The hosted instance uses the portable base through the [hosted deploy workflow](../DEPLOY.md#hosted-server).
 The optional [production app overlay](../DEPLOY.md#production-app-mode-and-mail-opt-in) enables the
-owner's mode and public-host configuration; mail also needs private SMTP settings. Declaration import and Q&A are enabled per organization in Einstellungen with its own provider key; the portable declaration worker is included. Automatic invoice OCR remains disabled in this stack.
+owner's mode and public-host configuration; mail also needs private SMTP settings. Declaration import and Q&A are enabled per organization in Einstellungen with its own provider key; the portable declaration worker is included. Automatic invoice processing (structured invoices and the model-assisted reading of scans) remains disabled in this stack: no invoice worker is started there.
 
 The bilingual public website has a separate image and main-push publish/sign/deploy workflow (#24),
 with an optional closed container behind Caddy. Operator enablement and the first live rollout are
@@ -100,7 +100,7 @@ The bounded provider transport/settings decision is described in [ADR 0014](adr/
 | Cost item entry/confirm | ✅ database values with German labels | `api/cost_entries.py`, `pages/CostEntriesPage.tsx`, `lib/costVocabulary.ts`, T02 |
 | BetrKV cost categories | ✅ fixed seeded set | `api/cost_categories.py`, migration `0005` |
 | Voucher upload, costs from voucher | ✅ | `api/invoice_documents.py`, `pages/InvoiceDocumentDetailPage.tsx` |
-| OCR, e-invoice XML | ✅ runs as the `invoice-worker` service in the production Compose file; automatic OCR is off in the portable stack | `workers/invoice_extraction.py`, `core/invoice_ocr.py`, `core/einvoice.py`, `docker-compose.prod.yml`, T10 |
+| Invoice extraction: e-invoice XML, model-assisted reading of scans | 🟡 runs as the `invoice-worker` service in the production Compose file (egress and session secret like the declaration worker); the portable and hosted stack starts no invoice worker, so invoices wait there for manual entry. XRechnung and ZUGFeRD are parsed locally and never sent; an unstructured PDF goes to the organization's reading and extraction models only after its AI import switch, key, models and an invoice-covering confirmation (text version 2; an installation without invoice processing shows and records version 1), re-read before every request, within per-invoice bounds (10 pages, 60,000 characters, 0.25 USD), metered in `invoice_model_call` (0197, not exported), with explanations and a usage card on the invoice; no Tesseract on this path | `workers/invoice_extraction.py`, `declarations/invoice_pipeline.py`, `core/invoice_pdf.py`, `core/einvoice.py`, `docker-compose.prod.yml`, [Invoice extraction](operations/invoice-extraction.md), [ADR 0017](adr/0017-model-document-reading-replaces-tesseract.md), T10, [#500](https://github.com/itskeKs/verwalino/issues/500) |
 | Inbox (Posteingang) with review chain | 🟡 `inbox-worker` configured in both Compose files (portable profile `inbox`); upload-to-cost scenario added; real-stack acceptance still requires a working ClamAV installation and signatures | [Operational flow](operations/inbox-review-chain.md), `workers/workflow_runner.py`, `pages/InboxPage.tsx`, [#35](https://github.com/itskeKs/verwalino/issues/35) |
 | Clarification cases (Klärungsfälle) | ✅ | `api/exceptions.py`, `pages/ExceptionsPage.tsx` |
 | GoBD: immutability, reversal, correction | ✅ | `services/cost_entry_service.py` |

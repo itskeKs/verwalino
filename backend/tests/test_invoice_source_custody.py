@@ -177,7 +177,7 @@ async def test_strict_standalone_invoice_is_private_to_uploader(migrator_session
             assert (await owner.get(f'/api/invoice-documents/{document}/content')).content.startswith(b'%PDF')
         monkeypatch.setattr(store, 'iter_chunks', lambda *a, **k: pytest.fail('Denied source reached byte streaming'))
         async with client(ids, 'actor') as other:
-            for suffix in ['', '/content', '/verify', '/processing-attempts']:
+            for suffix in ['', '/content', '/verify', '/processing-attempts', '/model-usage']:
                 result = await other.get(f'/api/invoice-documents/{document}{suffix}')
                 assert result.status_code == 404, (suffix,result.text)
             assert (await other.post(f'/api/invoice-documents/{document}/retry')).status_code == 404
@@ -284,7 +284,7 @@ async def test_unknown_standalone_history_cannot_be_reowned_or_versioned(migrato
     with pytest.raises(DBAPIError, match='immutable'):
         await read_value('UPDATE invoice_document SET uploaded_by=:clerk WHERE id=:document RETURNING id', ids, actor_key='clerk')
     async with synthetic_enforcement(scope_seed), client(ids, 'actor') as api:
-        for suffix in ['', '/content', '/verify', '/processing-attempts']:
+        for suffix in ['', '/content', '/verify', '/processing-attempts', '/model-usage']:
             assert (await api.get(f"/api/invoice-documents/{ids['document']}{suffix}")).status_code == 404
     assert await read_value('SELECT md5(to_jsonb(d)::text) FROM invoice_document d WHERE id=:document', ids) == before
 

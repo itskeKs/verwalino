@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { InvoiceDocumentDetailPage } from "./InvoiceDocumentDetailPage";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import * as endpoints from "../api/endpoints";
 import type { CostCategory, InvoiceDocument, Property } from "../api/types";
 
@@ -16,6 +16,7 @@ it("submits the source and retains the same key and form after uncertain failure
       attempts.push(init!);
       return attempts.length === 1 ? json({ detail: "Retry required" }, 503) : json({ id: "cost-1" }, 201);
     }
+    if (url.endsWith("/model-usage")) return json({ stages: [], total: null });
     if (url === "/api/cost-categories") return json([{ id: "cat-1", code: "WASSER", label: "Wasser", plan_version: 1, tenant_apportionability_default: "UMLAGEFAEHIG" }]);
     if (url === "/api/properties") return json([{ id: "property-1", name: "Testhaus" }]);
     if (url.startsWith("/api/accounting-scopes/page")) return json({ items: [{ id: "scope-1", label: "Mietbereich", scope_type: "MIET", valid_from: "2025-01-01", valid_to: null }], next_cursor: null });
@@ -47,6 +48,7 @@ it("shows a failed extraction as stored original and queues a retry without a co
   let retried = false;
   const fetchMock = vi.fn(async (url: string) => {
     if (url === "/api/cost-categories" || url === "/api/properties") return json([]);
+    if (url.endsWith("/model-usage")) return json({ stages: [], total: null });
     if (url.endsWith("/retry")) retried = true;
     return json({ id: "doc-1", chain_root_id: "doc-1", status: "active", released_at: null,
       cost_entry_id: null, version: 1, content_byte_size: 100, content_sha256: "a".repeat(64),
@@ -58,7 +60,7 @@ it("shows a failed extraction as stored original and queues a retry without a co
   </Routes></MemoryRouter>);
   expect(await screen.findByRole("status")).toHaveTextContent("Zeitlimit erreicht");
   expect(screen.getByText("Dokument ansehen")).toHaveAttribute("href", "/api/invoice-documents/doc-1/content");
-  fireEvent.click(screen.getByText("Texterkennung erneut starten"));
+  fireEvent.click(screen.getByText("Verarbeitung erneut starten"));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Gespeichert"));
   expect(fetchMock.mock.calls.some(([url]) => url === "/api/cost-entries")).toBe(false);
 });
@@ -82,6 +84,7 @@ it.each(["Objekt *", "Kategorie *", "Umlagefähigkeit *"])("explicitly labels th
   const category: CostCategory = { id: "cat-water", plan_version: 1, code: "WASSER", label: "Wasser", cost_group: "BEWIRTSCHAFTUNG", tenant_apportionability_default: "UMLAGEFAEHIG", owner_billing_relevant_default: true, owner_distribution_key_default: "MEA", tenant_distribution_key_default: null, reserve_relevant: false, legal_hint: null, sort_order: 1, is_active: true };
   vi.spyOn(api, "get").mockImplementation(async path => {
     if (path === "/api/invoice-documents/doc-label") return document as never;
+    if (path.endsWith("/model-usage")) return { stages: [], total: null } as never;
     if (path === "/api/cost-categories") return [category] as never;
     if (path === "/api/properties") return [property] as never;
     if (path.startsWith("/api/accounting-scopes/page?")) return { items: [], next_cursor: null } as never;
@@ -116,6 +119,7 @@ async function openInvoiceCostForPayload(categoryDefault = "UMLAGEFAEHIG") {
   const category: CostCategory = { id: "cat-water", plan_version: 1, code: "WASSER", label: "Wasser", cost_group: "UMLAGEFAEHIG", tenant_apportionability_default: categoryDefault, owner_billing_relevant_default: true, owner_distribution_key_default: "MEA", tenant_distribution_key_default: null, reserve_relevant: false, legal_hint: null, sort_order: 1, is_active: true };
   vi.spyOn(api, "get").mockImplementation(async path => {
     if (path === "/api/invoice-documents/doc-payload") return document as never;
+    if (path.endsWith("/model-usage")) return { stages: [], total: null } as never;
     if (path === "/api/cost-categories") return [category] as never;
     if (path === "/api/properties") return [property] as never;
     if (path.startsWith("/api/accounting-scopes/page?")) return { items: [{
@@ -183,4 +187,87 @@ it.each([
     tenant_apportionable: canonical, cost_category_id: "cat-water", accounting_scope_id: "scope-weg",
     source: "PDF_IMPORT", status: "draft_extracted", source_document_id: "doc-payload",
   });
+});
+
+
+// ---- what the screen says when the model-assisted processing did not produce a proposal (issue #500) ----
+
+function failedInvoice(status: string, code: string | null, over: object = {}): InvoiceDocument {
+  return { id: "doc-out", organization_id: "org", cost_entry_id: null, storage_backend: "LOCAL_FS", original_filename: "Scan.pdf", mime_type: "application/pdf",
+    content_byte_size: 100, content_sha256: "a".repeat(64), version: 1, supersedes_id: null, chain_root_id: "doc-out", status: "active", released_at: null,
+    released_by: null, retention_until: null, superseded_at: null, processing_status: status, processing_error_code: code, extraction_payload: null, ...over };
+}
+
+function openInvoice(document: InvoiceDocument, usage: unknown = { stages: [], total: null }) {
+  vi.spyOn(api, "get").mockImplementation(async path => {
+    if (path === `/api/invoice-documents/${document.id}`) return document as never;
+    if (path === `/api/invoice-documents/${document.id}/model-usage`) return usage as never;
+    if (path === "/api/cost-categories" || path === "/api/properties") return [] as never;
+    throw new Error(`Unexpected GET ${path}`);
+  });
+  render(<MemoryRouter initialEntries={[`/belege/${document.id}`]}><Routes>
+    <Route path="/belege/:docId" element={<InvoiceDocumentDetailPage />} />
+  </Routes></MemoryRouter>);
+}
+
+it.each([
+  ["unavailable", "ai_import_disabled", /nicht eingerichtet.*nichts \(mehr\) an einen KI-Anbieter übermittelt.*Verbrauch der KI-Verarbeitung.*Original bleibt erhalten/s],
+  ["unavailable", "ai_invoice_confirmation_missing", /noch nicht bestätigt.*Rechnungen an den KI-Anbieter/s],
+  ["unavailable", "organization_ai_budget_exceeded", /monatliche KI-Budget.*ausgeschöpft.*Verbrauch der KI-Verarbeitung/s],
+  ["failed", "model_reading_failed", /Dokumente einlesen.*nichts übernommen.*erneut Kosten/s],
+  ["failed", "model_extraction_failed", /Informationen extrahieren.*nichts übernommen.*erneut Kosten/s],
+  ["canceled", "source_no_longer_editable", /freigegeben oder durch eine neue Version ersetzt/],
+  ["timeout", "worker_lease_expired", /unterbrochen/],
+])("explains %s / %s on the invoice, keeps the original downloadable and shows no code", async (status, code, expected) => {
+  openInvoice(failedInvoice(status, code));
+  const text = await screen.findByText(expected);
+  expect(text).toBeVisible();
+  expect(document.body).not.toHaveTextContent(code);
+  expect(screen.getByText("Dokument ansehen")).toHaveAttribute("href", "/api/invoice-documents/doc-out/content");
+  expect(screen.queryByText(/Extrahierte Felder/)).not.toBeInTheDocument();
+});
+
+it("offers to start again after a cancellation caused by a lost permission, and not after a replaced original", async () => {
+  openInvoice(failedInvoice("canceled", "scope_permission_changed"));
+  expect(await screen.findByRole("button", { name: "Verarbeitung erneut starten" })).toBeVisible();
+  cleanup();
+  openInvoice(failedInvoice("canceled", "source_no_longer_editable", { status: "superseded" }));
+  await screen.findByText(/durch eine neue Version ersetzt/);
+  expect(screen.queryByRole("button", { name: "Verarbeitung erneut starten" })).not.toBeInTheDocument();
+});
+
+it("says nothing about a problem while the invoice waits and reports nothing as done", async () => {
+  openInvoice(failedInvoice("queued", null));
+  expect(await screen.findByRole("status")).toHaveTextContent("wartet auf Verarbeitung");
+  expect(screen.queryByText(/Original bleibt erhalten/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Verbrauch der KI-Verarbeitung/)).not.toBeInTheDocument();
+});
+
+it("shows the usage of a failed attempt on the invoice", async () => {
+  openInvoice(failedInvoice("failed", "model_extraction_failed"), {
+    stages: [{ stage: "READING", model: "gpt-5.4-mini", calls: 1, usage_status: "REPORTED", reported_input_tokens: 1000, reported_output_tokens: 200, input_tokens: 1000, output_tokens: 200, estimated_cost_usd: "0.00165" }],
+    total: { usage_status: "REPORTED", reported_input_tokens: 1000, reported_output_tokens: 200, input_tokens: 1000, output_tokens: 200, estimated_cost_usd: "0.00165" },
+  });
+  expect(await screen.findByRole("heading", { name: "Verbrauch der KI-Verarbeitung" })).toBeVisible();
+  expect(screen.getAllByText("0,00165 USD").length).toBe(2);
+});
+
+it("explains in German when starting again is refused, not with the server's English message", async () => {
+  openInvoice(failedInvoice("failed", "model_result_invalid"));
+  vi.spyOn(api, "post").mockRejectedValue(new ApiError(409, "Extraction retry budget exhausted; review the original manually"));
+  fireEvent.click(await screen.findByRole("button", { name: "Verarbeitung erneut starten" }));
+  expect(await screen.findByText(/schon dreimal versucht/)).toBeVisible();
+  expect(document.body).not.toHaveTextContent("retry budget");
+});
+
+it("shows no extracted fields for the empty stub of an upload, and the fields of a proposal an attempt made", async () => {
+  const stub = { vendor_name: null, invoice_date: null, document_number: null, gross_amount: null, vat_amount: null, vat_rate: null,
+    service_period_from: null, service_period_to: null, suggested_category_code: null, confidence: 0, field_confidences: {}, raw_text: null, is_einvoice: false, source_format: null };
+  openInvoice(failedInvoice("unavailable", "ai_import_disabled", { extraction_payload: stub }));
+  await screen.findByText(/nicht eingerichtet/);
+  expect(screen.queryByText("Extrahierte Felder")).not.toBeInTheDocument();
+  expect(screen.queryByText("nicht erkannt")).not.toBeInTheDocument();
+  cleanup();
+  openInvoice(failedInvoice("needs_review", "missing_fields", { extraction_payload: { ...stub, attempt_id: "attempt-1", vendor_name: "Mustermann Versicherungen AG" } }));
+  expect(await screen.findByText("Extrahierte Felder")).toBeVisible();
 });

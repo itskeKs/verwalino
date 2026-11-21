@@ -29,7 +29,10 @@ _FORBIDDEN_FIELDS = frozenset(
         "exception_message",
     }
 )
-_PASS_IDS = frozenset({"inventory", "extract_core", "extract_rules", "reconcile", "recheck", "read_page"})
+# ``extract_invoice`` is the invoice path's extraction stage (issue #500). Its calls are metered in
+# ``invoice_model_call``; none of its metadata is written to the declaration pass ledger, whose database validator
+# therefore does not list it.
+_PASS_IDS = frozenset({"inventory", "extract_core", "extract_rules", "reconcile", "recheck", "read_page", "extract_invoice"})
 _STAGES = frozenset({"provider", "schema_repair"})
 _REASONING_EFFORTS = frozenset({"default", "none", "low", "medium", "high", "xhigh", "max"})
 _ROUTE_ACTIONS = frozenset({"NONE", "VISION_RECHECK", "HUMAN_REVIEW"})

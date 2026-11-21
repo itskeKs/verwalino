@@ -12,10 +12,10 @@ untouched. Report cleanup in one line, never in a repository file.
 
 - Python with [uv](https://docs.astral.sh/uv/), Node 22, Docker (for the test database only).
 - Backend dependencies: `cd backend && uv sync --extra dev --extra ops --extra ocr`.
-  The local launcher `scripts/dev-local.sh` requires Poppler (`pdftoppm`) and
-  Tesseract with the German language pack (`deu`) for the invoice and inbox workers (the
-  declaration import renders pages with Poppler and reads them with a model: no Tesseract);
-  its worker health check aborts startup if any is missing.
+  The local launcher `scripts/dev-local.sh` requires Poppler (`pdftoppm`) for the invoice worker and, for
+  the inbox worker, also Tesseract with the German language pack (`deu`). The declaration import and the
+  invoice worker render pages with Poppler and read them with a model: no Tesseract. A worker health check
+  aborts its startup if a tool it needs is missing.
 - Browser setup (once, and after Playwright lock updates):
   `cd backend && uv run --locked --extra dev playwright install chromium`.
 - Frontend dependencies: `cd frontend && npm ci` (`make frontend-deps` does it when needed).

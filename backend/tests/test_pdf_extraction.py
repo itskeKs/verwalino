@@ -23,6 +23,10 @@ from decimal import Decimal
 import pytest
 
 from app.core.extraction import ExtractionResult, StubExtractor, set_extractor
+from app.declarations.fake_provider import FakeInvoiceExtractionProvider, synthetic_invoice_output
+from tests.ai_settings_support import configure_ai
+from tests.invoice_model_support import no_invoice_model_data as no_invoice_model_data
+from tests.test_invoice_model_extraction import Harness
 from app.core.pdf_extraction import (
     PdfTextExtractor,
     _parse_german_amount,
@@ -617,6 +621,7 @@ class TestEndToEndPdfUpload:
         return {**seed_data, "property_a_id": property_a_id}
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("no_invoice_model_data")
     async def test_upload_pdf_extracts_fields(self, client_a_admin, m2_seed, tmp_store):
         """Upload a synthetic PDF invoice -> extraction_payload populated."""
         # Register PdfTextExtractor for this test
@@ -642,12 +647,21 @@ class TestEndToEndPdfUpload:
 
         from app.core.db import get_worker_session_factory
         from app.workers.invoice_extraction import process_once
+        # The unstructured PDF is read by the organization's models (in-process fakes): the extraction model answers
+        # with what the invoice says.
+        configure_ai(m2_seed["org_a_id"], model="gpt-5.6-luna", document_model="gpt-5.4-mini", import_enabled=True)
+        models = Harness(extractor=FakeInvoiceExtractionProvider(output=synthetic_invoice_output(
+            vendor_name=("Grundsteuer-Amt Musterstadt", 0.9), invoice_date=("2025-03-10", 0.9), document_number=("GS-2025-001", 0.9),
+            gross_amount=("450.00", 0.9), vat_amount=("71.85", 0.9), vat_rate=("19", 0.9),
+            service_period_from=("2025-01-01", 0.9), service_period_to=("2025-12-31", 0.9),
+            suggested_category_code=("GRUNDSTEUER", 0.9))))
         for _ in range(100):
-            await process_once(get_worker_session_factory(), m2_seed["org_a_id"])
+            await process_once(get_worker_session_factory(), m2_seed["org_a_id"], providers=models)
             doc = (await client_a_admin.get(f"/api/invoice-documents/{doc['id']}")).json()
             if doc["processing_status"] not in {"queued", "running"}:
                 break
         assert doc["processing_status"] == "succeeded", doc["processing_error_code"]
+        assert "Grundsteuerbescheid" in models.extractor.calls[0].text
         # Check extraction_payload after durable processing.
         payload = doc["extraction_payload"]
         assert payload is not None
@@ -661,6 +675,7 @@ class TestEndToEndPdfUpload:
         set_extractor(StubExtractor())
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("no_invoice_model_data")
     async def test_upload_pdf_with_cost_entry_prefill(self, client_a_admin, m2_seed, tmp_store):
         """Upload PDF linked to a cost_entry, verify entry gets draft status."""
         set_extractor(PdfTextExtractor())
@@ -698,8 +713,11 @@ class TestEndToEndPdfUpload:
         assert doc["cost_entry_id"] == entry_id
         from app.core.db import get_worker_session_factory
         from app.workers.invoice_extraction import process_once
+        configure_ai(m2_seed["org_a_id"], model="gpt-5.6-luna", document_model="gpt-5.4-mini", import_enabled=True)
+        models = Harness(extractor=FakeInvoiceExtractionProvider(output=synthetic_invoice_output(
+            invoice_date=("2025-06-15", 0.9), gross_amount=("250.00", 0.9))))
         for _ in range(100):
-            await process_once(get_worker_session_factory(), m2_seed["org_a_id"])
+            await process_once(get_worker_session_factory(), m2_seed["org_a_id"], providers=models)
             doc = (await client_a_admin.get(f"/api/invoice-documents/{doc['id']}")).json()
             if doc["processing_status"] not in {"queued", "running"}:
                 break

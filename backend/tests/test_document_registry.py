@@ -122,6 +122,9 @@ async def test_registry_constraints_backfill_and_guarded_downgrade(migrator_sess
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
+                # The metering ledger of 0197 references the attempts' key that 0096 drops; newer migrations go first.
+                db.execute(text('TRUNCATE invoice_model_call'))
+                importlib.import_module('migrations.versions.0197_invoice_model_calls').downgrade()
                 importlib.import_module('migrations.versions.0160_shared_retention_deadlines').downgrade()
                 importlib.import_module('migrations.versions.0159_person_retention_bindings').downgrade()
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))

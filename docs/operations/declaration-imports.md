@@ -297,9 +297,10 @@ a scale is never silently supplemented or converted.
 
 In production, `backend` remains an internal Docker network: database,
 migration and bootstrap are exclusively there, the API additionally only in the
-shared Traefik network. Only the declaration worker is additionally attached
-to the project-local non-internal network `egress`; it is never attached to Traefik and
-no service publishes host ports. Its explicit Docker gateway
+shared Traefik network. Only the two workers that call the organization's provider, the declaration
+worker and (in the retained local production configuration) the invoice worker, are additionally attached
+to the project-local non-internal network `egress`; they are never attached to Traefik and
+no service publishes host ports. Their explicit Docker gateway
 priorities are `backend: 0` and `egress: 1`: the default route gateway is
 therefore in the egress network, and the database remains reachable exclusively via
 `backend`.

@@ -57,7 +57,7 @@ Screenshots show demo data.
   owner ledgers, payment booking and reversal, CSV/CAMT bank-file import with
   previews, match suggestions and split booking, and SEPA monthly rent files.
 - **Vouchers and costs:** cost entry and confirmation, BetrKV categories, voucher
-  upload and cost adoption, OCR and e-invoice XML extraction, clarification cases,
+  upload and cost adoption, e-invoice XML extraction and model-assisted reading of scanned invoices, clarification cases,
   and GoBD immutability, reversal, and correction.
 - **Operating and heating cost statements:** calculation, finalization, PDF and
   corrections; allocation keys, pro rata and vacancy; property batch drafts,
@@ -77,7 +77,7 @@ Usage notes and operational limits are linked in the documentation table below.
 
 ## AI features
 
-Two features use a language model. Both stay off until an organization
+Three features use a language model. All stay off until an organization
 administrator configures a provider in Einstellungen. There is no
 application-owned key and no automatic fallback to another provider.
 
@@ -88,6 +88,14 @@ application-owned key and no automatic fallback to another provider.
   model, reconciliation, local validation and one bounded vision recheck
   pass. It proposes units, co-ownership shares and rules. It is not an
   autonomous agent: the model has no tools and cannot change data.
+- **Invoice reading:** an invoice PDF without structured data (a scan or an
+  ordinary PDF) is read by the organization's two models: the reading model for pages
+  without a text layer, then the extraction model for the invoice fields and a
+  proposed cost category. XRechnung and ZUGFeRD invoices are read locally and
+  never sent. An invoice is sent only after the organization confirmed the
+  provider for invoices; every request counts towards the monthly limit and
+  an invoice shows its own usage. Nothing is posted without a person
+  ([invoice extraction](docs/operations/invoice-extraction.md)).
 - **Evidence and review:** every proposed value must quote the page it comes
   from. A quote that is not on the cited page blocks the draft, and conflicting
   readings are kept side by side. A successful run ends in `NEEDS_REVIEW`; only a human
@@ -158,7 +166,7 @@ exits 1 on blockers ([diagnostics](DEPLOY.md#portable-troubleshooting-start-with
 
 The portable stack includes the declaration worker; AI import and AI Q&A stay off until an
 organization administrator configures a provider (see [AI features](#ai-features)). It ships
-without SMTP and automatic invoice OCR; manual voucher processing works. An optional inbox worker (compose profile `inbox`)
+without SMTP and automatic invoice processing; manual voucher processing works. An optional inbox worker (compose profile `inbox`)
 processes intake documents locally; see [DEPLOY.md](DEPLOY.md#inbox-worker) and the
 [inbox review chain](docs/operations/inbox-review-chain.md). Database and documents live in named volumes:
 back up the private configuration, database, and documents together. A signed
@@ -173,7 +181,7 @@ Administrators can download a redacted diagnostics bundle via **Problem melden**
 
 ### Local development
 
-`scripts/dev-local.sh` needs Poppler and Tesseract with the German language pack; see [CONTRIBUTING.md](CONTRIBUTING.md#development-environment).
+`scripts/dev-local.sh` needs Poppler, and Tesseract with the German language pack for the inbox worker; see [CONTRIBUTING.md](CONTRIBUTING.md#development-environment).
 
 Install both dependency sets:
 

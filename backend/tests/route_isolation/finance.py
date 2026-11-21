@@ -197,6 +197,7 @@ PROBES: dict[str, Probe] = {
     "GET /api/invoice-documents": Probe(row("cost_entry", cost_entry_id="id"), status=200, because=NO_MATCH),
     "GET /api/invoice-documents/{doc_id}": Probe(row("invoice_document", doc_id="id")),
     "GET /api/invoice-documents/{doc_id}/content": Probe(row("invoice_document", doc_id="id")),
+    "GET /api/invoice-documents/{doc_id}/model-usage": Probe(row("invoice_document", doc_id="id")),
     "GET /api/invoice-documents/{doc_id}/processing-attempts": Probe(row("invoice_document", doc_id="id")),
     "GET /api/invoice-documents/{doc_id}/verify": Probe(row("invoice_document", doc_id="id")),
     "POST /api/invoice-documents/upload": Probe(row("cost_entry", cost_entry_id="id")),

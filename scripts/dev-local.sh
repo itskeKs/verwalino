@@ -82,7 +82,7 @@ cd "$ROOT"
 # 5. Start FastAPI backend on port 18000
 # ------------------------------------------------------------------
 cd "$BACKEND"
-echo "Checking invoice worker (database, storage, German OCR)..."
+echo "Checking invoice worker (database, storage, PDF renderer)..."
 uv run python -m app.workers.invoice_extraction --healthcheck
 echo "Checking inbox worker (database, storage, ClamAV signatures, German OCR)..."
 if uv run python -m app.workers.workflow_runner --healthcheck; then

@@ -39,6 +39,8 @@ from app.core.ai_models import MODEL_PRICES
 from app.declarations.prompts import (
     CORE_EXTRACTION_PROMPT,
     INVENTORY_PROMPT,
+    INVOICE_EXTRACTION_PROMPT,
+    INVOICE_PROMPT_VERSION,
     PAGE_READING_PROMPT,
     READING_PROMPT_VERSION,
     RECHECK_PROMPT,
@@ -47,6 +49,8 @@ from app.declarations.prompts import (
 )
 from app.declarations.provider import (
     DocumentInput,
+    INVOICE_PASS_ID,
+    InvoiceCategory,
     PageInput,
     PROVIDER_CONNECTION_ERROR,
     PROVIDER_IMAGE_INPUT_UNSUPPORTED,
@@ -69,9 +73,11 @@ from app.declarations.observability import (
     log_schema_validation_diagnostic,
 )
 from app.declarations.schemas import (
+    INVOICE_SCHEMA_VERSION,
     READING_SCHEMA_VERSION,
     CoreExtractionOutput,
     DocumentInventoryOutput,
+    InvoiceExtractionOutput,
     PageReadingOutput,
     PageTranscript,
     ReconciliationOutput,
@@ -210,7 +216,7 @@ def _convert_wire_kind_unions(schema: dict[str, Any]) -> dict[str, Any]:
     return schema
 
 
-@lru_cache(maxsize=6)
+@lru_cache(maxsize=8)
 def _sdk_output_type(output_type: type[T]) -> type[T]:
     if output_type is DocumentInventoryOutput:
         return output_type
@@ -509,6 +515,40 @@ class OpenAiDeclarationProvider:
         )
         return replace(result, output=transcript)
 
+    async def extract_invoice(
+        self,
+        documents: Sequence[DocumentInput],
+        *,
+        categories: Sequence[InvoiceCategory],
+        model: str,
+        max_output_tokens: int,
+    ) -> ProviderCallResult[InvoiceExtractionOutput]:
+        """Invoice extraction stage: the text of the invoice's pages in, its typed fields out.
+
+        ``model`` must be the model this provider is configured for: no other model is asked. The pages carry text
+        only; an invoice's page image is read by the reading stage, never sent here.
+        """
+        self._reject_unexpected_images(documents)
+        result = await self._run(
+            pass_id=INVOICE_PASS_ID,
+            model=model,
+            prompt=INVOICE_EXTRACTION_PROMPT,
+            content_blocks=self._invoice_content_blocks(documents, categories),
+            output_type=InvoiceExtractionOutput,
+            max_output_tokens=max_output_tokens,
+        )
+        return replace(result, output=InvoiceExtractionOutput.model_validate(result.output.model_dump()))
+
+    @classmethod
+    def _invoice_content_blocks(
+        cls, documents: Sequence[DocumentInput], categories: Sequence[InvoiceCategory]
+    ) -> list[dict[str, str]]:
+        listing = "\n".join(f"{category.code}: {category.label}" for category in categories)
+        return [
+            {"type": "input_text", "text": f"allowed_category_codes:\n{listing}"},
+            *cls._page_content_blocks(cls._sorted_pages(documents), include_images=False),
+        ]
+
     @staticmethod
     def _reading_content_blocks(page: PageImage) -> list[dict[str, str]]:
         if page.media_type != READING_IMAGE_MEDIA_TYPE:
@@ -533,6 +573,7 @@ class OpenAiDeclarationProvider:
         rules: RuleExtractionOutput | None = None,
         issue_codes: Sequence[str] = (),
         subject_keys: Sequence[str] = (),
+        categories: Sequence[InvoiceCategory] = (),
     ) -> ProviderReservationEstimate:
         """Return the exact local worst-case input for one logical request.
 
@@ -547,6 +588,15 @@ class OpenAiDeclarationProvider:
                 PAGE_READING_PROMPT,
                 self._reading_content_blocks(page),
                 PageReadingOutput,
+                max_output_tokens,
+            )
+        if method == "extract_invoice" and documents:
+            self._reject_unexpected_images(documents)
+            return self._request_reservation(
+                INVOICE_PASS_ID, self._primary_model,
+                INVOICE_EXTRACTION_PROMPT,
+                self._invoice_content_blocks(documents, categories),
+                InvoiceExtractionOutput,
                 max_output_tokens,
             )
         if method == "inventory":
@@ -1562,10 +1612,12 @@ class OpenAiDeclarationProvider:
         request_id: str | None = None,
     ) -> ProviderPassMetadata:
         observed = usage or ProviderUsage(0, 0, Decimal("0"), 1)
-        # The reading stage versions its prompt and schema apart from the extraction passes' settings.
+        # The reading and invoice stages version their prompts and schemas apart from the declaration passes' settings.
         prompt_version, schema_version = (
             (READING_PROMPT_VERSION, READING_SCHEMA_VERSION)
             if pass_id == READING_PASS_ID
+            else (INVOICE_PROMPT_VERSION, INVOICE_SCHEMA_VERSION)
+            if pass_id == INVOICE_PASS_ID
             else (self._prompt_version, self._schema_version)
         )
         reason_codes = (

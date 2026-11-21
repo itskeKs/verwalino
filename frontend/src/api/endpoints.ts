@@ -89,6 +89,7 @@ import type {
   CostEntryUpdate,
   CostEntryCorrectionCreate,
   InvoiceDocument,
+  InvoiceModelUsage,
   VerifyResult,
   SettlementRun,
   SettlementRunCreate,
@@ -761,6 +762,10 @@ export function listInvoiceDocuments(costEntryId?: string): Promise<InvoiceDocum
 
 export function getInvoiceDocument(id: string): Promise<InvoiceDocument> {
   return api.get<InvoiceDocument>(`/api/invoice-documents/${id}`);
+}
+
+export function getInvoiceModelUsage(id: string): Promise<InvoiceModelUsage> {
+  return api.get<InvoiceModelUsage>(`/api/invoice-documents/${id}/model-usage`);
 }
 
 export function uploadInvoiceDocument(

@@ -101,12 +101,17 @@ reports hidden row IDs or hidden counts. Password hashes, authentication/reset
 tokens, worker lease tokens and session generations are excluded, including
 credential fields in structured audit payloads. Global authentication/setup/signup
 and throttle tables are outside the export. So are the organization's AI settings (the key and
-the two model choices, „Dokumente einlesen“ and „Informationen extrahieren“) and the page
+the two model choices, „Dokumente einlesen“ and „Informationen extrahieren“), the metering
+ledger of the model-assisted invoice path (`invoice_model_call`, 0197: one row per model request of an
+unstructured invoice; it holds the usage that the invoice screen shows as „Verbrauch der KI-Verarbeitung“;
+the export inventory leaves it out and the retention catalog classifies it `delete`, so it is removed when
+the organization is erased) and the page
 transcripts of declaration imports (`declaration_page_reading`): the transcripts are working data
 copied from originals that the archive does contain. They are kept as long as the import's documents
 (until the organization is erased) and are not exported, so after a restore the evidence re-check of a
 scanned import in the recorded evaluation is `UNAVAILABLE`, and after an import an administrator
-chooses the models again. The model names of finished runs stay with the run
+chooses the models again. The same holds for the invoice ledger: after a restore an invoice shows no
+usage and its earlier requests no longer count towards the monthly total. The model names of finished runs stay with the run
 (`declaration_extraction_run.model_name`, `document_model_name`). Special levy allocation rows that a later change of
 ownership superseded are exported with their markers (`special_levy_allocation_supersession`), and an
 import restores both, so owner accounts, dunning and the settlement count the same rows after a

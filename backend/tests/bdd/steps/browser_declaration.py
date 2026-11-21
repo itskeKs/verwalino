@@ -49,7 +49,8 @@ def choose_declaration_models(browser_world):
         await b.page.get_by_role('button', name='Modelle laden', exact=True).click()
         await b.select('Dokumente einlesen', READING_MODEL)
         await b.select('Informationen extrahieren', EXTRACTION_MODEL)
-        await b.page.get_by_label('Teilungserklärungen importieren').check()
+        # The label also names invoices where the installation processes them; the local stack does not.
+        await b.page.get_by_label(re.compile('^Teilungserklärungen importieren')).check()
         async with b.page.expect_response(lambda r: r.request.method == 'PUT' and r.url.endswith('/ai-settings')) as saved:
             await b.page.get_by_role('button', name='KI-Einstellungen speichern', exact=True).click()
         assert (await saved.value).status == 200, await (await saved.value).text()
