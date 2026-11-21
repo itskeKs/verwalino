@@ -2360,6 +2360,18 @@ of the invoice including failed and ended ones. Usage the provider did not repor
 „Konservative Kostenschätzung“, a model without a price as „kein Preis bekannt“, never as 0,00 USD. It loads again when the
 status changes; if it cannot be loaded the card is replaced by one alert sentence and no amount.
 
+Screenshots come from the real-browser twin of Journey 2 on the test database with synthetic data
+(`features/journeys/invoice_model_processing.feature`; `VERWALINO_CAPTURE_DESIGN=1` writes the "after" files, the same
+run with `VERWALINO_CAPTURE_STATE=before` against the previous frontend the "before" files):
+
+| Invoice screen (#500) | Before, 1280 px | Before, 360 px | After, 1280 px | After, 360 px |
+|---|---|---|---|---|
+| Processing failed at the provider: explanation, retry, original kept | [view](docs/assets/design/invoice-processing/invoice-provider-failure-before-1280.png) | [view](docs/assets/design/invoice-processing/invoice-provider-failure-before-360.png) | [view](docs/assets/design/invoice-processing/invoice-provider-failure-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-provider-failure-after-360.png) |
+| AI evaluation not set up: explanation, nothing sent | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-before-1280.png) | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-before-360.png) | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-after-360.png) |
+| Scan read by both models: proposal and usage card below the actions | [view](docs/assets/design/invoice-processing/invoice-proposal-before-1280.png) | [view](docs/assets/design/invoice-processing/invoice-proposal-before-360.png) | [view](docs/assets/design/invoice-processing/invoice-proposal-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-proposal-after-360.png) |
+| Card „Verbrauch der KI-Verarbeitung“ (no such card before) | none | none | [view](docs/assets/design/invoice-processing/invoice-usage-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-usage-after-360.png) |
+| AI settings card: one switch for declarations and invoices, invoice paragraph | [view](docs/assets/design/invoice-processing/settings-card-before-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-before-360.png) | [view](docs/assets/design/invoice-processing/settings-card-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-after-360.png) |
+
 ### Declaration import: consumption per stage and failure explanations
 
 The card „Verbrauch je Importlauf“ (import screen and review screen, a kit `card` with an `h2`)

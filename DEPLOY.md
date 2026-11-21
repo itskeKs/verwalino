@@ -2004,9 +2004,9 @@ providers and libraries can put document fragments there, and no job payload. A 
 job reports again for each failed attempt with the same `job_id`. Timeouts, unsupported
 or invalid documents, integrity mismatches and failures before a job is claimed
 (database outage, organization discovery, readiness) stay in the logs and the job record.
-The invoice and inbox workers run only on the internal `backend` network because they
-handle untrusted documents. Their events arrive only if the DSN host is reachable from
-that network; otherwise only the API and the declaration worker (network `egress`) deliver.
+The inbox worker runs only on the internal `backend` network because it handles untrusted
+documents; its events arrive only if the DSN host is reachable from that network. The API, the
+declaration worker and the production invoice worker (network `egress`) deliver otherwise.
 
 For the hosted offer, use **self-hosted GlitchTip** as the Sentry-compatible
 tracker. Provision its project, access controls, retention and TLS separately,
@@ -2162,39 +2162,58 @@ No new configuration switch or provider setting is introduced.
 
 The `invoice-worker` service in `docker-compose.prod.yml` belongs to the owner's
 local production configuration and is covered by
-`tests/test_invoice_extraction_worker.py`. It adds no migration of its own.
-The portable stack, including the hosted server, does not start this worker;
-automatic invoice extraction is disabled there.
+`tests/test_invoice_extraction_worker.py`. It adds no migration of its own (the ledger of its model
+requests is revision 0197).
+**The portable stack, including the hosted server, does not start this worker; automatic invoice
+extraction is disabled there** (`HV_INVOICE_EXTRACTION_ENABLED: "false"`), so an invoice uploaded to a
+portable installation is saved and waits for manual entry. Structured invoices and the models are therefore
+processed only where this service runs.
 
 The service uses the same immutable app image and existing `documents` volume,
-mounted **read-only**. It receives only `HV_DATABASE_URL_WORKER` (`app_worker`),
+mounted **read-only**. It receives `HV_DATABASE_URL_WORKER` (`app_worker`),
 local storage/worker settings and `HV_INVOICE_EXTRACTION_ENABLED` (default true,
-shared with the API). It has only the internal `backend` network: no published
-ports, Traefik, provider egress/key, web/review connection or migration credential.
+shared with the API), and, to call the organization's provider like the declaration worker,
+`HV_SESSION_SECRET` (the organization's key is stored encrypted under it) and `HV_DATA_REGION`. It joins
+the networks of the declaration worker and no others: `backend` for the database and the non-internal
+`egress` network for provider HTTPS, with the same gateway priorities, so its egress is not wider than the
+declaration worker's. No provider key is configured on the service: the key is the organization's, read from
+the database and used only when the organization's AI import switch, confirmed key and models allow it
+(structured invoices never reach a provider). It has no published ports, Traefik, web/review connection or
+migration credential.
 Non-root/read-only execution, dropped capabilities, bounded tmpfs/memory/processes
 and `no-new-privileges` remain enforced. Init plus a 130-second stop grace period
 allow the bounded extractor to drain on SIGTERM; a canceled job retains its lease
 for the existing fenced recovery path. Original bytes are never rewritten.
 
 `python -m app.workers.invoice_extraction --healthcheck` checks the isolated worker
-role, queue access, readable document storage, temporary storage and German local
-OCR without consuming jobs or calling a provider. Startup fails closed if the
+role, queue access, readable document storage, temporary storage and the PDF renderer
+(`pdftoppm`) without consuming jobs or calling a provider; it needs **no Tesseract**. Startup fails closed if the
 check fails. Normal processing discovers organization IDs each polling round;
 source/principal RLS checks still apply to every claim and completion. A failure
 in one organization is logged without source content and does not stop the others.
 `--organization UUID` may be repeated to restrict processing; `--once` returns
 nonzero on an iteration failure. Retry/lease budgets and human review are unchanged.
 
-For a **local synthetic test only**, use the launcher and required OCR dependencies
+**What an invoice costs and when it is sent.** An unstructured PDF is sent to the organization's provider
+only when its AI import switch, key and extraction model allow it and its provider confirmation names invoices (text
+version 2; an organization that confirmed version 1 keeps its declaration import and is asked once more for invoices,
+and nothing is sent until then). A scan also needs the reading model „Dokumente einlesen“. Per attempt an invoice is
+bounded to 10 pages, 60,000 characters, 300,000 input and 64,000 output tokens and 0.25 USD (documented constants, no
+keys), every request is reserved and settled in `invoice_model_call` and counts towards the organization's monthly
+limit, and a retry reads and pays for the pages again because page transcripts are not stored. The ledger is not part of
+the organization export. See [invoice extraction](docs/operations/invoice-extraction.md).
+
+For a **local synthetic test only**, use the launcher and the dependencies
 documented in the [development environment setup](CONTRIBUTING.md#development-environment).
 
 In another terminal run `node scripts/acceptance/t10_invoice_worker_browser.cjs`
 with `HV_PLAYWRIGHT_PACKAGE`/`HV_CHROMIUM_EXECUTABLE` pointing to installed tools
 when necessary. It logs in as the synthetic local test admin, uploads a generated
-PDF through the UI, waits for real worker extraction and checks **119.00 EUR /
-2025-06-01**, unchanged source identity and no cost adoption/release. It blocks
-external requests and non-login/upload writes. `HV_T10_INVOICE_PDF` may point to a
-synthetic image-only PDF with those exact values to exercise OCR instead. No
+structured invoice (XRechnung XML) through the UI, waits for real worker extraction and checks **119.00 EUR /
+2025-06-01**, unchanged source identity and no cost adoption/release. A structured invoice needs no provider, key or
+model; reading an unstructured PDF does and is covered by the offline-provider twin
+([invoice_model_processing.feature](features/journeys/invoice_model_processing.feature)). The script blocks
+external requests and non-login/upload writes. No
 extraction override, API/SQL fixture write or saved report is used by the check.
 
 ## Optional document SMTP (T47; no deployment authorization)
@@ -2415,11 +2434,12 @@ service; import and Q&A stay off for an organization until its administrator
 enables them in Einstellungen. In the retained local production configuration,
 PostgreSQL stays on the internal `backend` network. Migration and bootstrap
 services attach only there; the API additionally attaches to the external
-`traefik` proxy network. The declaration worker alone additionally attaches to
+`traefik` proxy network. Only the two workers that call the organization's provider, the
+declaration worker and the invoice worker, additionally attach to
 the project-local, non-internal `egress` network, without proxy attachment or a
-published host port. Its explicit Docker gateway priorities are `backend: 0`
+published host port. Their explicit Docker gateway priorities are `backend: 0`
 and `egress: 1`, keeping database traffic private and routing external traffic
-through the egress gateway.
+through the egress gateway. The inbox worker stays on `backend` only.
 
 That worker uses the fixed `https://api.openai.com/v1` SDK origin. The extraction
 harness has no URL, browser or tool capability: provider calls use structured
@@ -2669,8 +2689,8 @@ and the same memory and CPU limits: no new service, port or volume. The worker r
 a time with Poppler (`pdftoppm`) and checks PDFs with qpdf; **it no longer needs Tesseract or the
 German language pack**, and its healthcheck (`python -m app.workers.declaration_import
 --healthcheck`) no longer asks for them (it checks qpdf, `pdftoppm`, the database role and the
-document storage). The image keeps Tesseract for the invoice and inbox workers until their paths
-read with a model too (#500, #501, #502). The reading model must accept image input: otherwise
+document storage). The invoice worker no longer needs it either (#500). The image keeps Tesseract for the
+inbox worker until its path reads with a model too (#501, #502). The reading model must accept image input: otherwise
 the job ends with `PROVIDER_IMAGE_INPUT_UNSUPPORTED` and the import screen says so in German;
 the original is kept and nothing is applied. Reading and extraction are both metered and count
 together against the per-import limits (`HV_DECLARATION_MAX_*`; they default to 2,500,000 input tokens,
@@ -2682,7 +2702,9 @@ pages in high resolution can exceed it before the page limit is reached.
 
 **Version defaults.** The extraction prompt version is `declaration-v4` and the harness version
 `4` (compatible endpoints `8`, Anthropic fingerprint `v5`); the reading prompt is `reading-v1`
-with schema `reading-1`. `docker-compose.prod.yml` and `.env.example` carry the new defaults.
+with schema `reading-1`; the invoice extraction prompt is `invoice-v1` with schema `invoice-1`, and a proposal
+that the models made carries the processor version `invoice-model-v1` (the deterministic parsers keep
+`invoice-local-v1`). The reading and invoice versions are constants, not settings. `docker-compose.prod.yml` and `.env.example` carry the new defaults.
 A protected env file that still pins `HV_DECLARATION_PROMPT_VERSION=declaration-v3` or
 `HV_DECLARATION_HARNESS_VERSION=3` keeps recording the old labels on new runs: remove the pins
 when upgrading.

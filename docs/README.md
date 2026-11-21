@@ -13,7 +13,7 @@ Start with the project overview, then choose a page for the task at hand.
 | --- | --- |
 | [Deployment](../DEPLOY.md) | Portable installation, hosted-server operation, worker setup, backup, and release boundaries. |
 | [Declaration imports](operations/declaration-imports.md) | Reviewable extraction, building knowledge, workers, privacy, and local evaluation. |
-| [Invoice extraction](operations/invoice-extraction.md) | Upload review, extraction queue, OCR limits, retry, and rollback. |
+| [Invoice extraction](operations/invoice-extraction.md) | Upload review, the local structured-invoice path and the organization's two models for scans, opt-in, bounds, usage, retry cost, and rollback. |
 | [Invoice/cost linking](operations/invoice-cost-linking.md) | Source-link reconciliation, immutable originals, and rollout constraints. |
 
 | Design documents (June 2026, pre-implementation) | Purpose |
