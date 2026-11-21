@@ -265,9 +265,13 @@ services:
         condition: service_healthy
     environment:
       HV_WORKER_KIND: invoice_extraction
+      # The organization's provider key is stored encrypted under this secret; a worker that reads an unstructured
+      # invoice with the organization's models decrypts it, as the declaration worker does.
+      HV_SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in the protected env file or invoking environment}
       HV_DATABASE_URL_WORKER: postgresql+asyncpg://app_worker:${APP_WORKER_PASSWORD}@db:5432/hausverwaltung
       HV_DOCUMENT_STORAGE_ROOT: /data/documents
       HV_INVOICE_EXTRACTION_ENABLED: ${HV_INVOICE_EXTRACTION_ENABLED:-true}
+      HV_DATA_REGION: ${HV_DATA_REGION:-EU}
       HV_ERROR_TRACKING_DSN: ${HV_ERROR_TRACKING_DSN:-}
       HV_ERROR_TRACKING_ENVIRONMENT: ${HV_ERROR_TRACKING_ENVIRONMENT:-selfhost}
     volumes:
@@ -296,7 +300,12 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - backend
+      # The same networks as the declaration worker, so that a request to the organization's provider takes the same
+      # route: database through backend, provider HTTPS through the non-internal egress network.
+      backend:
+        gw_priority: 0
+      egress:
+        gw_priority: 1
     labels:
       io.verwalino.release: ${HV_RELEASE_ID:?set HV_RELEASE_ID to the reviewed release identifier}
 
@@ -360,9 +369,10 @@ volumes:
 networks:
   backend:
     internal: true
-  # Only the declaration worker joins this non-internal network so it can
-  # resolve and reach the fixed OpenAI API origin. It is deliberately not the
-  # shared Traefik network and no host ports are published.
+  # Only the two workers that call the organization's provider (the declaration
+  # worker and the invoice worker) join this non-internal network so they can
+  # resolve and reach the provider origin. It is deliberately not the shared
+  # Traefik network and no host ports are published.
   egress:
     internal: false
   traefik:
