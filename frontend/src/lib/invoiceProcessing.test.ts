@@ -4,7 +4,7 @@ import { INVOICE_PROCESSING_MESSAGES, invoiceProcessingMessage, INVOICE_STATUS_L
 // Every reason an invoice attempt can end with (issue #500); the backend test test_invoice_reason_texts.py keeps this
 // list and the map in step with the codes the backend stores.
 const MODEL_PATH = ["ai_import_disabled", "ai_invoice_confirmation_missing", "ai_document_model_missing", "ai_key_unreadable",
-  "organization_ai_budget_exceeded", "invoice_page_limit", "invoice_text_limit", "invoice_ai_limit", "model_reading_failed",
+  "ai_settings_changed", "organization_ai_budget_exceeded", "invoice_page_limit", "invoice_text_limit", "invoice_ai_limit", "model_reading_failed",
   "model_extraction_failed", "model_result_invalid", "lease_lost", "render_timeout", "render_unavailable", "image_pixel_limit"];
 
 it.each(MODEL_PATH)("explains the reason %s in German with what happened and what to do", code => {
@@ -30,7 +30,7 @@ it("says that the original is kept wherever nothing was applied by a model", () 
 });
 
 it("warns that starting again is paid again only where the models were reached", () => {
-  for (const code of ["model_reading_failed", "model_extraction_failed", "model_result_invalid", "lease_lost"]) {
+  for (const code of ["model_reading_failed", "model_extraction_failed", "model_result_invalid", "lease_lost", "ai_settings_changed"]) {
     expect(INVOICE_PROCESSING_MESSAGES[code], code).toMatch(/verursacht erneut Kosten/);
   }
   for (const code of ["ai_import_disabled", "ai_invoice_confirmation_missing", "invoice_page_limit"]) {

@@ -5,8 +5,9 @@ layer is used as it is), then the organization's extraction model fills the nine
 proposes one of the seeded cost categories. The models read and interpret: there is no OCR step and no pattern
 matching on what they read. The result is a proposal that a person reviews before anything is posted.
 
-Every request is reserved before it leaves, under the organization's budget lock, its opt-in (read again for each
-request: a run stops before the next request when the organization withdraws it) and its monthly limit, and settled
+Every request is reserved before it leaves, under the organization's budget lock, its opt-in and destination (read again
+for each request: a run stops before the next request when the organization withdraws the opt-in or replaces the provider,
+endpoint, key or a model the run started with) and its monthly limit, and settled
 with the usage it consumed (``invoice_model_call``, migration 0197), in short transactions of its own. The
 requests run outside any transaction. The calls of one extraction attempt are bounded by the constants below.
 """
@@ -52,6 +53,7 @@ from app.repositories.organization_ai_settings_repo import OrganizationAiSetting
 from app.services.ai_settings_service import (
     INVOICE_AI_DOCUMENT_MODEL_MISSING,
     INVOICE_AI_KEY_UNREADABLE,
+    INVOICE_AI_SETTINGS_CHANGED,
     AiKeyUnreadableError,
     effective_ai_settings,
     invoice_import_blocker,
@@ -381,13 +383,20 @@ class InvoiceModelPipeline:
 
         The same decision the worker takes before the run (``invoice_import_blocker``), under the budget lock that
         every settings save holds, so a switch turned off or a confirmation lost stops the run before its next request.
+        So does a destination or model that is no longer the one the run was built from: the clients keep the provider,
+        endpoint, key and models of the start, and a replacement is the organization's word for the next request, which
+        a new start picks up.
         """
         await OrganizationAiSettingsRepository(session, self._org_id).lock_budget()
         try:
             effective = await effective_ai_settings(session, self._org_id)
         except AiKeyUnreadableError:
             return INVOICE_AI_KEY_UNREADABLE
-        return invoice_import_blocker(effective, needs_reading=self._needs_reading)
+        if (blocker := invoice_import_blocker(effective, needs_reading=self._needs_reading)) is not None:
+            return blocker
+        if _destination(effective) != _destination(self._effective):
+            return INVOICE_AI_SETTINGS_CHANGED
+        return None
 
     async def _settle(self, call_id: uuid.UUID, input_tokens: int, output_tokens: int, cost_usd: Decimal,
                       complete: bool, *, error_code: str | None) -> None:
@@ -400,6 +409,15 @@ class InvoiceModelPipeline:
 
         await retry_worker_completion(settle)
 
+
+
+def _destination(effective) -> tuple:
+    """Where a request goes and with what: provider, endpoint, key, reading model and extraction model.
+
+    The key is the decrypted one the settings read already carries; a secret compares by its value, and saving the same
+    key again (a new ciphertext) is no change.
+    """
+    return (effective.provider, effective.base_url, effective.api_key, effective.document_model, effective.model)
 
 
 def _allowance(tokens: int) -> SimpleNamespace:

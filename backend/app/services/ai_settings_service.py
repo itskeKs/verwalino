@@ -36,6 +36,7 @@ INVOICE_AI_IMPORT_DISABLED = 'ai_import_disabled'
 INVOICE_AI_DOCUMENT_MODEL_MISSING = 'ai_document_model_missing'
 INVOICE_AI_KEY_UNREADABLE = 'ai_key_unreadable'
 INVOICE_AI_CONFIRMATION_MISSING = 'ai_invoice_confirmation_missing'
+INVOICE_AI_SETTINGS_CHANGED = 'ai_settings_changed'
 
 def confirmation_text_version() -> str:
     """The version of the confirmation text this installation shows, and so the one a new confirmation records."""

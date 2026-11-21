@@ -776,6 +776,62 @@ async def test_a_switch_turned_off_while_the_last_page_is_read_stops_before_the_
     assert no_proposal(document) and [row.stage for row in await ledger(org)] == ["read_page"]
 
 
+# ---- the destination and the models are read again before every request ------------------------------------
+
+# What an administrator can replace while an invoice is being read: the settings a run starts with and what they become,
+# each saved as the settings screen would hold it (the key and the confirmation of the destination included), so that
+# the organization still allows everything, only not to the destination and models the run was built from.
+REPLACEMENTS = {
+    "provider": ({}, {"provider": "anthropic"}),
+    "base-url": ({"provider": "openai_compatible", "base_url": "https://llm-a.example.test/v1"}, {"base_url": "https://llm-b.example.test/v1"}),
+    "key": ({}, {"api_key": "another-synthetic-key"}),
+    "extraction-model": ({}, {"model": "gpt-5.6-sol"}),
+    "reading-model": ({}, {"document_model": "gpt-5.4"}),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("what", list(REPLACEMENTS))
+async def test_a_destination_or_model_replaced_during_the_run_stops_it_before_the_next_request(worker_tenant, what):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    started, replacement = REPLACEMENTS[what]
+    ai(org, **started)
+    reader = DuringRead(lambda: ai(org, **replacement), usage=READING_USAGE)
+    harness = Harness(reader=reader)
+    original = scan_pdf(3)
+    doc = await upload(api, original)
+    await process(org, harness)
+    # The page that was out when the settings were replaced is paid and recorded; no further page, no extraction request,
+    # and the replacement destination never received one either.
+    assert [read.pdf_page for read in reader.reads] == [1] and harness.extractor.calls == []
+    assert len(harness.built) == 1
+    document, attempts = await state(api, doc)
+    assert [(a["status"], a["error_code"]) for a in attempts] == [("unavailable", "ai_settings_changed")]
+    assert (document["processing_status"], document["processing_error_code"]) == ("unavailable", "ai_settings_changed")
+    assert no_proposal(document) and document["cost_entry_id"] is None
+    assert (await api.get(f"/api/invoice-documents/{doc['id']}/content")).content == original
+    assert [(row.stage, row.pdf_page, row.status) for row in await ledger(org)] == [("read_page", 1, "SETTLED")]
+    assert Decimal((await usage(api, doc))["total"]["estimated_cost_usd"]) == Decimal("0.00165") == await monthly(org)
+
+
+@pytest.mark.asyncio
+async def test_saving_the_same_settings_again_during_the_run_does_not_stop_it(worker_tenant):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org)
+    # The key is encrypted again on every save (a different token for the same key), and the run goes on.
+    reader = DuringRead(lambda: ai(org), usage=READING_USAGE)
+    harness = Harness(reader=reader, extractor=FakeInvoiceExtractionProvider(usage=EXTRACTION_USAGE))
+    doc = await upload(api, scan_pdf(2))
+    await process(org, harness)
+    assert [read.pdf_page for read in reader.reads] == [1, 2] and len(harness.extractor.calls) == 1
+    document, attempts = await state(api, doc)
+    assert [(a["status"], a["error_code"]) for a in attempts] == [("succeeded", None)]
+    assert document["processing_status"] == "succeeded" and document["extraction_payload"]["gross_amount"] == "312.00"
+    assert [row.stage for row in await ledger(org)] == ["read_page", "read_page", "extract_invoice"]
+
+
 # ---- the text bound stops the reading ----------------------------------------------------------------------
 
 @pytest.mark.asyncio

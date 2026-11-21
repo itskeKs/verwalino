@@ -2358,7 +2358,9 @@ that starting again „verursacht erneut Kosten“. There is no text while the i
 text shows “Die Verarbeitung konnte nicht abgeschlossen werden. …”, never the code. The organization's consent is read again
 before every request, so the four setup reasons (switch off, confirmation, reading model, key) can also end an invoice that is
 already being read: their text says „Es wird nichts (mehr) an einen KI-Anbieter übermittelt“ and points to the usage card for
-what was requested before, instead of claiming that nothing was sent. „Dokument ansehen“ stays in every state.
+what was requested before, instead of claiming that nothing was sent. So does a provider, endpoint, key or model that was replaced
+during the run (`ai_settings_changed`): its text says the settings were changed while the invoice was being read, that the
+current settings apply to a new start and that starting again „verursacht erneut Kosten“. „Dokument ansehen“ stays in every state.
 The retry button reads „Verarbeitung erneut starten“ and is also offered after a cancellation caused by a lost permission; a
 refused start (all three attempts used) is explained in German, not with the server's message.
 

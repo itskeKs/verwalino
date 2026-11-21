@@ -62,6 +62,14 @@ confirmation that names invoices, removing the reading model of a scan or making
 is being read therefore stops it before its next request, with the code above; what was already requested stays
 in the ledger and on the usage card.
 
+**A replaced destination or model is read again too.** The clients of a run keep the provider, endpoint, key,
+reading model and extraction model it started with. The same re-read compares them with what the organization holds
+now; if any of the five differs (a different provider, a different base URL, a replaced key, another reading or
+extraction model), the run stops before its next request and nothing is sent to either destination. The attempt ends
+`unavailable` with `ai_settings_changed`; the requests already made stay in the ledger and on the usage card. Saving the
+same settings again is no change (the key is compared by its value, not by its stored token). A new start reads the
+document again, costs again and uses the current settings.
+
 **What changed with this path.** Without the opt-in, a PDF with a text layer no longer gets a locally read
 proposal: it ends `unavailable` with `ai_import_disabled` (or `ai_invoice_confirmation_missing`), as a scan does, and the
 amounts are entered by hand. Earlier releases read such a PDF with a local pattern matcher. Structured invoices

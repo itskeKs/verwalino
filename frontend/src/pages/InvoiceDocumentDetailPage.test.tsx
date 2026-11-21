@@ -213,6 +213,7 @@ function openInvoice(document: InvoiceDocument, usage: unknown = { stages: [], t
 it.each([
   ["unavailable", "ai_import_disabled", /nicht eingerichtet.*nichts \(mehr\) an einen KI-Anbieter übermittelt.*Verbrauch der KI-Verarbeitung.*Original bleibt erhalten/s],
   ["unavailable", "ai_invoice_confirmation_missing", /noch nicht bestätigt.*Rechnungen an den KI-Anbieter/s],
+  ["unavailable", "ai_settings_changed", /Einstellungen.*geändert.*nichts \(mehr\) an einen KI-Anbieter übermittelt.*Verbrauch der KI-Verarbeitung.*nichts übernommen.*aktuellen Einstellungen.*erneut Kosten/s],
   ["unavailable", "organization_ai_budget_exceeded", /monatliche KI-Budget.*ausgeschöpft.*Verbrauch der KI-Verarbeitung/s],
   ["failed", "model_reading_failed", /Dokumente einlesen.*nichts übernommen.*erneut Kosten/s],
   ["failed", "model_extraction_failed", /Informationen extrahieren.*nichts übernommen.*erneut Kosten/s],
@@ -234,6 +235,11 @@ it("offers to start again after a cancellation caused by a lost permission, and 
   openInvoice(failedInvoice("canceled", "source_no_longer_editable", { status: "superseded" }));
   await screen.findByText(/durch eine neue Version ersetzt/);
   expect(screen.queryByRole("button", { name: "Verarbeitung erneut starten" })).not.toBeInTheDocument();
+});
+
+it("offers to start again after the AI settings were changed during the processing", async () => {
+  openInvoice(failedInvoice("unavailable", "ai_settings_changed"));
+  expect(await screen.findByRole("button", { name: "Verarbeitung erneut starten" })).toBeVisible();
 });
 
 it("says nothing about a problem while the invoice waits and reports nothing as done", async () => {
