@@ -803,6 +803,8 @@ export interface ExtractionPayload {
   service_period_from: string | null;
   service_period_to: string | null;
   suggested_category_code: string | null;
+  /** The issuer's IBAN as a valid, space-free value; absent on a proposal that was stored before the field existed. */
+  vendor_iban?: string | null;
   confidence: number;
   field_confidences: Record<string, number>;
   raw_text: string | null;

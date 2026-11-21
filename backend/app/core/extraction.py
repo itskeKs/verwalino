@@ -44,6 +44,10 @@ class ExtractionResult:
     # "ZUGFERD"). The frontend can set cost_entry.source='E_INVOICE' from this.
     is_einvoice: bool = False
     source_format: str | None = None
+    # The payee's validated IBAN of a structured invoice. It is a field of the invoice worker's proposal only
+    # (``core/einvoice.invoice_proposal``) and is not part of ``to_dict()``: the inbox's database function fixes
+    # that shape.
+    vendor_iban: str | None = None
 
     def to_dict(self) -> dict:
         """Serialize to a dict suitable for JSONB storage."""

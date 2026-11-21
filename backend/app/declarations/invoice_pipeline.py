@@ -99,7 +99,8 @@ MODEL_EXTRACTION_FAILED = "model_extraction_failed"
 MODEL_RESULT_INVALID = "model_result_invalid"
 LEASE_LOST = "lease_lost"
 
-# The weight of each field in the overall confidence that the review panel shows next to the proposal.
+# The weight of each field in the overall confidence that the review panel shows next to the proposal. The vendor's
+# IBAN is a tenth field of the proposal that no booking depends on: it is shown for review and has no weight.
 _FIELD_WEIGHTS = {
     "invoice_date": Decimal("0.20"), "gross_amount": Decimal("0.30"), "document_number": Decimal("0.10"),
     "vat_rate": Decimal("0.05"), "vat_amount": Decimal("0.05"), "service_period_from": Decimal("0.10"),
@@ -460,7 +461,7 @@ def _proposal(output: InvoiceExtractionOutput, category_codes: set[str], raw_tex
     """The invoice proposal of the extraction model's typed fields; a value that is not stated has confidence 0."""
     values: dict[str, str | None] = {}
     confidences: dict[str, float] = {}
-    for name in _FIELD_WEIGHTS:
+    for name in (*_FIELD_WEIGHTS, "vendor_iban"):
         field = getattr(output, name)
         value = field.value
         if name == "suggested_category_code" and value not in category_codes:

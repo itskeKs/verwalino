@@ -27,7 +27,7 @@ The worker first inspects the original locally (`core/invoice_pdf.py`). A valid 
 (XRechnung, or a PDF with embedded ZUGFeRD/Factur-X data) goes to the deterministic parser and never
 to a model. An unstructured PDF goes to the organization's two models (ADR 0017, `declarations/invoice_pipeline.py`):
 pages without a text layer are rendered with Poppler and read by the document reading model, then the
-extraction model fills the nine invoice fields and proposes one cost category. There is no Tesseract step
+extraction model fills the ten invoice fields (the vendor's IBAN among them, kept only when valid) and proposes one cost category. There is no Tesseract step
 or fallback in this path. The path is opt-in per organization (AI import switch, key, models and a provider
 confirmation that names invoices). Each request is reserved before it leaves and settled in the ledger
 `invoice_model_call` (0197), outside any transaction, within documented per-invoice bounds (10 pages, 60,000

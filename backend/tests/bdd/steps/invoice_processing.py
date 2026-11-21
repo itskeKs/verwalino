@@ -10,7 +10,7 @@ from pytest_bdd import given, parsers, then, when
 
 from app.core.db import get_worker_session_factory
 from app.core.storage import LocalFsDocumentStore, set_store
-from app.declarations.fake_provider import FakeDocumentReadingProvider, FakeInvoiceExtractionProvider
+from app.declarations.fake_provider import FakeDocumentReadingProvider, FakeInvoiceExtractionProvider, synthetic_invoice_output
 from app.declarations.invoice_pipeline import InvoiceProviders
 from app.declarations.provider import ProviderFailure, ProviderUsage
 from app.workers.invoice_extraction import process_once
@@ -105,6 +105,16 @@ def upload_and_fail(world):
     _process(world, reader=FakeDocumentReadingProvider(usage=READING_USAGE), extractor=FakeInvoiceExtractionProvider(failure=failure))
 
 
+@when('the administrator uploads a scanned building-insurance invoice whose IBAN the extraction model misread and the worker processes it')
+def upload_with_misread_iban(world):
+    response = world.act('POST', '/api/invoice-documents/upload', files={'file': ('versicherung.pdf', _scan(), 'application/pdf')})
+    assert response.status_code == 201, world.describe_response()
+    world.data['invoice'] = response.json()['id']
+    # One digit off in the check digits: what a model that misreads a character answers.
+    misread = synthetic_invoice_output(vendor_iban=('DE89 3704 0044 0532 0130 01', 0.9))
+    _process(world, extractor=FakeInvoiceExtractionProvider(output=misread, usage=EXTRACTION_USAGE))
+
+
 def _invoice(world):
     return world.look(world.actor, f"/api/invoice-documents/{world.data['invoice']}").json()
 
@@ -115,6 +125,18 @@ def proposal(world, vendor):
     assert invoice['processing_status'] == 'succeeded', invoice
     fields = invoice['extraction_payload']
     assert (fields['gross_amount'], fields['invoice_date'], fields['vendor_name']) == ('312.00', '2026-01-15', vendor)
+
+
+@then(parsers.parse('the invoice proposes the vendor\'s IBAN "{iban}" for review'))
+def proposes_the_iban(world, iban):
+    fields = _invoice(world)['extraction_payload']
+    assert fields['vendor_iban'] == iban.replace(' ', '') and fields['field_confidences']['vendor_iban'] > 0
+
+
+@then('the invoice proposes no vendor IBAN')
+def proposes_no_iban(world):
+    fields = _invoice(world)['extraction_payload']
+    assert fields['vendor_iban'] is None and fields['field_confidences']['vendor_iban'] == 0
 
 
 @then('nothing is posted')

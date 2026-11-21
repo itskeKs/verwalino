@@ -5,6 +5,7 @@ provider call is made, and Tesseract is made unusable, because this path has non
 """
 import asyncio
 import io
+import json
 import subprocess
 import sys
 import types
@@ -17,6 +18,7 @@ from PIL import Image
 from sqlalchemy import select, text
 
 from app.core.db import get_worker_session_factory, get_worker_tenant_session
+from app.core.invoice_pdf import inspect_invoice
 from app.core.storage import LocalFsDocumentStore, set_store
 from app.declarations.fake_provider import (
     FakeDocumentReadingProvider,
@@ -32,8 +34,9 @@ from app.workers.invoice_extraction import process_once
 from tests.ai_settings_support import configure_ai
 from tests.conftest import MIGRATOR_SYNC_URL
 from tests.invoice_model_support import no_invoice_model_data as no_invoice_model_data
+from tests.test_invoice_extraction_provider import TRANSPORTS
 from tests.test_invoice_extraction_worker import pdf_bytes, worker_tenant as worker_tenant, zugferd_pdf
-from tests.test_m5_einvoice import UBL
+from tests.test_m5_einvoice import CII_WITH_IBAN, PAYEE_IBAN, UBL_WITH_IBAN
 
 EXTRACTION_MODEL, READING_MODEL = "gpt-5.6-luna", "gpt-5.4-mini"
 READING_USAGE = ProviderUsage(1000, 200, Decimal("0.00165"), 1)
@@ -188,10 +191,90 @@ async def test_an_unstructured_scan_goes_through_both_stages_with_the_two_config
     payload = document["extraction_payload"]
     assert (payload["gross_amount"], payload["invoice_date"], payload["vendor_name"]) == ("312.00", "2026-01-15", "Mustermann Versicherungen AG")
     assert payload["suggested_category_code"] == "GEBAEUDEVERSICHERUNG"
+    assert (payload["vendor_iban"], payload["field_confidences"]["vendor_iban"]) == ("DE89370400440532013000", 0.9)
     assert payload["source_pages"] == [1, 2] and payload["is_einvoice"] is False
     assert "Rechnung RE-2026-0042" in payload["raw_text"] and "Gesamtbetrag 312,00 EUR" in payload["raw_text"]
     assert payload["processor_version"] == "invoice-model-v1"
     assert [(a["status"], a["error_code"], a["processor_version"]) for a in attempts] == [("succeeded", None, "invoice-model-v1")]
+
+
+PRINTED_IBAN = "DE02 1203 0000 0000 2020 51"  # the insurer's account of the journey's bank statement, as an invoice prints it
+
+
+def _answer(iban_as_read: str | None) -> dict:
+    """What a model answers for the synthetic invoice: its nine fields and the IBAN exactly as it read it."""
+    answer = json.loads(synthetic_invoice_output(vendor_name=("Musterversicherung AG", 0.95)).model_dump_json())
+    answer["vendor_iban"] = {"value": iban_as_read, "confidence": 0.9 if iban_as_read else 0}
+    return answer
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport_name", sorted(TRANSPORTS))
+async def test_the_vendor_iban_of_a_scan_ends_normalised_in_the_stored_proposal_through_every_transport(worker_tenant, transport_name):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org)
+    reader = FakeDocumentReadingProvider(transcripts=transcript(1, f"Musterversicherung AG Rechnung RE-2026-0042 Gesamtbetrag 312,00 EUR IBAN {PRINTED_IBAN}"))
+    transport = TRANSPORTS[transport_name](transport_name)
+    # The model reads the IBAN in lower case as it stands on the page; the transport parses and validates its answer.
+    harness = Harness(reader=reader, extractor=transport.build([_answer(PRINTED_IBAN.lower())]))
+    doc = await upload(api, scan_pdf())
+    await process(org, harness)
+    assert transport.count() == 1 and PRINTED_IBAN in transport.seen()["text"]
+    document, _ = await state(api, doc)
+    assert document["processing_status"] == "succeeded", document["processing_error_code"]
+    payload = document["extraction_payload"]
+    assert payload["vendor_iban"] == "DE02120300000000202051" and payload["field_confidences"]["vendor_iban"] == 0.9
+    # The IBAN is shown for review and weighs nothing: the overall certainty is that of the nine fields.
+    assert payload["confidence"] == 0.8405
+    assert payload["gross_amount"] == "312.00" and document["cost_entry_id"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport_name", sorted(TRANSPORTS))
+async def test_a_wrong_vendor_iban_is_stored_as_not_stated_and_the_proposal_still_succeeds(worker_tenant, transport_name):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org)
+    transport = TRANSPORTS[transport_name](transport_name)
+    harness = Harness(extractor=transport.build([_answer("DE02 1203 0000 0000 2020 52")]))
+    doc = await upload(api, scan_pdf())
+    await process(org, harness)
+    assert transport.count() == 1, "a wrong IBAN is no reason for a second, paid request"
+    document, _ = await state(api, doc)
+    assert document["processing_status"] == "succeeded"
+    payload = document["extraction_payload"]
+    assert payload["vendor_iban"] is None and payload["field_confidences"]["vendor_iban"] == 0
+    assert payload["gross_amount"] == "312.00" and payload["vendor_name"] == "Musterversicherung AG"
+
+
+@pytest.mark.asyncio
+async def test_an_invoice_that_states_no_iban_proposes_none(worker_tenant):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org)
+    harness = Harness(extractor=FakeInvoiceExtractionProvider(output=synthetic_invoice_output(vendor_iban=(None, 0))))
+    doc = await upload(api, scan_pdf())
+    await process(org, harness)
+    document, _ = await state(api, doc)
+    assert document["processing_status"] == "succeeded" and document["extraction_payload"]["vendor_iban"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_database_refuses_a_proposal_whose_vendor_iban_is_not_shaped_like_one(worker_tenant, monkeypatch):
+    """The boundary check of the worker comes first; this is the second line, in the function that records the revision."""
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org)
+    monkeypatch.setattr("app.core.extraction_evidence.valid_invoice_outcome", lambda result: True)
+
+    def processor(data, mime):
+        result = inspect_invoice(data, mime)
+        result["payload"]["vendor_iban"] = "kein IBAN"
+        return result
+    await upload(api, UBL_WITH_IBAN, "xrechnung.xml", "application/xml")
+    with pytest.raises(Exception, match="Invalid extraction proposal schema"):
+        await process_once(get_worker_session_factory(), org, providers=Harness(), processor=processor)
 
 
 @pytest.mark.asyncio
@@ -232,8 +315,8 @@ async def test_a_page_with_a_text_layer_is_not_read_by_the_model_and_needs_no_re
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("data,name,mime,expected", [
-    (UBL, "xrechnung.xml", "application/xml", "XRECHNUNG_UBL"),
-    (zugferd_pdf(), "zugferd.pdf", "application/pdf", "ZUGFERD"),
+    (UBL_WITH_IBAN, "xrechnung.xml", "application/xml", "XRECHNUNG_UBL"),
+    (zugferd_pdf(CII_WITH_IBAN), "zugferd.pdf", "application/pdf", "ZUGFERD"),
 ], ids=["xrechnung", "zugferd"])
 async def test_a_structured_invoice_is_parsed_directly_and_makes_no_provider_call(worker_tenant, data, name, mime, expected):
     api, ids = worker_tenant
@@ -246,6 +329,8 @@ async def test_a_structured_invoice_is_parsed_directly_and_makes_no_provider_cal
     document, attempts = await state(api, doc)
     assert document["processing_status"] == "succeeded"
     assert document["extraction_payload"]["is_einvoice"] is True and document["extraction_payload"]["source_format"] == expected
+    # The payee's IBAN comes from the payment data, without any model; its certainty is that of the other structured fields.
+    assert document["extraction_payload"]["vendor_iban"] == PAYEE_IBAN and document["extraction_payload"]["field_confidences"]["vendor_iban"] == 0.99
     assert [(a["status"], a["processor_version"]) for a in attempts] == [("succeeded", "invoice-local-v1")]
     assert await ledger(org) == [] and await monthly(org) == 0
 

@@ -42,11 +42,14 @@ def _printed_iban(iban: str) -> str:
 
 
 def _insurance_output():
-    return synthetic_invoice_output(vendor_name=(INSURER, 0.95))
+    """What the extraction model answers: the IBAN of the statement's debit line, as the invoice prints it."""
+    _name, iban, _amount = _statement_line()
+    return synthetic_invoice_output(vendor_name=(INSURER, 0.95), vendor_iban=(_printed_iban(iban), 0.9))
 
 
 def _structured(kind: str) -> tuple[str, str, bytes]:
     """The same invoice as structured data: an XRechnung (UBL) or a ZUGFeRD PDF with an embedded CII."""
+    _name, iban, _amount = _statement_line()
     ubl = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
          xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
@@ -54,6 +57,8 @@ def _structured(kind: str) -> tuple[str, str, bytes]:
   <cbc:ID>RE-2026-0042</cbc:ID><cbc:IssueDate>2026-01-15</cbc:IssueDate>
   <cac:InvoicePeriod><cbc:StartDate>2026-01-01</cbc:StartDate><cbc:EndDate>2026-12-31</cbc:EndDate></cac:InvoicePeriod>
   <cac:AccountingSupplierParty><cac:Party><cac:PartyName><cbc:Name>{INSURER}</cbc:Name></cac:PartyName></cac:Party></cac:AccountingSupplierParty>
+  <cac:PaymentMeans><cbc:PaymentMeansCode>58</cbc:PaymentMeansCode>
+    <cac:PayeeFinancialAccount><cbc:ID>{iban}</cbc:ID></cac:PayeeFinancialAccount></cac:PaymentMeans>
   <cac:LegalMonetaryTotal><cbc:TaxInclusiveAmount currencyID="EUR">312.00</cbc:TaxInclusiveAmount>
     <cbc:PayableAmount currencyID="EUR">312.00</cbc:PayableAmount></cac:LegalMonetaryTotal>
 </Invoice>""".encode()
@@ -69,6 +74,9 @@ def _structured(kind: str) -> tuple[str, str, bytes]:
   <rsm:SupplyChainTradeTransaction>
     <ram:ApplicableHeaderTradeAgreement><ram:SellerTradeParty><ram:Name>{INSURER}</ram:Name></ram:SellerTradeParty></ram:ApplicableHeaderTradeAgreement>
     <ram:ApplicableHeaderTradeSettlement>
+      <ram:SpecifiedTradeSettlementPaymentMeans><ram:TypeCode>58</ram:TypeCode>
+        <ram:PayeePartyCreditorFinancialAccount><ram:IBANID>{iban}</ram:IBANID></ram:PayeePartyCreditorFinancialAccount>
+      </ram:SpecifiedTradeSettlementPaymentMeans>
       <ram:BillingSpecifiedPeriod>
         <ram:StartDateTime><udt:DateTimeString format="102">20260101</udt:DateTimeString></ram:StartDateTime>
         <ram:EndDateTime><udt:DateTimeString format="102">20261231</udt:DateTimeString></ram:EndDateTime>
@@ -88,12 +96,13 @@ def _upload(world, name: str, mime: str, data: bytes) -> str:
     return answer.json()["id"]
 
 
-async def _capture(browser_world, path: str, name: str, *, card: str | None = None):
+async def _capture(browser_world, path: str, name: str, *, card: str | None = None, container: str = "section"):
     """With ``VERWALINO_CAPTURE_DESIGN=1``: the screen of one of DESIGN.md's invoice rows at both widths.
 
     The files are ``docs/assets/design/invoice-processing/<name>-<state>-<width>.png``; ``VERWALINO_CAPTURE_STATE``
     names the state (``after`` unless a run on the previous frontend says ``before``). ``card`` limits the picture to
-    the section with that heading. It runs before the step's assertions, so a previous frontend is captured as well.
+    the ``container`` element (a section unless said otherwise) with that heading. It runs before the step's assertions,
+    so a previous frontend is captured as well.
     """
     if os.environ.get("VERWALINO_CAPTURE_DESIGN") != "1":
         return
@@ -110,7 +119,7 @@ async def _capture(browser_world, path: str, name: str, *, card: str | None = No
         if not card:
             await page.screenshot(path=file, full_page=True)
             continue
-        section = page.locator("section").filter(has=page.get_by_role("heading", name=card, exact=True))
+        section = page.locator(container).filter(has=page.get_by_role("heading", name=card, exact=True))
         # A previous frontend has no such card: its absence is the state to show, not a failure of the capture.
         if await section.count():
             await section.first.screenshot(path=file)
@@ -196,14 +205,15 @@ def process_structured(world):
     _process(world, count=2)
 
 
-@then(parsers.parse('the invoice page proposes 312,00 EUR dated 2026-01-15 from "{vendor}" at 1280 and 360 pixels'))
+@then(parsers.parse('the invoice page proposes 312,00 EUR dated 2026-01-15 from "{vendor}" and the IBAN of the statement\'s insurer line at 1280 and 360 pixels'))
 @browser_step
 async def scan_proposal(browser_world, vendor):
     page = browser_world.page
     await _capture(browser_world, f"/belege/{browser_world.world.data['invoice']}", "invoice-proposal")
+    await _capture(browser_world, f"/belege/{browser_world.world.data['invoice']}", "invoice-fields", card="Extrahierte Felder", container="div.card")
     assert vendor == INSURER
     # What the journey's statement says the insurer took: the proposal equals the debit, not what the fake returns.
-    name, _iban, amount = _statement_line()
+    name, iban, amount = _statement_line()
     assert (name, amount) == (vendor, "-312,00")
     for viewport in (DESKTOP, PHONE):
         await page.set_viewport_size(viewport)
@@ -213,6 +223,8 @@ async def scan_proposal(browser_world, vendor):
         await expect(_row(page, "Rechnungsdatum")).to_contain_text("2026-01-15")
         await expect(_row(page, "Belegnummer")).to_contain_text("RE-2026-0042")
         await expect(_row(page, "Bruttobetrag")).to_contain_text("312.00")
+        # The account a person reviews before paying is the one the statement shows the insurer's debit from.
+        await expect(_row(page, "IBAN des Rechnungsstellers")).to_contain_text(_printed_iban(iban))
         await _fits_the_width(page)
     await page.set_viewport_size(DESKTOP)
 
@@ -295,16 +307,18 @@ async def disabled_explanation(browser_world):
     await page.set_viewport_size(DESKTOP)
 
 
-@then(parsers.parse('both invoice pages propose 312,00 EUR dated 2026-01-15 from "{vendor}" as E-Rechnung'))
+@then(parsers.parse('both invoice pages propose 312,00 EUR dated 2026-01-15 from "{vendor}" and the IBAN of the statement\'s insurer line as E-Rechnung'))
 @browser_step
 async def structured_proposals(browser_world, vendor):
     page = browser_world.page
+    _name, iban, _amount = _statement_line()
     for invoice_id in browser_world.world.data["invoices"]:
         await _open_invoice(browser_world, invoice_id)
         await expect(page.get_by_text("Als E-Rechnung erkannt")).to_be_visible()
         await expect(_row(page, "Lieferant")).to_contain_text(vendor)
         await expect(_row(page, "Rechnungsdatum")).to_contain_text("2026-01-15")
         await expect(_row(page, "Bruttobetrag")).to_contain_text("312.00")
+        await expect(_row(page, "IBAN des Rechnungsstellers")).to_contain_text(_printed_iban(iban))
 
 
 @then("no provider was built and no invoice page shows a usage")

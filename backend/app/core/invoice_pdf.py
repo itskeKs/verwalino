@@ -17,7 +17,7 @@ import signal
 import subprocess
 import sys
 
-from app.core.einvoice import EInvoiceExtractor
+from app.core.einvoice import EInvoiceExtractor, invoice_proposal
 from app.core.document_limits import MAX_UPLOAD_BYTES
 
 # The version of a proposal the deterministic parsers produced; ``invoice-model-v1`` marks one the model-assisted
@@ -50,9 +50,7 @@ def inspect_invoice(data: bytes, mime_type: str) -> dict:
     if not is_pdf:
         structured = EInvoiceExtractor().extract(data, mime_type)
         if structured.is_einvoice:
-            payload = structured.to_dict()
-            payload["source_pages"] = []
-            return outcome("succeeded", payload=payload)
+            return outcome("succeeded", payload=invoice_proposal(structured, []))
         return outcome("unsupported", "unsupported_format")
     try:
         import pdfplumber
@@ -69,9 +67,7 @@ def inspect_invoice(data: bytes, mime_type: str) -> dict:
             # Validate before routing: a valid structured invoice never reaches a model.
             structured = EInvoiceExtractor().extract(data, mime_type)
             if structured.is_einvoice:
-                payload = structured.to_dict()
-                payload["source_pages"] = list(range(1, len(pages) + 1))
-                return outcome("succeeded", payload=payload)
+                return outcome("succeeded", payload=invoice_proposal(structured, list(range(1, len(pages) + 1))))
             if len(pages) > INVOICE_MAX_PAGES:
                 return {"status": UNSTRUCTURED, "page_count": len(pages), "pages": []}
             layers = [{"number": number, "text": page.extract_text() or "", "width": float(page.width), "height": float(page.height)}

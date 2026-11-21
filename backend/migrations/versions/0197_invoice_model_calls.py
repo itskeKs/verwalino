@@ -20,12 +20,17 @@ change the schema for it:
   ``invoice-local-v1`` of the deterministic parsers: the CHECK ``extraction_revision_typed_attempt`` and the
   function ``record_invoice_extraction_revision`` accept both for an invoice attempt (nothing else changes in
   either; the intake processor version stays as it was).
+* The invoice proposal has a tenth field, the vendor's IBAN: the same function accepts the key ``vendor_iban`` in a
+  proposal (optional: an older worker's proposal has none) with a string of IBAN shape or null, and a certainty of
+  that key. The key has no evidence row (``field_evidence`` keeps its nine field names) and the inbox's function
+  is untouched.
 
 No row is read or rewritten by the upgrade and nothing is sent anywhere because of it: whether an organization's
 invoices reach a provider stays governed by the organization's own AI import switch, confirmation, key and models.
 
 ``downgrade()`` refuses while a call record or a ``invoice-model-v1`` proposal exists, so that neither is discarded
 silently: the older runtime cannot read a model-read proposal and a dropped ledger would reopen the monthly limit.
+It restores the function's older text; the ``vendor_iban`` key of a stored proposal stays where it is.
 
 Revision ID: 0197
 Revises: 0196
@@ -51,6 +56,14 @@ _MONTHLY_AFTER = """i.lease_expires_at>=month_start))
         ) charges;"""
 _RECORD_BEFORE = "result->>'processor_version' IS DISTINCT FROM 'invoice-local-v1'"
 _RECORD_AFTER = "result->>'processor_version' NOT IN ('invoice-local-v1','invoice-model-v1')"
+# The key set of a proposal and the keys of its certainties: the tenth field, `vendor_iban`, is optional and, when it is a
+# string, has the shape of an IBAN (a JSON null leaves the whole condition unknown, which does not raise).
+_KEYS_BEFORE = "(SELECT array_agg(key ORDER BY key) FROM jsonb_object_keys(proposal) key) IS DISTINCT FROM"
+_KEYS_AFTER = """(jsonb_typeof(proposal->'vendor_iban') NOT IN ('null','string') OR proposal->>'vendor_iban' !~ '^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$')
+          OR (SELECT array_agg(key ORDER BY key) FROM jsonb_object_keys(proposal) key WHERE key<>'vendor_iban') IS DISTINCT FROM"""
+_CONFIDENCES_BEFORE = "IF field.key NOT IN ('vendor_name',"
+_CONFIDENCES_AFTER = "IF field.key NOT IN ('vendor_iban','vendor_name',"
+_RECORD_CHANGES = ((_RECORD_BEFORE, _RECORD_AFTER), (_KEYS_BEFORE, _KEYS_AFTER), (_CONFIDENCES_BEFORE, _CONFIDENCES_AFTER))
 _TYPED_BEFORE = "(invoice_attempt_id IS NOT NULL AND intake_attempt_id IS NULL AND logical_document_id IS NULL AND processor_version='invoice-local-v1')"
 _TYPED_AFTER = "(invoice_attempt_id IS NOT NULL AND intake_attempt_id IS NULL AND logical_document_id IS NULL AND processor_version IN ('invoice-local-v1','invoice-model-v1'))"
 _TYPED_INTAKE = "(invoice_attempt_id IS NULL AND intake_attempt_id IS NOT NULL AND logical_document_id IS NOT NULL AND processor_version='intake-local-v1')"
@@ -137,7 +150,8 @@ def upgrade():
       FOR EACH ROW EXECUTE FUNCTION public.guard_invoice_model_call();
     """)
     _replace_definition(_MONTHLY_USAGE, _MONTHLY_BEFORE, _MONTHLY_AFTER)
-    _replace_definition(_RECORD, _RECORD_BEFORE, _RECORD_AFTER)
+    for before, after in _RECORD_CHANGES:
+        _replace_definition(_RECORD, before, after)
     _typed_attempt(_TYPED_AFTER)
 
 
@@ -149,7 +163,8 @@ def downgrade():
       OR EXISTS(SELECT 1 FROM public.invoice_processing_attempt WHERE processor_version='invoice-model-v1')
       THEN RAISE EXCEPTION 'Model-read invoice proposals require this release'; END IF; END $$""")
     _typed_attempt(_TYPED_BEFORE)
-    _replace_definition(_RECORD, _RECORD_AFTER, _RECORD_BEFORE)
+    for before, after in reversed(_RECORD_CHANGES):
+        _replace_definition(_RECORD, after, before)
     _replace_definition(_MONTHLY_USAGE, _MONTHLY_AFTER, _MONTHLY_BEFORE)
     op.execute('DROP TABLE public.invoice_model_call')
     op.execute('DROP FUNCTION public.guard_invoice_model_call()')

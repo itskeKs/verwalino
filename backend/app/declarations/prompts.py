@@ -155,5 +155,8 @@ Fields:
   (Leistungszeitraum, Abrechnungszeitraum) as YYYY-MM-DD.
 - suggested_category_code: exactly one code of the list allowed_category_codes in the request that describes what the
   invoice is for, or null when none clearly does.
+- vendor_iban: the IBAN of the invoice's issuer (the account the invoice asks to pay into), as written on the
+  invoice, with or without spaces. The IBAN of the recipient, of a third party or of a direct debit is not it. Null when
+  the invoice states none or when you cannot read every character of it.
 confidence is your certainty about the value from 0 to 1, and 0 for a null value.
 Return only the requested structured result."""

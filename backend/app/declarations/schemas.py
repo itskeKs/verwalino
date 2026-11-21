@@ -10,6 +10,8 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_core import PydanticCustomError
 
+from app.core.iban import validate_iban
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -331,8 +333,27 @@ class InvoiceAmountField(StrictModel):
     confidence: float = Field(ge=0, le=1)
 
 
+# The vendor's IBAN as the invoice prints it. A wrong IBAN is worse than none: a value that is not a valid IBAN
+# (country, length, check digits) is not stated, which leaves the rest of the answer as it is; a valid one is kept
+# without spaces and in upper case. The wire schema allows any text, so that a misread value costs no repair request.
+# Nothing here logs or raises the value. (No docstring: it would become a description of the wire schema.)
+class InvoiceIbanField(StrictModel):
+    value: str | None
+    confidence: float = Field(ge=0, le=1)
+
+    @field_validator("value")
+    @classmethod
+    def a_valid_iban_or_not_stated(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            return validate_iban(value)
+        except ValueError:
+            return None
+
+
 class InvoiceExtractionOutput(StrictModel):
-    # The nine fields of the invoice proposal, each with its value (null when the invoice does not state it) and the
+    # The ten fields of the invoice proposal, each with its value (null when the invoice does not state it) and the
     # model's certainty. The wire schema carries no description: every request pays for it twice.
     vendor_name: InvoiceTextField
     invoice_date: InvoiceDateField
@@ -343,3 +364,4 @@ class InvoiceExtractionOutput(StrictModel):
     service_period_from: InvoiceDateField
     service_period_to: InvoiceDateField
     suggested_category_code: InvoiceTextField
+    vendor_iban: InvoiceIbanField

@@ -41,12 +41,13 @@ class _Encoder:
 
 # ---- the typed result ---------------------------------------------------------------------------------------
 
-def test_the_result_has_the_nine_fields_each_with_a_value_and_a_certainty():
+def test_the_result_has_the_ten_fields_each_with_a_value_and_a_certainty():
     parsed = InvoiceExtractionOutput.model_validate(ANSWER)
     assert set(InvoiceExtractionOutput.model_fields) == {
         'vendor_name', 'invoice_date', 'document_number', 'gross_amount', 'vat_amount', 'vat_rate',
-        'service_period_from', 'service_period_to', 'suggested_category_code'}
+        'service_period_from', 'service_period_to', 'suggested_category_code', 'vendor_iban'}
     assert parsed.gross_amount.value == '312.00' and parsed.vat_amount.value is None
+    assert parsed.vendor_iban.value == 'DE89370400440532013000' and parsed.vendor_iban.confidence == 0.9
     assert not {'page', 'pdf_page', 'document_key'} & set(InvoiceExtractionOutput.model_json_schema()['properties']), 'the caller owns the identity'
 
 
@@ -61,12 +62,38 @@ def test_a_value_the_review_boundary_would_refuse_is_refused_when_the_answer_is_
         InvoiceExtractionOutput.model_validate(answer)
 
 
+@pytest.mark.parametrize('stated,kept', [
+    ('DE89370400440532013000', 'DE89370400440532013000'),
+    ('de89 3704 0044 0532 0130 00', 'DE89370400440532013000'),
+    ('  DE89 3704 0044 0532 0130 00  ', 'DE89370400440532013000'),
+    ('AT61 1904 3002 3457 3201', 'AT611904300234573201'),
+    ('DE89370400440532013001', None),
+    ('DE8937040044053201300', None),
+    ('DE893704004405320130000', None),
+    ('DE89 3704 0044 0532 0130 0X', None),
+    ('XX89370400440532013000', None),
+    ('Konto bei der Commerzbank', None),
+    ('', None),
+    (None, None),
+], ids=['plain', 'printed-lower-case', 'padded', 'austrian', 'check-digits', 'too-short', 'too-long', 'letter-in-german-bban',
+        'unknown-country', 'text', 'empty', 'not-stated'])
+def test_a_vendor_iban_is_kept_normalised_or_not_stated_and_never_fails_the_proposal(stated, kept):
+    answer = {**ANSWER, 'vendor_iban': {'value': stated, 'confidence': 0.7}}
+    parsed = InvoiceExtractionOutput.model_validate(answer)
+    assert parsed.vendor_iban.value == kept
+    assert parsed.gross_amount.value == '312.00' and parsed.vendor_name.value == 'Mustermann Versicherungen AG'
+
+
 @pytest.mark.parametrize('answer', [
     {**ANSWER, 'confidence': 0.9},
     {key: value for key, value in ANSWER.items() if key != 'gross_amount'},
+    {key: value for key, value in ANSWER.items() if key != 'vendor_iban'},
     {**ANSWER, 'gross_amount': {'value': '1', 'confidence': 1.5}},
+    {**ANSWER, 'vendor_iban': {'value': 'DE89370400440532013000', 'confidence': 1.5}},
     {**ANSWER, 'gross_amount': {'value': '1'}},
-], ids=['extra-field', 'missing-field', 'confidence-over-one', 'missing-confidence'])
+    {**ANSWER, 'vendor_iban': {'value': 'DE89370400440532013000'}},
+], ids=['extra-field', 'missing-field', 'missing-iban-field', 'confidence-over-one', 'iban-confidence-over-one', 'missing-confidence',
+        'iban-missing-confidence'])
 def test_an_answer_that_is_not_the_schema_is_refused(answer):
     with pytest.raises(ValidationError):
         InvoiceExtractionOutput.model_validate(answer)
@@ -115,7 +142,9 @@ class OpenAiTransport:
         self.provider = provider
 
     def build(self, answers):
-        self.client = type('Client', (), {'responses': _Responses([_SdkResponse(answer) for answer in answers])})()
+        async def close(_self):
+            """The worker closes the client it was given when the run ends."""
+        self.client = type('Client', (), {'responses': _Responses([_SdkResponse(answer) for answer in answers]), 'close': close})()
         return OpenAiDeclarationProvider(client=self.client, primary_model=EXTRACTION_MODEL, escalation_model=EXTRACTION_MODEL, token_encoder=_Encoder())
 
     def count(self):
@@ -189,6 +218,22 @@ async def test_the_request_carries_the_pages_text_the_category_list_and_the_extr
     meta = result.metadata
     assert (meta.pass_id, meta.configured_model, meta.failure_class) == (INVOICE_PASS_ID, EXTRACTION_MODEL, None)
     assert (meta.prompt_version, meta.schema_version) == (INVOICE_PROMPT_VERSION, INVOICE_SCHEMA_VERSION)
+
+
+@pytest.mark.asyncio
+async def test_the_vendor_iban_is_read_as_the_invoice_prints_it_and_comes_back_normalised_through_every_transport(transport):
+    answer = {**ANSWER, 'vendor_iban': {'value': 'de02 1203 0000 0000 2020 51', 'confidence': 0.9}}
+    result = await _extract(transport.build([answer]))
+    assert (result.output.vendor_iban.value, result.output.vendor_iban.confidence) == ('DE02120300000000202051', 0.9)
+    assert transport.count() == 1
+
+
+@pytest.mark.asyncio
+async def test_a_wrong_vendor_iban_is_not_stated_and_costs_no_repair_request_through_every_transport(transport):
+    answer = {**ANSWER, 'vendor_iban': {'value': 'DE02 1203 0000 0000 2020 52', 'confidence': 0.9}}
+    result = await _extract(transport.build([answer]))
+    assert result.output.vendor_iban.value is None and result.output.gross_amount.value == '312.00'
+    assert transport.count() == 1, 'a wrong IBAN is not a malformed answer'
 
 
 @pytest.mark.asyncio

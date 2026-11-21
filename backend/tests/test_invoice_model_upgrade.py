@@ -161,16 +161,19 @@ def test_a_model_read_proposal_is_accepted_for_an_invoice_attempt_and_downgrade_
                 record = lambda: db.scalar(text("SELECT pg_get_functiondef('public.record_invoice_extraction_revision(uuid,uuid,uuid,jsonb)'::regprocedure)"))
                 assert 'invoice-model-v1' in constraint() and 'invoice-model-v1' in record()
                 assert 'intake-local-v1' in constraint(), 'the inbox processor version is untouched'
+                assert "key<>'vendor_iban'" in record() and "IF field.key NOT IN ('vendor_iban'," in record(), 'the tenth key and its certainty'
+                intake = db.scalar(text("SELECT pg_get_functiondef(oid) FROM pg_proc WHERE proname='complete_intake_extraction'"))
+                assert 'vendor_iban' not in intake, 'the inbox keeps the nine fields'
                 _seed_attempt(db, seed_data, processor_version='invoice-model-v1')
                 with pytest.raises(DBAPIError, match='Model-read invoice proposals require this release'):
                     with db.begin_nested():
                         migration.downgrade()
                 db.execute(text("UPDATE invoice_processing_attempt SET processor_version='invoice-local-v1' WHERE processor_version='invoice-model-v1'"))
                 migration.downgrade()
-                assert 'invoice-model-v1' not in constraint() and 'invoice-model-v1' not in record()
+                assert 'invoice-model-v1' not in constraint() and 'invoice-model-v1' not in record() and 'vendor_iban' not in record()
                 assert 'invoice-local-v1' in constraint() and 'invoice-local-v1' in record() and 'intake-local-v1' in constraint()
                 migration.upgrade()
-                assert 'invoice-model-v1' in constraint() and 'invoice-model-v1' in record()
+                assert 'invoice-model-v1' in constraint() and 'invoice-model-v1' in record() and "key<>'vendor_iban'" in record()
             finally:
                 savepoint.rollback()
     finally:

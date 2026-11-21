@@ -28,6 +28,7 @@ from app.declarations.schemas import (
     InvoiceAmountField,
     InvoiceDateField,
     InvoiceExtractionOutput,
+    InvoiceIbanField,
     InvoiceTextField,
     PageTranscript,
     ReadingBlock,
@@ -245,6 +246,7 @@ def synthetic_invoice_output(**values: object) -> InvoiceExtractionOutput:
         "service_period_from": InvoiceDateField(value="2026-01-01", confidence=0.9),
         "service_period_to": InvoiceDateField(value="2026-12-31", confidence=0.9),
         "suggested_category_code": InvoiceTextField(value="GEBAEUDEVERSICHERUNG", confidence=0.8),
+        "vendor_iban": InvoiceIbanField(value="DE89 3704 0044 0532 0130 00", confidence=0.9),
     }
     for name, (value, confidence) in values.items():
         kind = type(fields[name])

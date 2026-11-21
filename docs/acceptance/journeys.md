@@ -118,8 +118,10 @@ what Verwalino does not assign by itself.
     Rechnungen auswerten“ (provider key and confirmation, a model under „Dokumente einlesen“ and one under
     „Informationen extrahieren“), the scan is read by the reading model and the fields are filled by the extraction
     model. The page reads „Felder vorbereitet · bitte prüfen“ and proposes **312.00**, **2026-01-15**,
-    „Musterversicherung AG“ and the number RE-2026-0042; the card „Verbrauch der KI-Verarbeitung“ lists the
-    reading and the extraction model with their usage. Sabine reviews the proposal and creates the cost herself.
+    „Musterversicherung AG“, the number RE-2026-0042 and, in the row „IBAN des Rechnungsstellers“, the insurer's IBAN of
+    the statement's debit line in groups of four; the card „Verbrauch der KI-Verarbeitung“ lists the
+    reading and the extraction model with their usage. Sabine reviews the proposal, the IBAN included, and creates the
+    cost herself; an IBAN the model misread is not proposed and the row reads „nicht erkannt“.
   - Without that configuration, with a failing provider or an exhausted monthly budget, the page says in German
     what happened, that the original is kept and that nothing was applied, and what was already used stays
     visible; Sabine enters the 312.00 € by hand („Kostenposition erstellen“). An organization that confirmed the
@@ -147,12 +149,13 @@ The full-year account cutoff is automated at 1280 and 360 px in
 [rent_account_due.feature](../../features/journeys/rent_account_due.feature).
 The building-insurance invoice is automated in
 [invoice_model_processing.feature](../../features/journeys/invoice_model_processing.feature) with the real worker and
-fake providers: the scan read by both models (proposal 312.00 / 2026-01-15 / „Musterversicherung AG“ at 1280 and 360 px,
-the usage of both models, the IBAN that the invoice prints reaching the extraction model and the stored source text and
-equal to the statement's debit line), XRechnung and ZUGFeRD read with no provider built, a provider failure and the
+fake providers: the scan read by both models (proposal 312.00 / 2026-01-15 / „Musterversicherung AG“ and the IBAN of the
+statement's debit line in „IBAN des Rechnungsstellers“ at 1280 and 360 px, the usage of both models, the IBAN that the
+invoice prints reaching the extraction model and the stored source text), XRechnung and ZUGFeRD read with no provider built
+and the same IBAN read from their payment data, a provider failure and the
 unconfigured organization explained in German with the original kept. The API-level
 [invoice_model_processing.feature](../../features/invoice_model_processing.feature) adds the confirmation that predates
-invoices, the exhausted monthly budget and organization isolation. A real provider belongs to no automated run.
+invoices, a misread IBAN that is not proposed, the exhausted monthly budget and organization isolation. A real provider belongs to no automated run.
 The remaining assignment checks still require blind acceptance.
 
 ## Journey 3: Dunning letter to Anna

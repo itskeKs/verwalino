@@ -2371,6 +2371,15 @@ of the invoice including failed and ended ones. Usage the provider did not repor
 „Konservative Kostenschätzung“, a model without a price as „kein Preis bekannt“, never as 0,00 USD. It loads again when the
 status changes; if it cannot be loaded the card is replaced by one alert sentence and no amount.
 
+The card „Extrahierte Felder“ of a proposal lists ten rows, each with its value and the certainty of the model or of the parser
+in brackets, and „nicht erkannt“ in grey italics where the invoice states nothing (an unchanged wording for every row). The last
+row is „IBAN des Rechnungsstellers“: the issuer's account as the invoice states it, grouped in blocks of four like every IBAN
+(`formatIban`), for the person to compare with the invoice before paying. Only a valid IBAN reaches the row; one the model
+misread, or one with a wrong check digit, reads „nicht erkannt“, as does a proposal that was stored before the field existed.
+Nothing else uses the value: it is not copied into the cost position and matches no bank line. A value in a row breaks inside
+the card instead of running out of it (`overflow-wrap: anywhere`), so that the end of a long code or IBAN is still readable at
+360 px.
+
 Screenshots come from the real-browser twin of Journey 2 on the test database with synthetic data
 (`features/journeys/invoice_model_processing.feature`; `VERWALINO_CAPTURE_DESIGN=1` writes the "after" files, the same
 run with `VERWALINO_CAPTURE_STATE=before` against the previous frontend the "before" files):
@@ -2380,6 +2389,7 @@ run with `VERWALINO_CAPTURE_STATE=before` against the previous frontend the "bef
 | Processing failed at the provider: explanation, retry, original kept | [view](docs/assets/design/invoice-processing/invoice-provider-failure-before-1280.png) | [view](docs/assets/design/invoice-processing/invoice-provider-failure-before-360.png) | [view](docs/assets/design/invoice-processing/invoice-provider-failure-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-provider-failure-after-360.png) |
 | AI evaluation not set up: explanation, nothing sent | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-before-1280.png) | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-before-360.png) | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-after-360.png) |
 | Scan read by both models: proposal and usage card below the actions | [view](docs/assets/design/invoice-processing/invoice-proposal-before-1280.png) | [view](docs/assets/design/invoice-processing/invoice-proposal-before-360.png) | [view](docs/assets/design/invoice-processing/invoice-proposal-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-proposal-after-360.png) |
+| Card „Extrahierte Felder“ of the scan with the row „IBAN des Rechnungsstellers“ (no such row before; the card itself is not captured before) | none | none | [view](docs/assets/design/invoice-processing/invoice-fields-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-fields-after-360.png) |
 | Card „Verbrauch der KI-Verarbeitung“ (no such card before) | none | none | [view](docs/assets/design/invoice-processing/invoice-usage-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-usage-after-360.png) |
 | AI settings card of an installation that processes invoices: one switch for declarations and invoices, invoice paragraph | [view](docs/assets/design/invoice-processing/settings-card-before-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-before-360.png) | [view](docs/assets/design/invoice-processing/settings-card-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-after-360.png) |
 | AI settings card of an installation that processes no invoices (the local stack, as the portable one): declarations only; the before files are the card above, which named invoices there | [view](docs/assets/design/invoice-processing/settings-card-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-after-360.png) | [view](docs/assets/design/invoice-processing/settings-card-no-invoices-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-no-invoices-after-360.png) |

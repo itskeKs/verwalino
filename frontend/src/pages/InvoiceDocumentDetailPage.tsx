@@ -33,7 +33,7 @@ import { InvoiceModelUsage } from "../components/InvoiceModelUsage";
 import { InvoiceProcessingExplanation, InvoiceProcessingStatus } from "../components/InvoiceProcessingStatus";
 import { INVOICE_RETRY_FAILED, INVOICE_RETRY_REFUSED } from "../lib/invoiceProcessing";
 import { Badge } from "../components/ui/badge";
-import { formatDate, formatDateTime } from "../lib/format";
+import { formatDate, formatDateTime, formatIban } from "../lib/format";
 
 /** Human-readable short label for source_format values from the e-invoice parser. */
 const FORMAT_LABELS: Record<string, string> = {
@@ -45,7 +45,7 @@ const FORMAT_LABELS: Record<string, string> = {
 /** A proposal of an attempt, or fields a person or an earlier release stored; the stub every upload starts with is neither. */
 function hasProposal(ext: ExtractionPayload): boolean {
   return Boolean(ext.attempt_id) || ext.is_einvoice === true || [ext.vendor_name, ext.invoice_date, ext.document_number, ext.gross_amount,
-    ext.vat_amount, ext.vat_rate, ext.service_period_from, ext.service_period_to, ext.suggested_category_code].some(value => value != null);
+    ext.vat_amount, ext.vat_rate, ext.service_period_from, ext.service_period_to, ext.suggested_category_code, ext.vendor_iban].some(value => value != null);
 }
 
 function confidenceColor(c: number): string {
@@ -499,6 +499,11 @@ export function InvoiceDocumentDetailPage() {
                 value={ext.suggested_category_code}
                 fieldConf={ext.field_confidences?.suggested_category_code}
               />
+              <ExtractionRow
+                label="IBAN des Rechnungsstellers"
+                value={ext.vendor_iban ? formatIban(ext.vendor_iban) : null}
+                fieldConf={ext.field_confidences?.vendor_iban}
+              />
             </tbody>
           </table>
         </div>
@@ -743,7 +748,8 @@ function ExtractionRow({
   return (
     <tr>
       <td>{label}</td>
-      <td>
+      {/* A long value (a category code, an IBAN) breaks inside the card at 360 px instead of cutting off its end. */}
+      <td style={{ overflowWrap: "anywhere" }}>
         {value ?? (
           <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>
             nicht erkannt

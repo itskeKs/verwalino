@@ -4,7 +4,7 @@ Uploads persist immutable source bytes, an invoice document and a queued attempt
 in the request transaction. The HTTP response means saved, not extracted or
 confirmed. Existing released/legacy extraction payloads are not backfilled.
 Version uploads also enqueue the new revision. The worker prepares a proposal of
-nine fields; it books no cost and approves nothing, and a person reviews every
+ten fields; it books no cost and approves nothing, and a person reviews every
 proposal before anything is posted.
 
 ## Two paths
@@ -15,19 +15,43 @@ The worker first inspects the original locally, in a killable child process
 - **Structured invoices stay local.** XRechnung XML and PDFs with embedded
   ZUGFeRD/Factur-X data are validated and read by the deterministic parser
   (processor version `invoice-local-v1`). No provider is built and nothing leaves
-  the host; the organization's AI settings do not matter.
+  the host; the organization's AI settings do not matter. The parser also reads the
+  payee's account from the payment data (UBL `PayeeFinancialAccount`, CII
+  `PayeePartyCreditorFinancialAccount`) into the tenth field, see below.
 - **Unstructured PDFs go to the organization's two models**
   (`declarations/invoice_pipeline.py`, [ADR 0017](../adr/0017-model-document-reading-replaces-tesseract.md),
   processor version `invoice-model-v1`). A page with a text layer of at least 40
   non-whitespace characters is used as it is. Every other page is rendered with
   Poppler, one page at a time, and read by the **document reading model**
   („Dokumente einlesen“) into a transcript. The **extraction model**
-  („Informationen extrahieren“) then fills the nine existing fields (vendor,
-  invoice date, number, gross amount, VAT amount and rate, service period) and proposes one
+  („Informationen extrahieren“) then fills the ten fields (vendor, invoice date, number,
+  gross amount, VAT amount and rate, service period, the vendor's IBAN) and proposes one
   seeded cost category. There is no Tesseract step, no fallback and no pattern
   matching on what the models read; a model that cannot take images ends the attempt
   with a reason, it never switches model or provider. Confidence per field is the
   model's own, and a value the invoice does not state is empty.
+
+## The vendor's IBAN: a tenth field for review
+
+The proposal carries `vendor_iban`, the account the invoice asks to pay into, beside the nine fields: a value
+(null when the invoice states none) and a certainty, like its neighbours. The invoice page shows it as
+„IBAN des Rechnungsstellers“ in groups of four, for a person to compare with the invoice before paying. Nothing else
+reads it: it is not copied into the cost position, matches no bank line and creates no payee.
+
+**A wrong IBAN is worse than none.** The extraction model reads it as the invoice prints it (with or without
+spaces, in either case); the typed answer is then normalised (no spaces, upper case) and kept only when it is a valid
+IBAN by the one validator of the project (`core/iban.py`, also the SEPA export's): a SEPA country, its length and
+the mod-97 check digits. Anything else (a misread digit, a truncated value, text, an IBAN of a country outside the SEPA
+area) is stored as not stated, with certainty 0 and without failing the proposal or costing a repair request; the
+value is never logged. A structured invoice takes only the payee's account (never the payer's of a direct debit), and
+states none when its payment data names no valid IBAN or two different ones. The IBAN is not part of the overall
+certainty of the proposal and has no evidence row. A proposal stored before the field existed reads as not stated.
+
+The field lives in the stored proposal (`invoice_document.extraction_payload`, a JSON document) and in the revision
+the worker records through `record_invoice_extraction_revision`, whose installed function accepts the optional key
+(0197 changes the function; no further revision). The prompt and schema versions (`invoice-v1`, `invoice-1`) and the
+processor version `invoice-model-v1` are those of this release's first shape and stay: nothing was stored under
+them before the field existed.
 
 ## Opt-in: nothing is sent without it
 

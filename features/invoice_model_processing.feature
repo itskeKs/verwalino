@@ -8,8 +8,17 @@ Feature: Invoices read by the organization's AI models
     And the organization has enabled the AI import with its own key and both models
     When the administrator uploads a scanned building-insurance invoice and the worker processes it
     Then the invoice proposes 312,00 EUR dated 15 January 2026 from "Mustermann Versicherungen AG"
+    And the invoice proposes the vendor's IBAN "DE89 3704 0044 0532 0130 00" for review
     And nothing is posted
     And the invoice shows the usage of the reading and of the extraction model
+
+  Scenario: An IBAN the model misread is not proposed and the rest of the invoice is
+    Given an administrator of "Verwaltung Alpha" is signed in
+    And the organization has enabled the AI import with its own key and both models
+    When the administrator uploads a scanned building-insurance invoice whose IBAN the extraction model misread and the worker processes it
+    Then the invoice proposes 312,00 EUR dated 15 January 2026 from "Mustermann Versicherungen AG"
+    And the invoice proposes no vendor IBAN
+    And nothing is posted
 
   Scenario: An organization that confirmed before invoices were covered keeps its invoices on the host
     Given an administrator of "Verwaltung Alpha" is signed in
