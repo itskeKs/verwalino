@@ -396,10 +396,11 @@ def test_invoice_compose_service_reaches_the_provider_like_the_declaration_worke
     assert environment["HV_DATABASE_URL_WORKER"] == declaration_worker["environment"]["HV_DATABASE_URL_WORKER"]
     assert environment["HV_INVOICE_EXTRACTION_ENABLED"] == services["app"]["environment"]["HV_INVOICE_EXTRACTION_ENABLED"]
     assert "HV_DECLARATION_IMPORT_ENABLED" not in environment
-    # The organization's key is stored encrypted under the session secret and its region is a deployment fact: the
-    # worker needs both to call the provider, exactly as the declaration worker takes them. Nothing else is added.
+    # The organization's key is stored encrypted under the session secret: the worker needs it to call the provider,
+    # exactly as the declaration worker takes it. Nothing else is added; in particular HV_DATA_REGION has no reader
+    # in the invoice worker, so it is not set there.
     assert environment["HV_SESSION_SECRET"] == declaration_worker["environment"]["HV_SESSION_SECRET"]
-    assert environment["HV_DATA_REGION"] == declaration_worker["environment"]["HV_DATA_REGION"]
+    assert "HV_DATA_REGION" not in environment
     assert not {"HV_DATABASE_URL", "HV_DATABASE_URL_SYNC", "HV_DATABASE_URL_REVIEW", "HV_OPENAI_API_KEY"} & environment.keys()
     # The same route to the provider as the declaration worker has, and no other network: the egress is not wider.
     assert worker["networks"] == declaration_worker["networks"] == {"backend": {"gw_priority": 0}, "egress": {"gw_priority": 1}}

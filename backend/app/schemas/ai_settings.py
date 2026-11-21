@@ -49,7 +49,11 @@ class AiSettingsOut(BaseModel):
     document_price_known: bool
     confirmation: AiConfirmationOut | None = None
     confirmation_required: bool = False
-    # A stored key whose confirmation does not name invoices (none, or one of an earlier text): invoices stay on the host.
+    # Whether this installation processes invoices with the organization's models (``HV_INVOICE_EXTRACTION_ENABLED``). Where
+    # it does not, the card names no invoices and the confirmation it records is the text without them.
+    invoice_processing_enabled: bool
+    # A stored key whose confirmation does not name invoices (none, or one of an earlier text), where invoices are
+    # processed: they stay on the host until the current text is confirmed.
     invoice_confirmation_required: bool = False
 
 

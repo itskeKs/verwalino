@@ -5,13 +5,16 @@ layer is used as it is), then the organization's extraction model fills the nine
 proposes one of the seeded cost categories. The models read and interpret: there is no OCR step and no pattern
 matching on what they read. The result is a proposal that a person reviews before anything is posted.
 
-Every request is reserved before it leaves, under the organization's budget lock and its monthly limit, and settled
+Every request is reserved before it leaves, under the organization's budget lock, its opt-in (read again for each
+request: a run stops before the next request when the organization withdraws it) and its monthly limit, and settled
 with the usage it consumed (``invoice_model_call``, migration 0197), in short transactions of its own. The
 requests run outside any transaction. The calls of one extraction attempt are bounded by the constants below.
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import math
 import time
 import uuid
@@ -45,11 +48,18 @@ from app.declarations.provider import (
 )
 from app.declarations.schemas import InvoiceExtractionOutput, PageTranscript, transcript_text
 from app.repositories.invoice_model_call_repo import InvoiceModelCallRepository
+from app.repositories.organization_ai_settings_repo import OrganizationAiSettingsRepository
 from app.services.ai_settings_service import (
     INVOICE_AI_DOCUMENT_MODEL_MISSING,
+    INVOICE_AI_KEY_UNREADABLE,
+    AiKeyUnreadableError,
+    effective_ai_settings,
+    invoice_import_blocker,
     require_organization_ai_budget,
 )
 from app.services.invoice_processing_service import InvoiceProcessingService
+
+logger = logging.getLogger(__name__)
 
 # ---- bounds of one extraction attempt -------------------------------------------------------------------------
 # An unstructured invoice has at most INVOICE_MAX_PAGES pages and INVOICE_MAX_TEXT_CHARS characters of text
@@ -141,6 +151,11 @@ def non_whitespace_length(text: str) -> int:
     return len("".join(text.split()))
 
 
+def pages_need_reading(pages: Sequence[InvoicePage]) -> bool:
+    """Whether the reading model must read at least one page: one without a text layer of its own."""
+    return any(non_whitespace_length(page.text) < INVOICE_TEXT_MIN_CHARS for page in pages)
+
+
 def _render_failure(code: str) -> InvoiceModelFailure:
     if code == "PAGE_RENDER_TIMEOUT":
         return InvoiceModelFailure("timeout", "render_timeout")
@@ -171,6 +186,8 @@ class InvoiceModelPipeline:
         self._effective = effective
         self._providers = providers
         self._categories = tuple(categories)
+        # Until the pages are known the stricter answer holds; ``run`` sets it from them.
+        self._needs_reading = True
         self._preflight = preflight or PdfPreflight(
             max_pdf_bytes=len(data) + 1,
             max_pages=INVOICE_MAX_PAGES,
@@ -194,6 +211,7 @@ class InvoiceModelPipeline:
             max_cost_usd=INVOICE_MAX_COST_USD, configured=_allowance(INVOICE_READING_MAX_OUTPUT_TOKENS),
             model=self._effective.model, price_provider=self._effective.provider,
         )
+        self._needs_reading = pages_need_reading(pages)
         try:
             texts = await self._read_pages(ledger, pages)
             return await self._extract(ledger, pages, texts)
@@ -208,10 +226,11 @@ class InvoiceModelPipeline:
         for page in pages:
             if non_whitespace_length(page.text) >= INVOICE_TEXT_MIN_CHARS:
                 texts.append(page.text)
-                continue
-            texts.append(await self._read_page(ledger, budget, page))
-        if len("\n".join(texts)) > INVOICE_MAX_TEXT_CHARS:
-            raise InvoiceModelFailure("needs_review", INVOICE_TEXT_LIMIT)
+            else:
+                texts.append(await self._read_page(ledger, budget, page))
+            # After every page, so that no page is read (and paid for) once the text has passed the bound.
+            if len("\n".join(texts)) > INVOICE_MAX_TEXT_CHARS:
+                raise InvoiceModelFailure("needs_review", INVOICE_TEXT_LIMIT)
         return texts
 
     async def _read_page(self, ledger: _Ledger, budget, page: InvoicePage) -> str:
@@ -294,6 +313,16 @@ class InvoiceModelPipeline:
             self._exclude_wait(budget, started)
             await self._settle(call_id, *_failed_amounts(exc, reservation), error_code=exc.code)
             raise InvoiceModelFailure("failed", failure_code) from None
+        except asyncio.CancelledError:
+            # A worker shutdown while the request was out: what it consumed is unknown, so it stays booked at its
+            # reservation, as for any failure without reported usage, and the shutdown goes on. A settlement that
+            # fails here leaves the row reserved, which counts at the same amount; it never replaces the shutdown.
+            try:
+                await self._settle(call_id, reservation.input_tokens, reservation.output_tokens, reservation.cost_usd,
+                                   complete=False, error_code="WORKER_CANCELLED")
+            except Exception:
+                logger.error("Invoice model call result=cancelled_settlement_failed")
+            raise
         except Exception:
             self._exclude_wait(budget, started)
             await self._settle(call_id, reservation.input_tokens, reservation.output_tokens, reservation.cost_usd,
@@ -320,7 +349,8 @@ class InvoiceModelPipeline:
             budget.exclude_wait(time.monotonic() - started)
 
     async def _reserve_durably(self, stage: str, pdf_page: int | None, model: str, reservation: _Reservation) -> uuid.UUID:
-        """In one transaction: extend the claim's lease, check the monthly limit and hold the worst case of the request."""
+        """In one transaction: extend the claim's lease, check the opt-in and the monthly limit and hold the worst case
+        of the request."""
         provider = self._providers.reader if stage == "read_page" else self._providers.extractor
         refusal = None
         call_id = None
@@ -329,6 +359,8 @@ class InvoiceModelPipeline:
             if not await InvoiceProcessingService(session, self._org_id).renew(self._claim, self._lease_seconds):
                 # Committed on purpose: an initiator who lost permission has cancelled the attempt in this transaction.
                 refusal = InvoiceModelFailure("failed", LEASE_LOST)
+            elif (blocker := await self._opt_in_blocker(session)) is not None:
+                refusal = InvoiceModelFailure("unavailable", blocker)
             else:
                 try:
                     await require_organization_ai_budget(session, self._org_id, reservation.cost_usd, model=model,
@@ -343,6 +375,19 @@ class InvoiceModelPipeline:
         if refusal is not None:
             raise refusal
         return call_id
+
+    async def _opt_in_blocker(self, session) -> str | None:
+        """The reason the organization no longer allows this request, read again now: None, or the worker's code.
+
+        The same decision the worker takes before the run (``invoice_import_blocker``), under the budget lock that
+        every settings save holds, so a switch turned off or a confirmation lost stops the run before its next request.
+        """
+        await OrganizationAiSettingsRepository(session, self._org_id).lock_budget()
+        try:
+            effective = await effective_ai_settings(session, self._org_id)
+        except AiKeyUnreadableError:
+            return INVOICE_AI_KEY_UNREADABLE
+        return invoice_import_blocker(effective, needs_reading=self._needs_reading)
 
     async def _settle(self, call_id: uuid.UUID, input_tokens: int, output_tokens: int, cost_usd: Decimal,
                       complete: bool, *, error_code: str | None) -> None:
@@ -363,15 +408,20 @@ def _allowance(tokens: int) -> SimpleNamespace:
 
 
 def _failed_amounts(exc: ProviderFailure, reservation: _Reservation) -> tuple[int, int, Decimal, bool]:
-    """What a failed request consumed: its reported usage; nothing when it never left; else the reservation."""
+    """What a failed request consumed: its reported usage; nothing only when it provably never left; else the reservation.
+
+    Unknown is not zero. A request that reached the provider leaves an attempt on the failure (its metadata, counted
+    in ``attempt_count``); a failure without any attempt, usage or metadata was raised before anything was sent.
+    """
     usage = exc.usage if isinstance(exc.usage, ProviderUsage) else None
-    if exc.usage_complete and usage is not None:
+    if exc.usage_complete is True and usage is not None:
         try:
             _validate_usage(usage)
         except PipelineFailure:
             return reservation.input_tokens, reservation.output_tokens, reservation.cost_usd, False
         return usage.input_tokens, usage.output_tokens, usage.cost_usd, True
-    if exc.usage_complete and exc.attempt_count == 0:
+    if (exc.usage_complete is True and exc.usage is None and exc.attempt_count == 0
+            and not exc.attempt_metadata and exc.metadata is None):
         return 0, 0, Decimal("0"), True
     return reservation.input_tokens, reservation.output_tokens, reservation.cost_usd, False
 

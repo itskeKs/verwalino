@@ -42,7 +42,9 @@ it("states unreported usage as a reservation that stays in the budget, never as 
   show({ stages: [stage({ usage_status: "RESERVED", reported_input_tokens: null, reported_output_tokens: null, input_tokens: 1000, output_tokens: 6000, estimated_cost_usd: "0.027013" })],
     total: { usage_status: "RESERVED", reported_input_tokens: null, reported_output_tokens: null, input_tokens: 1000, output_tokens: 6000, estimated_cost_usd: "0.027013" } }, "failed");
   expect((await screen.findAllByText("Reservierte Eingabetoken")).length).toBeGreaterThan(0);
-  expect(screen.getAllByText(/Der tatsächliche Tokenverbrauch ist noch nicht bekannt/).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(/Der tatsächliche Tokenverbrauch ist noch nicht bekannt\. Die Reservierung bleibt vorsorglich im Budget erfasst\./).length).toBeGreaterThan(0);
+  // Nothing settles a reservation later, so no text promises that it will be cleared up.
+  expect(document.body).not.toHaveTextContent(/Klärung|wird .*zugeordnet/);
   expect(screen.getAllByText("Konservative Kostenschätzung").length).toBeGreaterThan(0);
   expect(screen.queryByText("Eingabetoken", { exact: true })).not.toBeInTheDocument();
 });

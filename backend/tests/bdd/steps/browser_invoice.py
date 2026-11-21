@@ -133,21 +133,23 @@ def _row(page, label: str):
 @when("the administrator opens the AI settings of the organization")
 @browser_step
 async def open_settings(browser_world):
-    await _capture(browser_world, "/einstellungen", "settings-card", card="KI für Ihre Organisation")
+    await _capture(browser_world, "/einstellungen", "settings-card-no-invoices", card="KI für Ihre Organisation")
 
 
-@then("the one switch reads that it imports declarations and evaluates invoices and is on at 1280 and 360 pixels")
+@then("the one switch reads that it imports declarations only and no text of the card names invoices at 1280 and 360 pixels")
 @browser_step
 async def settings_switch(browser_world):
+    """The stack runs with HV_INVOICE_EXTRACTION_ENABLED=false, as the portable stack does: its card is about declarations
+    alone. The wording of an installation that processes invoices is tested in the card's own component test."""
     page = browser_world.page
     for viewport in (DESKTOP, PHONE):
         await page.set_viewport_size(viewport)
         await browser_world.visit("/einstellungen")
-        switch = page.get_by_label("Teilungserklärungen importieren und Rechnungen auswerten", exact=True)
+        switch = page.get_by_label("Teilungserklärungen importieren", exact=True)
         await expect(switch).to_be_checked()
-        # The sentence that describes it says what happens to an invoice: scans go to the provider, structured ones do not.
-        description = await switch.get_attribute("aria-describedby")
-        await expect(page.locator(f"#{description}")).to_contain_text("XRechnung oder ZUGFeRD")
+        await expect(switch).not_to_have_attribute("aria-describedby", "ai-import-info")
+        card = page.locator("section").filter(has=page.get_by_role("heading", name="KI für Ihre Organisation", exact=True))
+        await expect(card).not_to_contain_text("Rechnung")
         await _fits_the_width(page)
     await page.set_viewport_size(DESKTOP)
 
@@ -287,7 +289,7 @@ async def disabled_explanation(browser_world):
         await _open_invoice(browser_world, browser_world.world.data["invoice"])
         await expect(page.get_by_text("Automatische Auswertung nicht möglich · Original prüfen")).to_be_visible()
         await expect(page.get_by_text("Die automatische Auswertung per KI ist für Ihre Organisation nicht eingerichtet.")).to_be_visible()
-        await expect(page.get_by_text("Das Dokument wurde nicht an einen KI-Anbieter übermittelt.")).to_be_visible()
+        await expect(page.get_by_text("Es wird nichts (mehr) an einen KI-Anbieter übermittelt.")).to_be_visible()
         await expect(page.get_by_role("region", name="Verbrauch der KI-Verarbeitung")).to_have_count(0)
         await _fits_the_width(page)
     await page.set_viewport_size(DESKTOP)

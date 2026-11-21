@@ -416,3 +416,73 @@ async def test_invoices_need_no_second_confirmation_without_a_stored_key_or_for_
     assert stored.json()['invoice_confirmation_required'] is False
     removed = await client_a_admin.put(path, json={'api_key': None})
     assert removed.json()['key_set'] is False and removed.json()['invoice_confirmation_required'] is False
+
+
+async def _invoice_blocker(org):
+    from app.core.db import get_worker_tenant_session
+    from app.services.ai_settings_service import effective_ai_settings, invoice_import_blocker
+    async with get_worker_tenant_session(org) as db:
+        return invoice_import_blocker(await effective_ai_settings(db, org), needs_reading=False)
+
+
+@pytest.mark.asyncio
+async def test_an_installation_that_processes_invoices_shows_and_records_the_text_that_names_them(client_a_admin, seed_data, migrator_session):
+    from sqlalchemy import text
+    org = seed_data['org_a_id']
+    path = f"/api/organizations/{org}/ai-settings"
+    refused = await client_a_admin.put(path, json={'api_key': 'synthetic-key', 'model': 'gpt-5.6-luna', 'import_enabled': True})
+    assert 'Dokumente (Teilungserklärungen und Rechnungen) und extrahierte Texte' in refused.json()['detail']['message']
+    stored = await client_a_admin.put(path, json={'api_key': 'synthetic-key', 'model': 'gpt-5.6-luna', 'import_enabled': True, 'confirmation': True})
+    assert stored.json()['invoice_processing_enabled'] is True and stored.json()['invoice_confirmation_required'] is False
+    assert await migrator_session.scalar(text('SELECT text_version FROM organization_ai_confirmation WHERE organization_id=:org'), {'org': org}) == '2'
+    assert await _invoice_blocker(org) is None
+
+
+@pytest.mark.asyncio
+async def test_an_installation_without_invoice_processing_names_no_invoices_and_its_confirmation_does_not_cover_them(client_a_admin, seed_data, migrator_session, monkeypatch):
+    from sqlalchemy import text
+    from app.core.config import settings
+    monkeypatch.setattr(settings, 'invoice_extraction_enabled', False)
+    org = seed_data['org_a_id']
+    path = f"/api/organizations/{org}/ai-settings"
+    refused = await client_a_admin.put(path, json={'api_key': 'synthetic-key', 'model': 'gpt-5.6-luna', 'import_enabled': True})
+    assert refused.status_code == 422 and 'Rechnung' not in refused.json()['detail']['message']
+    assert 'Dokumente und extrahierte Texte' in refused.json()['detail']['message']
+    stored = await client_a_admin.put(path, json={'api_key': 'synthetic-key', 'model': 'gpt-5.6-luna', 'import_enabled': True, 'confirmation': True})
+    assert stored.status_code == 200, stored.text
+    body = stored.json()
+    # The card learns that no invoices are processed here, and asks for nothing about them; the declaration import is confirmed.
+    assert (body['invoice_processing_enabled'], body['invoice_confirmation_required'], body['confirmation_required']) == (False, False, False)
+    assert body['confirmation']['confirmed_by_name']
+    # The text this installation showed does not name invoices, and that is the version on record.
+    assert await migrator_session.scalar(text('SELECT text_version FROM organization_ai_confirmation WHERE organization_id=:org'), {'org': org}) == '1'
+    assert (await client_a_admin.get(path)).json()['invoice_confirmation_required'] is False
+
+    # Invoice processing is switched on later: nothing the organization confirmed named invoices, so none is sent.
+    monkeypatch.setattr(settings, 'invoice_extraction_enabled', True)
+    again = (await client_a_admin.get(path)).json()
+    assert (again['invoice_processing_enabled'], again['invoice_confirmation_required'], again['confirmation_required']) == (True, True, False)
+    assert again['import_enabled'] is True
+    assert await _invoice_blocker(org) == 'ai_invoice_confirmation_missing'
+    # Confirming the text that names invoices, without entering the key again, releases them.
+    confirmed = await client_a_admin.put(path, json={'model': 'gpt-5.6-luna', 'import_enabled': True, 'confirmation': True})
+    assert confirmed.status_code == 200 and confirmed.json()['invoice_confirmation_required'] is False
+    assert await _invoice_blocker(org) is None
+    versions = (await migrator_session.execute(text('SELECT text_version FROM organization_ai_confirmation WHERE organization_id=:org ORDER BY confirmed_at'), {'org': org})).scalars().all()
+    assert versions == ['1', '2']
+
+
+@pytest.mark.asyncio
+async def test_where_invoices_are_not_processed_a_key_confirmed_for_invoices_is_not_asked_again(client_a_admin, seed_data, migrator_session, monkeypatch):
+    from sqlalchemy import text
+    from app.core.config import settings
+    org = seed_data['org_a_id']
+    _store_confirmed_before_invoices(org, seed_data['user_a_admin_id'])
+    monkeypatch.setattr(settings, 'invoice_extraction_enabled', False)
+    path = f"/api/organizations/{org}/ai-settings"
+    body = (await client_a_admin.get(path)).json()
+    assert (body['invoice_processing_enabled'], body['invoice_confirmation_required'], body['confirmation_required']) == (False, False, False)
+    # Saving with the tick records nothing: the confirmation on record is the text this installation shows.
+    saved = await client_a_admin.put(path, json={'model': 'gpt-5.6-luna', 'import_enabled': True, 'confirmation': True})
+    assert saved.status_code == 200
+    assert await migrator_session.scalar(text('SELECT count(*) FROM organization_ai_confirmation WHERE organization_id=:org'), {'org': org}) == 1

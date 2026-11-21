@@ -2173,7 +2173,7 @@ The service uses the same immutable app image and existing `documents` volume,
 mounted **read-only**. It receives `HV_DATABASE_URL_WORKER` (`app_worker`),
 local storage/worker settings and `HV_INVOICE_EXTRACTION_ENABLED` (default true,
 shared with the API), and, to call the organization's provider like the declaration worker,
-`HV_SESSION_SECRET` (the organization's key is stored encrypted under it) and `HV_DATA_REGION`. It joins
+`HV_SESSION_SECRET` (the organization's key is stored encrypted under it). It joins
 the networks of the declaration worker and no others: `backend` for the database and the non-internal
 `egress` network for provider HTTPS, with the same gateway priorities, so its egress is not wider than the
 declaration worker's. No provider key is configured on the service: the key is the organization's, read from
@@ -2197,9 +2197,14 @@ nonzero on an iteration failure. Retry/lease budgets and human review are unchan
 **What an invoice costs and when it is sent.** An unstructured PDF is sent to the organization's provider
 only when its AI import switch, key and extraction model allow it and its provider confirmation names invoices (text
 version 2; an organization that confirmed version 1 keeps its declaration import and is asked once more for invoices,
-and nothing is sent until then). A scan also needs the reading model „Dokumente einlesen“. Per attempt an invoice is
-bounded to 10 pages, 60,000 characters, 300,000 input and 64,000 output tokens and 0.25 USD (documented constants, no
-keys), every request is reserved and settled in `invoice_model_call` and counts towards the organization's monthly
+and nothing is sent until then; an installation with `HV_INVOICE_EXTRACTION_ENABLED=false` shows and records the text
+without invoices, so a confirmation given there does not cover them if processing is switched on later). The switch,
+key and confirmation are read again before every request, so turning them off stops a running invoice before its next
+request. **On upgrade, an organization without the opt-in no longer gets a locally read proposal for a PDF with a text
+layer: it ends without one and is entered by hand; structured invoices (XRechnung, ZUGFeRD/Factur-X) are unaffected.**
+A scan also needs the reading model „Dokumente einlesen“. Per attempt an invoice is
+bounded to 10 pages, 60,000 characters (no further page is read once the text so far passes it), 300,000 input and
+64,000 output tokens and 0.25 USD (documented constants, no keys), every request is reserved and settled in `invoice_model_call` and counts towards the organization's monthly
 limit, and a retry reads and pays for the pages again because page transcripts are not stored. The ledger is not part of
 the organization export. See [invoice extraction](docs/operations/invoice-extraction.md).
 

@@ -32,7 +32,7 @@ export function UsageRows({ usage, runtime, inFlight = false }: { usage: Usage; 
     </dl>
     {status === 'RESERVED' && <p className="text-sm text-muted-foreground mt-3">{inFlight
       ? 'Reserviert für den Aufruf, der gerade läuft. Nach dessen Abschluss wird der Verbrauch der Stufe zugeordnet.'
-      : 'Der tatsächliche Tokenverbrauch ist noch nicht bekannt. Die Reservierung bleibt bis zur Klärung vorsorglich im Budget erfasst.'}</p>}
+      : 'Der tatsächliche Tokenverbrauch ist noch nicht bekannt. Die Reservierung bleibt vorsorglich im Budget erfasst.'}</p>}
     {status === 'PARTIAL' && <p className="text-sm text-muted-foreground mt-3">Anbieterangaben liegen nur teilweise vor. Die konservativ erfassten Werte enthalten auch den weiterhin reservierten Anteil.</p>}
   </>;
 }

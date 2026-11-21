@@ -211,7 +211,7 @@ function openInvoice(document: InvoiceDocument, usage: unknown = { stages: [], t
 }
 
 it.each([
-  ["unavailable", "ai_import_disabled", /nicht eingerichtet.*nicht an einen KI-Anbieter übermittelt.*Original bleibt erhalten/s],
+  ["unavailable", "ai_import_disabled", /nicht eingerichtet.*nichts \(mehr\) an einen KI-Anbieter übermittelt.*Verbrauch der KI-Verarbeitung.*Original bleibt erhalten/s],
   ["unavailable", "ai_invoice_confirmation_missing", /noch nicht bestätigt.*Rechnungen an den KI-Anbieter/s],
   ["unavailable", "organization_ai_budget_exceeded", /monatliche KI-Budget.*ausgeschöpft.*Verbrauch der KI-Verarbeitung/s],
   ["failed", "model_reading_failed", /Dokumente einlesen.*nichts übernommen.*erneut Kosten/s],

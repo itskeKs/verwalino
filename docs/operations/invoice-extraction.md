@@ -46,6 +46,27 @@ reading model ends with `ai_document_model_missing`; a key that cannot be decryp
 with `ai_key_unreadable`. In each case no provider is built, the original is kept and no proposal
 exists; the manual path (**Kostenposition erstellen**) stays open.
 
+**An installation that does not process invoices says nothing about them.** Where
+`HV_INVOICE_EXTRACTION_ENABLED` is `false` (the portable stack, including the hosted server) the settings card
+„KI für Ihre Organisation“ is about the declaration import alone: its switch reads „Teilungserklärungen importieren“,
+and neither the description nor the confirmation text names invoices (the settings answer carries
+`invoice_processing_enabled` for this). A confirmation given there is recorded as text version 1, because that is the
+text the organization saw. If invoice processing is switched on later, that confirmation does not cover invoices:
+none is sent until an administrator has seen and confirmed the text that names them
+(`ai_invoice_confirmation_missing`), exactly as for an organization that confirmed before invoices were covered.
+
+**The opt-in is read again before every request.** The reservation of each request (the transaction that
+also extends the lease and checks the monthly limit) re-reads the organization's settings under the budget lock that every
+settings save holds, with the same decision the worker takes before the run. Turning the switch off, losing the
+confirmation that names invoices, removing the reading model of a scan or making the key unreadable while an invoice
+is being read therefore stops it before its next request, with the code above; what was already requested stays
+in the ledger and on the usage card.
+
+**What changed with this path.** Without the opt-in, a PDF with a text layer no longer gets a locally read
+proposal: it ends `unavailable` with `ai_import_disabled` (or `ai_invoice_confirmation_missing`), as a scan does, and the
+amounts are entered by hand. Earlier releases read such a PDF with a local pattern matcher. Structured invoices
+(XRechnung, ZUGFeRD/Factur-X) are unaffected: they are still parsed locally, with or without the opt-in.
+
 ## Bounds, metering and the budget
 
 Per attempt (documented constants in `declarations/invoice_pipeline.py` and `core/invoice_pdf.py`, no
@@ -54,14 +75,18 @@ transcripts together), **300,000 input and 64,000 output tokens**, **0.25 USD**,
 or 3,000 (extraction) output tokens per request. Pages are rendered at 180 dpi, at most 20 million
 pixels each, within 30 seconds per page and 120 seconds of local work; waiting for a model is not
 counted. A larger original ends `needs_review` or `unsupported` with `invoice_page_limit`,
-`invoice_text_limit`, `invoice_ai_limit` or `image_pixel_limit` and costs nothing it did not already
-cost. The upload limit is 25 MiB, and the local inspection refuses PDFs of more than 200 pages
+`invoice_ai_limit` or `image_pixel_limit` before the request that would pass the bound. The text bound
+(`invoice_text_limit`) is checked after every page: once the text of the pages read so far passes 60,000
+characters no further page is read or paid, but the pages read until then were requested and stay in the ledger. The upload limit is 25 MiB, and the local inspection refuses PDFs of more than 200 pages
 (`pdf_page_limit`), encrypted or invalid PDFs.
 
 Every request is reserved before it leaves and settled with its usage in the ledger
 `invoice_model_call` (migration 0197): in short transactions of its own, under the organization's
 budget lock, with the monthly limit checked at the reservation. Failed requests keep their usage; a
-usage the provider did not report stays at the reservation. Both stages count towards the same
+usage the provider did not report stays at the reservation, so unknown is never booked as zero: only a request
+that provably never left (a failure raised before anything was sent) costs nothing. A worker shutdown while a
+request is out settles it the same way (error `WORKER_CANCELLED`) and leaves the attempt to be reclaimed after its lease;
+a request lost with a killed worker process stays reserved and counts at its full reservation, with no later settlement. Both stages count towards the same
 monthly total as the declaration import (`organization_ai_monthly_usage`), so no invoice obtains
 calls outside the budget. A reached limit ends the attempt with `organization_ai_budget_exceeded`
 before the next request is sent; a model without a known price is not limited, as for the import.
@@ -127,7 +152,7 @@ infrastructure of M-B or measured professional capacity of M-G.
 
 To reach the organization's provider the worker needs the session secret (the key is stored encrypted under it)
 and the same provider route as the declaration worker. In `docker-compose.prod.yml` the `invoice-worker`
-joins the `backend` and `egress` networks like `worker` and receives `HV_SESSION_SECRET` and `HV_DATA_REGION`;
+joins the `backend` and `egress` networks like `worker` and receives `HV_SESSION_SECRET`;
 see [DEPLOY.md](../../DEPLOY.md#invoice-worker-t10). **The portable stack, including the hosted server, starts no invoice
 worker and keeps `HV_INVOICE_EXTRACTION_ENABLED` off, so there an uploaded invoice is saved and waits for manual entry.**
 

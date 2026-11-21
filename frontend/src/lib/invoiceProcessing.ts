@@ -23,6 +23,9 @@ const KEPT = "Das Original bleibt erhalten; es wurde nichts übernommen.";
 const BY_HAND = "die Angaben von Hand eintragen („Kostenposition erstellen“)";
 const MANUAL = `Sie können ${BY_HAND}.`;
 const NOT_SENT = "Das Dokument wurde nicht an einen KI-Anbieter übermittelt.";
+// What the organization's own choices end can happen before the first request or while the invoice is being read (the
+// consent is read again before every request): nothing more is sent, and what was already requested is on the usage card.
+const NOTHING_MORE_SENT = "Es wird nichts (mehr) an einen KI-Anbieter übermittelt. Falls schon Anfragen gesendet wurden, steht ihr Verbrauch unter „Verbrauch der KI-Verarbeitung“.";
 const SETTINGS = "in den Einstellungen unter „KI für Ihre Organisation“";
 const PAID_AGAIN = "Ein erneuter Start liest das Dokument noch einmal ein und verursacht erneut Kosten.";
 const CHOOSE_OTHER = `Bleibt der Fehler bestehen, kann Ihre Administration ${SETTINGS} ein anderes Modell wählen.`;
@@ -30,10 +33,10 @@ const LEGACY_OCR = `Die frühere Texterkennung konnte dieses Dokument nicht ausw
 
 export const INVOICE_PROCESSING_MESSAGES: Record<string, string> = {
   // The organization's choices and what the models need
-  ai_import_disabled: `Die automatische Auswertung per KI ist für Ihre Organisation nicht eingerichtet. ${NOT_SENT} ${KEPT} ${MANUAL} Ihre Administration kann ${SETTINGS} die KI einrichten und den Schalter für Teilungserklärungen und Rechnungen einschalten.`,
-  ai_invoice_confirmation_missing: `Ihre Organisation hat noch nicht bestätigt, dass Rechnungen an den KI-Anbieter übermittelt werden dürfen. ${NOT_SENT} ${KEPT} Ihre Administration kann das ${SETTINGS} bestätigen; danach können Sie die Verarbeitung erneut starten. ${MANUAL}`,
-  ai_document_model_missing: `Diese Rechnung hat Seiten ohne Text (zum Beispiel einen Scan), und für das Einlesen fehlt ein Modell. ${NOT_SENT} ${KEPT} Ihre Administration kann ${SETTINGS} ein Modell unter „Dokumente einlesen“ wählen; danach können Sie die Verarbeitung erneut starten. ${MANUAL}`,
-  ai_key_unreadable: `Der gespeicherte KI-Schlüssel Ihrer Organisation kann nicht gelesen werden. ${NOT_SENT} ${KEPT} Ihre Administration muss den Schlüssel ${SETTINGS} erneut hinterlegen; danach können Sie die Verarbeitung erneut starten.`,
+  ai_import_disabled: `Die automatische Auswertung per KI ist für Ihre Organisation nicht eingerichtet. ${NOTHING_MORE_SENT} ${KEPT} ${MANUAL} Ihre Administration kann ${SETTINGS} die KI einrichten und den Schalter für Teilungserklärungen und Rechnungen einschalten.`,
+  ai_invoice_confirmation_missing: `Ihre Organisation hat noch nicht bestätigt, dass Rechnungen an den KI-Anbieter übermittelt werden dürfen. ${NOTHING_MORE_SENT} ${KEPT} Ihre Administration kann das ${SETTINGS} bestätigen; danach können Sie die Verarbeitung erneut starten. ${MANUAL}`,
+  ai_document_model_missing: `Diese Rechnung hat Seiten ohne Text (zum Beispiel einen Scan), und für das Einlesen fehlt ein Modell. ${NOTHING_MORE_SENT} ${KEPT} Ihre Administration kann ${SETTINGS} ein Modell unter „Dokumente einlesen“ wählen; danach können Sie die Verarbeitung erneut starten. ${MANUAL}`,
+  ai_key_unreadable: `Der gespeicherte KI-Schlüssel Ihrer Organisation kann nicht gelesen werden. ${NOTHING_MORE_SENT} ${KEPT} Ihre Administration muss den Schlüssel ${SETTINGS} erneut hinterlegen; danach können Sie die Verarbeitung erneut starten.`,
   organization_ai_budget_exceeded: `Das monatliche KI-Budget Ihrer Organisation ist ausgeschöpft; die nächste Anfrage an den Anbieter wurde deshalb nicht gesendet. ${KEPT} Was bis dahin verbraucht wurde, steht unter „Verbrauch der KI-Verarbeitung“. Ihre Administration kann das Limit ${SETTINGS} anpassen; danach, oder im nächsten Kalendermonat (UTC), können Sie die Verarbeitung erneut starten. ${MANUAL}`,
   // The bounds of one invoice
   invoice_page_limit: `Das Dokument hat zu viele Seiten für die automatische Auswertung einer Rechnung. ${NOT_SENT} ${KEPT} ${MANUAL} Oder laden Sie eine Fassung mit nur den Rechnungsseiten hoch.`,

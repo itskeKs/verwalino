@@ -2308,7 +2308,9 @@ key field states that the organization chose and contracted the provider itself
 (data processing, storage location and no training use) and instructs the operator
 of this installation to transmit documents and extracted text to that provider; the
 wording is provisional until the reviewed AV-Vertrag of #26 and names „Dokumente (Teilungserklärungen und Rechnungen)“
-since text version 2 (#500). Saving without the tick
+since text version 2 (#500) where the installation processes invoices (`invoice_processing_enabled`); where it does not
+(`HV_INVOICE_EXTRACTION_ENABLED=false`, the portable stack) it names only „Dokumente“, the refusal message likewise, and
+the confirmation is recorded as text version 1, so it does not cover invoices if processing is switched on later. Saving without the tick
 is refused with a German message at the field (structured code
 `ORGANIZATION_AI_CONFIRMATION_REQUIRED`) and no key is stored. A key stored before
 this requirement keeps the checkbox visible without re-entering it and stays unused
@@ -2340,6 +2342,10 @@ The one switch of the card is labelled „Teilungserklärungen importieren und R
 XRechnung and ZUGFeRD are read directly and not sent, invoices are sent only after the current confirmation text was
 accepted, every request counts towards the monthly limit and an invoice shows its own usage. The intro of the card says the
 same for invoices, and the sentence about a missing „Dokumente einlesen“ model adds that scanned invoices are then not read.
+Where the installation does not process invoices (`invoice_processing_enabled` false) the card is about declarations alone:
+the switch reads „Teilungserklärungen importieren“ without a description paragraph, and the intro, the
+missing-model sentence and the confirmation name no invoices; the invoice paragraph, the earlier-confirmation sentence and
+`invoice_confirmation_required` do not appear. Until the settings are loaded the intro claims nothing about invoices.
 
 ### Invoice processing: outcomes and usage (#500)
 
@@ -2349,7 +2355,10 @@ The invoice screen (`/belege/:id`) states how the processing ended under its sta
 and nothing was applied (“Das Original bleibt erhalten; es wurde nichts übernommen.”), and what to do (enter the values by hand
 with „Kostenposition erstellen“, start again, change settings, ask the operator). Texts that follow a request to a model add
 that starting again „verursacht erneut Kosten“. There is no text while the invoice waits, runs or succeeded; a code without a
-text shows “Die Verarbeitung konnte nicht abgeschlossen werden. …”, never the code. „Dokument ansehen“ stays in every state.
+text shows “Die Verarbeitung konnte nicht abgeschlossen werden. …”, never the code. The organization's consent is read again
+before every request, so the four setup reasons (switch off, confirmation, reading model, key) can also end an invoice that is
+already being read: their text says „Es wird nichts (mehr) an einen KI-Anbieter übermittelt“ and points to the usage card for
+what was requested before, instead of claiming that nothing was sent. „Dokument ansehen“ stays in every state.
 The retry button reads „Verarbeitung erneut starten“ and is also offered after a cancellation caused by a lost permission; a
 refused start (all three attempts used) is explained in German, not with the server's message.
 
@@ -2370,7 +2379,8 @@ run with `VERWALINO_CAPTURE_STATE=before` against the previous frontend the "bef
 | AI evaluation not set up: explanation, nothing sent | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-before-1280.png) | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-before-360.png) | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-after-360.png) |
 | Scan read by both models: proposal and usage card below the actions | [view](docs/assets/design/invoice-processing/invoice-proposal-before-1280.png) | [view](docs/assets/design/invoice-processing/invoice-proposal-before-360.png) | [view](docs/assets/design/invoice-processing/invoice-proposal-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-proposal-after-360.png) |
 | Card „Verbrauch der KI-Verarbeitung“ (no such card before) | none | none | [view](docs/assets/design/invoice-processing/invoice-usage-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-usage-after-360.png) |
-| AI settings card: one switch for declarations and invoices, invoice paragraph | [view](docs/assets/design/invoice-processing/settings-card-before-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-before-360.png) | [view](docs/assets/design/invoice-processing/settings-card-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-after-360.png) |
+| AI settings card of an installation that processes invoices: one switch for declarations and invoices, invoice paragraph | [view](docs/assets/design/invoice-processing/settings-card-before-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-before-360.png) | [view](docs/assets/design/invoice-processing/settings-card-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-after-360.png) |
+| AI settings card of an installation that processes no invoices (the local stack, as the portable one): declarations only; the before files are the card above, which named invoices there | [view](docs/assets/design/invoice-processing/settings-card-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-after-360.png) | [view](docs/assets/design/invoice-processing/settings-card-no-invoices-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-no-invoices-after-360.png) |
 
 ### Declaration import: consumption per stage and failure explanations
 
@@ -2381,7 +2391,7 @@ the model name (wrapping), its tokens and its cost; then a „Gesamt“ block wi
 the runtime. Every block is a definition list that is one column up to 640 px and two columns
 above, with the usage vocabulary of the total: „Eingabetoken“/„Ausgabetoken“ for provider-reported
 usage; „Reservierte …“ while usage is unknown, with the sentence that the Reservierung stays in
-the budget; „Gemeldete …“ and „Konservativ erfasste …“ together when only part was reported;
+the budget („Die Reservierung bleibt vorsorglich im Budget erfasst.“; nothing promises a later clarification, none happens); „Gemeldete …“ and „Konservativ erfasste …“ together when only part was reported;
 „Tokenverbrauch unbekannt“ when nothing is known, without a cost row (there is nothing to price).
 The cost reads „Geschätzte Kosten“ for reported
 usage and „Konservative Kostenschätzung“ otherwise, in USD with at most six decimals, or „kein

@@ -2028,8 +2028,10 @@ export interface OrganizationAiSettings {
   document_price_known: boolean;
   confirmation: OrganizationAiConfirmation | null;
   confirmation_required: boolean;
-  /** A stored key whose confirmation does not name invoices (none, or one of an earlier text): invoices stay on the host. */
+  /** This installation processes invoices with the organization's models; where it does not, the card names no invoices. */
+  invoice_processing_enabled: boolean;
+  /** A stored key whose confirmation does not name invoices (none, or one of an earlier text), where invoices are processed: they stay on the host. */
   invoice_confirmation_required: boolean;
 }
 export interface AiModel { id: string; evaluated: boolean; price_known: boolean }
-export type OrganizationAiSettingsBody = Omit<OrganizationAiSettings, 'key_set' | 'price_known' | 'document_price_known' | 'confirmation' | 'confirmation_required' | 'invoice_confirmation_required'> & { api_key?: string | null; confirmation?: boolean };
+export type OrganizationAiSettingsBody = Omit<OrganizationAiSettings, 'key_set' | 'price_known' | 'document_price_known' | 'confirmation' | 'confirmation_required' | 'invoice_processing_enabled' | 'invoice_confirmation_required'> & { api_key?: string | null; confirmation?: boolean };

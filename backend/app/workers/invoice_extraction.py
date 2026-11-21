@@ -25,12 +25,11 @@ from app.core.db import get_worker_session_factory, get_worker_unscoped_session,
 from app.declarations.invoice_pipeline import (
     INVOICE_MAX_PAGES,
     INVOICE_PAGE_LIMIT,
-    INVOICE_TEXT_MIN_CHARS,
     InvoiceModelPipeline,
     InvoicePage,
     close_invoice_providers,
     create_invoice_providers,
-    non_whitespace_length,
+    pages_need_reading,
 )
 from app.declarations.provider import InvoiceCategory
 from app.models.invoice_processing_attempt import InvoiceProcessingAttempt
@@ -80,8 +79,7 @@ async def model_outcome(factory, org_id, claim, data, inspected, providers):
         except AiKeyUnreadableError:
             return outcome("unavailable", INVOICE_AI_KEY_UNREADABLE)
         categories = [InvoiceCategory(item.code, item.label) for item in await CostCategoryRepository(session).list_active()]
-    needs_reading = any(non_whitespace_length(page.text) < INVOICE_TEXT_MIN_CHARS for page in pages)
-    blocker = invoice_import_blocker(effective, needs_reading=needs_reading)
+    blocker = invoice_import_blocker(effective, needs_reading=pages_need_reading(pages))
     if blocker is not None:
         return outcome("unavailable", blocker)
     if inspected["page_count"] > INVOICE_MAX_PAGES:

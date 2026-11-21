@@ -79,10 +79,12 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
   // An older confirmation, given before invoices were covered, keeps the declaration import and asks again for invoices.
   const confirmationNeeded = !removeKey && Boolean(key.trim() || (settings?.key_set && (settings.confirmation_required || settings.invoice_confirmation_required)));
   const earlierConfirmation = Boolean(settings?.key_set && !settings.confirmation_required && settings.invoice_confirmation_required && settings.confirmation && !removeKey && !key.trim());
+  // Invoices are named only where this installation processes them; until the settings are loaded nothing is claimed.
+  const invoices = settings?.invoice_processing_enabled === true;
   return <section className="card mt-6 p-5 sm:p-6 min-w-0" aria-labelledby="ai-heading">
     <h2 id="ai-heading">KI für Ihre Organisation</h2>
     <p className="text-sm text-muted-foreground mt-2">Ihre Organisation verwendet ihren eigenen API-Schlüssel beim gewählten Anbieter. Sie wählen zwei Modelle des Anbieters: eines zum Einlesen Ihrer Dokumente und eines zum Extrahieren der Informationen. Dasselbe Modell darf für beide Aufgaben gewählt werden.</p>
-    <p className="text-sm text-muted-foreground mt-2">Bei aktivierten Funktionen werden die benötigten Dokumentinhalte an den gewählten Anbieter bzw. die konfigurierte Basis-URL übermittelt. Das gilt auch für Rechnungen: Hochgeladene Rechnungen ohne strukturierte E-Rechnungsdaten (zum Beispiel Scans und gewöhnliche PDF-Dateien) werden zum Auswerten an den Anbieter übermittelt. E-Rechnungen im Format XRechnung oder ZUGFeRD werden direkt gelesen und nicht übermittelt. Verwalino stellt keinen API-Schlüssel bereit.</p>
+    <p className="text-sm text-muted-foreground mt-2">Bei aktivierten Funktionen werden die benötigten Dokumentinhalte an den gewählten Anbieter bzw. die konfigurierte Basis-URL übermittelt.{invoices && ' Das gilt auch für Rechnungen: Hochgeladene Rechnungen ohne strukturierte E-Rechnungsdaten (zum Beispiel Scans und gewöhnliche PDF-Dateien) werden zum Auswerten an den Anbieter übermittelt. E-Rechnungen im Format XRechnung oder ZUGFeRD werden direkt gelesen und nicht übermittelt.'} Verwalino stellt keinen API-Schlüssel bereit.</p>
     {error && <p role="alert" className="error-text mt-4">{error}</p>}
     {!settings ? error ? <Button variant="outline" onClick={() => setReload(value => value + 1)}>Erneut laden</Button> : <p role="status" className="mt-4">KI-Einstellungen werden geladen …</p> :
       <form onSubmit={event => void submit(event)} className="mt-5">
@@ -124,7 +126,7 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
                 {earlierConfirmation && settings.confirmation && <p className="text-sm mt-3 mb-2">Die Bestätigung vom {formatDateTime(settings.confirmation.confirmed_at)} von {settings.confirmation.confirmed_by_name} galt, bevor Rechnungen ausgewertet wurden. Teilungserklärungen sind davon nicht betroffen. Rechnungen werden erst nach einer neuen Bestätigung an den Anbieter übermittelt; bis dahin bleiben sie in Verwalino und können von Hand erfasst werden.</p>}
                 <label className="flex gap-2 items-start text-sm">
                   <input type="checkbox" checked={confirmation} onChange={event => { setConfirmation(event.target.checked); setConfirmationError(null); setMessage(''); }} />
-                  <span>Wir haben den Anbieter selbst gewählt und mit ihm einen Vertrag geschlossen, der die Datenverarbeitung, den Speicherort und den Verzicht auf eine Trainingsnutzung abdeckt. Wir weisen den Betreiber dieser Installation an, Dokumente (Teilungserklärungen und Rechnungen) und extrahierte Texte an den gewählten Anbieter zu übermitteln.</span>
+                  <span>Wir haben den Anbieter selbst gewählt und mit ihm einen Vertrag geschlossen, der die Datenverarbeitung, den Speicherort und den Verzicht auf eine Trainingsnutzung abdeckt. Wir weisen den Betreiber dieser Installation an, {invoices ? 'Dokumente (Teilungserklärungen und Rechnungen)' : 'Dokumente'} und extrahierte Texte an den gewählten Anbieter zu übermitteln.</span>
                 </label>
                 {confirmationError && <p role="alert" className="error-text mt-2">{confirmationError}</p>}
               </div>}
@@ -133,14 +135,14 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
           <ModelSelect id="ai-document-model" label="Dokumente einlesen" value={settings.document_model} models={models}
             hint="Dieses Modell liest die Seiten Ihrer Dokumente und überträgt, was dort zu sehen ist. Es muss Bilder lesen können."
             onChange={(choice, id) => { setSettings({...settings, document_model:id, document_price_known:choice?.price_known ?? false}); setMessage(''); }} />
-          {settings.import_enabled && !settings.document_model && <p className="text-sm -mt-3">Für den Import von Teilungserklärungen fehlt noch ein Modell unter „Dokumente einlesen“. Ohne diese Auswahl startet kein Import; bereits hochgeladene Dokumente bleiben erhalten. Rechnungen, die gescannt sind oder Seiten ohne Text haben, werden dann ebenfalls nicht ausgewertet; ihre Originale bleiben erhalten.</p>}
+          {settings.import_enabled && !settings.document_model && <p className="text-sm -mt-3">Für den Import von Teilungserklärungen fehlt noch ein Modell unter „Dokumente einlesen“. Ohne diese Auswahl startet kein Import; bereits hochgeladene Dokumente bleiben erhalten.{invoices && ' Rechnungen, die gescannt sind oder Seiten ohne Text haben, werden dann ebenfalls nicht ausgewertet; ihre Originale bleiben erhalten.'}</p>}
           <ModelSelect id="ai-model" label="Informationen extrahieren" value={settings.model} models={models}
             hint="Dieses Modell wertet das Eingelesene aus, schlägt Zuordnungen vor und beantwortet Fragen zum Objektwissen. Alle vom Anbieter gelisteten Modelle sind auswählbar. „geprüft“ kennzeichnet bestandene Verwalino-Evaluationen. Andere Modelle können erforderliche Funktionen ablehnen."
             onChange={(choice, id) => { setSettings({...settings, model:id, price_known:choice?.price_known ?? false}); setMessage(''); }} />
-          <div>
+          {invoices ? <div>
             <label className="flex gap-2 items-start"><input type="checkbox" checked={settings.import_enabled} disabled={removeKey} aria-describedby="ai-import-info" onChange={event => { setSettings({...settings, import_enabled:event.target.checked}); setMessage(''); }} />Teilungserklärungen importieren und Rechnungen auswerten</label>
             <p id="ai-import-info" className="text-sm text-muted-foreground mt-2">Ist dieser Schalter an, übermittelt Verwalino hochgeladene Teilungserklärungen und Rechnungen ohne strukturierte E-Rechnungsdaten (zum Beispiel Scans) an den gewählten Anbieter. Rechnungen im Format XRechnung oder ZUGFeRD werden direkt gelesen und nicht übermittelt. Rechnungen werden erst übermittelt, wenn Ihre Organisation den aktuellen Bestätigungstext angenommen hat. Jede Anfrage zählt zum monatlichen Limit; was ein Beleg verbraucht hat, steht an dem Beleg.</p>
-          </div>
+          </div> : <label className="flex gap-2 items-start"><input type="checkbox" checked={settings.import_enabled} disabled={removeKey} onChange={event => { setSettings({...settings, import_enabled:event.target.checked}); setMessage(''); }} />Teilungserklärungen importieren</label>}
           <label className="flex gap-2 items-start"><input type="checkbox" checked={settings.qa_enabled} disabled={removeKey} onChange={event => { setSettings({...settings, qa_enabled:event.target.checked}); setMessage(''); }} />Fragen zum Objektwissen</label>
           <div>
             <Label htmlFor="ai-monthly-limit">Monatliches Limit in USD (optional)</Label>

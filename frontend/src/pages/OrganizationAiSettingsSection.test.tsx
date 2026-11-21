@@ -9,7 +9,7 @@ const settings = {
   provider: "openai", base_url: null, key_set: true, model: "evaluated-model",
   document_model: "reading-model", document_price_known: true,
   import_enabled: false, qa_enabled: true, monthly_limit_usd: "5.00", price_known: true,
-  request_timeout_seconds: null, confirmation, confirmation_required: false, invoice_confirmation_required: false,
+  request_timeout_seconds: null, confirmation, confirmation_required: false, invoice_processing_enabled: true, invoice_confirmation_required: false,
 };
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -190,4 +190,53 @@ it("asks again for invoices when the stored confirmation predates them, and leav
   expect(put).toHaveBeenLastCalledWith("/api/organizations/org-1/ai-settings", expect.objectContaining({ confirmation: true }));
   expect(put.mock.calls[1][1]).not.toHaveProperty("api_key");
   expect(screen.queryByText(/galt, bevor Rechnungen ausgewertet wurden/)).not.toBeInTheDocument();
+});
+
+// Where this installation does not process invoices (HV_INVOICE_EXTRACTION_ENABLED=false, the portable stack) the card
+// is about the declaration import alone: it says nothing about invoices being evaluated or sent.
+const withoutInvoices = { ...settings, invoice_processing_enabled: false };
+
+it("claims nothing about invoices before the settings say whether this installation processes them", async () => {
+  vi.spyOn(api, "get").mockReturnValue(new Promise(() => {}) as never);
+  const { container } = render(<OrganizationAiSettingsSection organizationId="org-1" />);
+
+  expect(await screen.findByRole("status")).toHaveTextContent("KI-Einstellungen werden geladen");
+  expect(container).toHaveTextContent("Bei aktivierten Funktionen werden die benötigten Dokumentinhalte");
+  expect(container).not.toHaveTextContent(/Rechnung/);
+});
+
+it("names no invoices in the switch, its description, the hints or the confirmation where invoices are not processed", async () => {
+  vi.spyOn(api, "get").mockResolvedValue({ ...withoutInvoices, import_enabled: true, document_model: null, document_price_known: false, confirmation_required: true, confirmation: null } as never);
+  const { container } = render(<OrganizationAiSettingsSection organizationId="org-1" />);
+
+  const toggle = await screen.findByLabelText("Teilungserklärungen importieren");
+  expect(toggle).toBeChecked();
+  expect(toggle).not.toHaveAttribute("aria-describedby");
+  expect(container.querySelector("#ai-import-info")).toBeNull();
+  expect(screen.getByText(/Für den Import von Teilungserklärungen fehlt noch ein Modell unter „Dokumente einlesen“/)).toBeVisible();
+  expect(screen.getByLabelText(/Anbieter selbst gewählt/).closest("label")).toHaveTextContent("Dokumente und extrahierte Texte an den gewählten Anbieter zu übermitteln.");
+  expect(container).not.toHaveTextContent(/Rechnung/);
+});
+
+it("stores the confirmation without a word about invoices where they are not processed, and asks nothing more about them", async () => {
+  vi.spyOn(api, "get").mockResolvedValue({ ...withoutInvoices, confirmation_required: true, confirmation: null } as never);
+  const put = vi.spyOn(api, "put").mockImplementation(async (_url, body) => ({ ...withoutInvoices, ...(body as object), confirmation }) as never);
+  render(<OrganizationAiSettingsSection organizationId="org-1" />);
+
+  fireEvent.click(await screen.findByLabelText(/Anbieter selbst gewählt/));
+  fireEvent.click(screen.getByRole("button", { name: "KI-Einstellungen speichern" }));
+  expect(await screen.findByText(/Bestätigt am .* von Admin Alpha\./)).toBeVisible();
+  expect(put).toHaveBeenLastCalledWith("/api/organizations/org-1/ai-settings", expect.objectContaining({ confirmation: true }));
+  expect(screen.queryByLabelText(/Anbieter selbst gewählt/)).not.toBeInTheDocument();
+});
+
+it("shows the invoice wording again once the settings say that invoices are processed", async () => {
+  vi.spyOn(api, "get").mockResolvedValueOnce(withoutInvoices as never).mockResolvedValueOnce({ ...settings, invoice_confirmation_required: true } as never);
+  const { unmount } = render(<OrganizationAiSettingsSection organizationId="org-1" />);
+  expect(await screen.findByLabelText("Teilungserklärungen importieren")).toBeInTheDocument();
+  unmount();
+
+  render(<OrganizationAiSettingsSection organizationId="org-1" />);
+  expect(await screen.findByLabelText("Teilungserklärungen importieren und Rechnungen auswerten")).toBeInTheDocument();
+  expect(screen.getByLabelText(/Dokumente \(Teilungserklärungen und Rechnungen\) und extrahierte Texte/)).toBeInTheDocument();
 });

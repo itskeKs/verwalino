@@ -3,6 +3,7 @@
 Everything here runs the real queue-fenced worker against the test database with the in-process fake providers: no
 provider call is made, and Tesseract is made unusable, because this path has none.
 """
+import asyncio
 import io
 import subprocess
 import sys
@@ -22,7 +23,7 @@ from app.declarations.fake_provider import (
     FakeInvoiceExtractionProvider,
     synthetic_invoice_output,
 )
-from app.declarations.invoice_pipeline import INVOICE_MAX_COST_USD, INVOICE_MAX_PAGES, InvoiceProviders
+from app.declarations.invoice_pipeline import INVOICE_MAX_COST_USD, INVOICE_MAX_PAGES, INVOICE_MAX_TEXT_CHARS, InvoiceProviders
 from app.declarations.provider import ProviderFailure, ProviderUsage
 from app.declarations.schemas import ReadingBlock
 from app.models.invoice_model_call import InvoiceModelCall
@@ -717,3 +718,121 @@ async def test_a_retry_after_a_failure_is_metered_again_and_the_retries_are_capp
     assert await process_once(get_worker_session_factory(), org, providers=failing) is False
     assert len(await ledger(org)) == spent
     assert [a["status"] for a in (await state(api, second))[1]] == ["failed"] * 3
+
+
+# ---- the opt-in is read again before every request ---------------------------------------------------------
+
+def withdraw(org, how):
+    """What an organization can do to its consent while an invoice is being read, as the database holds it."""
+    if how == "switch":
+        return lambda: sql("UPDATE organization_ai_settings SET import_enabled=false WHERE organization_id=%s", str(org))
+    if how == "confirmation":
+        # A newer confirmation of the text that does not name invoices (the one an installation without invoice
+        # processing records) is the organization's latest word for this destination.
+        return lambda: sql("""INSERT INTO organization_ai_confirmation(organization_id,confirmed_by_user_id,provider,base_url,text_version)
+            SELECT organization_id, confirmed_by_user_id, provider, base_url, '1' FROM organization_ai_confirmation
+            WHERE organization_id=%s LIMIT 1""", str(org))
+    if how == "reading-model":
+        return lambda: sql("UPDATE organization_ai_settings SET document_model=NULL WHERE organization_id=%s", str(org))
+    return lambda: sql("UPDATE organization_ai_settings SET encrypted_api_key='not-a-fernet-token' WHERE organization_id=%s", str(org))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how,code", [
+    ("switch", "ai_import_disabled"), ("confirmation", "ai_invoice_confirmation_missing"),
+    ("reading-model", "ai_document_model_missing"), ("key", "ai_key_unreadable"),
+])
+async def test_an_opt_in_withdrawn_during_the_run_stops_it_before_the_next_request(worker_tenant, how, code):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org)
+    reader = DuringRead(withdraw(org, how), usage=READING_USAGE)
+    harness = Harness(reader=reader)
+    original = scan_pdf(3)
+    doc = await upload(api, original)
+    await process(org, harness)
+    # The page that was out when the consent went is paid and recorded; no further page and no extraction follows.
+    assert [read.pdf_page for read in reader.reads] == [1] and harness.extractor.calls == []
+    document, attempts = await state(api, doc)
+    assert [(a["status"], a["error_code"]) for a in attempts] == [("unavailable", code)]
+    assert (document["processing_status"], document["processing_error_code"]) == ("unavailable", code)
+    assert no_proposal(document) and document["cost_entry_id"] is None
+    assert (await api.get(f"/api/invoice-documents/{doc['id']}/content")).content == original
+    assert [(row.stage, row.pdf_page, row.status) for row in await ledger(org)] == [("read_page", 1, "SETTLED")]
+    assert Decimal((await usage(api, doc))["total"]["estimated_cost_usd"]) == Decimal("0.00165") == await monthly(org)
+
+
+@pytest.mark.asyncio
+async def test_a_switch_turned_off_while_the_last_page_is_read_stops_before_the_extraction_request(worker_tenant):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org)
+    harness = Harness(reader=DuringRead(withdraw(org, "switch"), usage=READING_USAGE))
+    doc = await upload(api, scan_pdf())
+    await process(org, harness)
+    assert len(harness.reader.reads) == 1 and harness.extractor.calls == []
+    document, attempts = await state(api, doc)
+    assert [(a["status"], a["error_code"]) for a in attempts] == [("unavailable", "ai_import_disabled")]
+    assert no_proposal(document) and [row.stage for row in await ledger(org)] == ["read_page"]
+
+
+# ---- the text bound stops the reading ----------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_the_text_bound_stops_the_reading_before_the_next_page_is_read_and_paid(worker_tenant):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org)
+    page = "x" * (INVOICE_MAX_TEXT_CHARS // 2 + 1000)
+    reader = FakeDocumentReadingProvider(transcripts={key: blocks for number in (1, 2, 3) for key, blocks in transcript(number, page).items()}, usage=READING_USAGE)
+    harness = Harness(reader=reader)
+    doc = await upload(api, scan_pdf(3))
+    await process(org, harness)
+    # The second page took the total over the bound; the third was never requested, and nothing was extracted.
+    assert [read.pdf_page for read in reader.reads] == [1, 2] and harness.extractor.calls == []
+    document, attempts = await state(api, doc)
+    assert [(a["status"], a["error_code"]) for a in attempts] == [("needs_review", "invoice_text_limit")]
+    assert no_proposal(document)
+    assert [(row.stage, row.pdf_page, row.status) for row in await ledger(org)] == [("read_page", 1, "SETTLED"), ("read_page", 2, "SETTLED")]
+    assert Decimal((await usage(api, doc))["total"]["estimated_cost_usd"]) == Decimal("0.0033") == await monthly(org)
+
+
+# ---- a shutdown during a request ---------------------------------------------------------------------------
+
+class HangingReader(FakeDocumentReadingProvider):
+    """A request that never answers: the worker is told to stop while it waits."""
+
+    def __init__(self):
+        super().__init__(usage=READING_USAGE)
+        self.out = asyncio.Event()
+
+    async def read_page(self, page, *, model, max_output_tokens):
+        self.out.set()
+        await asyncio.sleep(3600)
+
+
+@pytest.mark.asyncio
+async def test_a_shutdown_during_a_request_settles_it_at_its_reservation_and_leaves_the_attempt_to_be_reclaimed(worker_tenant):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org)
+    reader = HangingReader()
+    doc = await upload(api, scan_pdf(2))
+    task = asyncio.create_task(process_once(get_worker_session_factory(), org, providers=Harness(reader=reader)))
+    await asyncio.wait_for(reader.out.wait(), 60)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    # Nothing stays RESERVED: the request that was out is booked at its reservation, as any usage that is unknown.
+    (row,) = await ledger(org)
+    assert (row.status, row.usage_complete, row.error_code) == ("SETTLED", False, "WORKER_CANCELLED") and row.settled_at is not None
+    assert (row.input_tokens, row.output_tokens, row.cost_usd) == (row.reserved_input_tokens, row.reserved_output_tokens, row.reserved_cost_usd)
+    assert row.reserved_cost_usd > 0 and await monthly(org) == row.reserved_cost_usd
+    (stage,) = (await usage(api, doc))["stages"]
+    assert stage["usage_status"] == "RESERVED" and stage["reported_input_tokens"] is None
+    # The attempt keeps its lease; once it has expired the next claim reads the invoice again, as for any crash.
+    assert (await state(api, doc))[1][0]["status"] == "running"
+    expire_lease(org)()
+    await process(org, Harness(reader=FakeDocumentReadingProvider(usage=READING_USAGE), extractor=FakeInvoiceExtractionProvider(usage=EXTRACTION_USAGE)))
+    document, attempts = await state(api, doc)
+    assert document["processing_status"] == "succeeded" and [a["attempt_no"] for a in attempts] == [2, 1]

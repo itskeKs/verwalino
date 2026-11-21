@@ -6,7 +6,7 @@ import { api } from '../api/client';
 const auth = vi.hoisted(() => ({ session: { user_id:'admin', organization_id:'org-a', role:'OWNER_ADMIN' } }));
 vi.mock('../auth/useAuth', () => ({ useAuth: () => auth }));
 vi.mock('../design/useDesignTheme', () => ({ useDesignTheme: () => ({ theme:'klar', loaded:true, loading:false, saving:false, error:null, save:vi.fn(), reload:vi.fn() }) }));
-const initial = { provider:'openai', base_url:null, key_set:false, model:null, import_enabled:false, qa_enabled:false, monthly_limit_usd:null, price_known:false };
+const initial = { provider:'openai', base_url:null, key_set:false, model:null, import_enabled:false, qa_enabled:false, monthly_limit_usd:null, price_known:false, invoice_processing_enabled:true };
 const byUrl = (value: object) => vi.spyOn(api, 'get').mockImplementation(async (url: string) => (url.includes('/legal-assents') ? [] : value) as never);
 beforeEach(() => {
   vi.restoreAllMocks(); auth.session.role = 'OWNER_ADMIN';
