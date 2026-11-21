@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { DeclarationRunBudget as Run, DeclarationRunStage } from '../../api/types';
 
-type Usage = Pick<Run, 'usage_status' | 'reported_input_tokens' | 'reported_output_tokens' | 'input_tokens' | 'output_tokens' | 'estimated_cost_usd'>;
+export type Usage = Pick<Run, 'usage_status' | 'reported_input_tokens' | 'reported_output_tokens' | 'input_tokens' | 'output_tokens' | 'estimated_cost_usd'>;
 
 const STAGE_TITLES: Record<DeclarationRunStage['stage'], string> = {
   READING: 'Dokumente einlesen',
@@ -13,7 +13,7 @@ const number = (value: number | null | undefined) => value?.toLocaleString('de-D
 // The usage vocabulary is shared by the stages and the total of a run: reported, reserved, both, or unknown.
 // Unknown usage has no cost row: there is nothing to price, and a number there would read as a known zero.
 // `inFlight` is set for the reservation of a run that is still open: the call that holds it has not ended.
-function UsageRows({ usage, runtime, inFlight = false }: { usage: Usage; runtime?: number; inFlight?: boolean }) {
+export function UsageRows({ usage, runtime, inFlight = false }: { usage: Usage; runtime?: number; inFlight?: boolean }) {
   const status = usage.usage_status;
   return <>
     <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 mt-3 text-sm">
@@ -37,7 +37,7 @@ function UsageRows({ usage, runtime, inFlight = false }: { usage: Usage; runtime
   </>;
 }
 
-function Block({ id, title, model, children }: { id: string; title: string; model?: string; children: ReactNode }) {
+export function Block({ id, title, model, children }: { id: string; title: string; model?: string; children: ReactNode }) {
   return <div role="group" aria-labelledby={id} className="mt-3 min-w-0">
     <h4 id={id} className="text-sm font-semibold">{title}</h4>
     {model && <p className="text-sm break-words">{model}</p>}

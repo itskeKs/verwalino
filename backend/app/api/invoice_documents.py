@@ -19,6 +19,8 @@ from app.core.tenant import AuthContext, get_current_user, get_db, require_write
 from app.core.uploads import MAX_UPLOAD_BYTES, read_upload_limited
 from app.models.invoice_document import InvoiceDocument
 from app.repositories.invoice_document_repo import InvoiceDocumentRepository
+from app.repositories.invoice_model_call_repo import InvoiceModelCallRepository
+from app.services.invoice_model_usage import InvoiceModelUsageOut, summarize
 from app.services.invoice_processing_service import InvoiceProcessingService
 from app.services.invoice_document_service import InvoiceDocumentService
 
@@ -206,6 +208,15 @@ async def processing_attempts(doc_id: uuid.UUID, auth: AuthContext = Depends(get
              "error_code": a.error_code, "processor_version": a.processor_version,
              "created_at": a.created_at, "completed_at": a.completed_at}
             for a in await svc.attempts.history(doc_id)]
+
+
+@router.get("/{doc_id}/model-usage", response_model=InvoiceModelUsageOut)
+async def model_usage(doc_id: uuid.UUID, auth: AuthContext = Depends(get_current_user),
+                      db: AsyncSession = Depends(get_db)):
+    """What the model-assisted processing of this invoice has cost so far, over all its attempts."""
+    if await InvoiceDocumentRepository(db, auth.organization_id).get_by_id(doc_id) is None:
+        raise HTTPException(404, "Document not found")
+    return summarize(await InvoiceModelCallRepository(db, auth.organization_id).for_document(doc_id))
 
 
 def _to_out(d: InvoiceDocument) -> InvoiceDocumentOut:

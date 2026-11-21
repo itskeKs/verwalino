@@ -2307,11 +2307,15 @@ Storing or replacing the key requires the provider confirmation: a checkbox at t
 key field states that the organization chose and contracted the provider itself
 (data processing, storage location and no training use) and instructs the operator
 of this installation to transmit documents and extracted text to that provider; the
-wording is provisional until the reviewed AV-Vertrag of #26. Saving without the tick
+wording is provisional until the reviewed AV-Vertrag of #26 and names „Dokumente (Teilungserklärungen und Rechnungen)“
+since text version 2 (#500). Saving without the tick
 is refused with a German message at the field (structured code
 `ORGANIZATION_AI_CONFIRMATION_REQUIRED`) and no key is stored. A key stored before
 this requirement keeps the checkbox visible without re-entering it and stays unused
-until confirmed once; the confirmed state names who confirmed and when. Removing the
+until confirmed once; the confirmed state names who confirmed and when. A key confirmed with the first text keeps the
+declaration import and asks again for invoices: while `invoice_confirmation_required` is set, the key field shows the checkbox
+again with the sentence „Die Bestätigung vom … von … galt, bevor Rechnungen ausgewertet wurden. …“ (declarations are not
+affected; invoices stay on the host until the tick is saved, without entering the key again). Removing the
 key ends the instruction; the record of earlier confirmations stays. The form
 uses existing Button, Input, Label, card, spacing and error/status styles; it stays
 usable at 360 px with long model names. Personal settings screenshots above include
@@ -2330,6 +2334,31 @@ the administrator's organization card after this change.
 | Model roles after („Dokumente einlesen“, „Informationen extrahieren“) | [view](docs/assets/design/ai-settings/models-after-1280.png) | [view](docs/assets/design/ai-settings/models-after-360.png) |
 | Import on, reading model not chosen | [view](docs/assets/design/ai-settings/models-missing-reading-model-1280.png) | [view](docs/assets/design/ai-settings/models-missing-reading-model-360.png) |
 | Import screen without a reading model | [view](docs/assets/design/ai-settings/models-import-refused-1280.png) | [view](docs/assets/design/ai-settings/models-import-refused-360.png) |
+
+The one switch of the card is labelled „Teilungserklärungen importieren und Rechnungen auswerten“ and described
+(`aria-describedby`) in one paragraph: invoices without structured e-invoice data (scans, PDFs) go to the chosen provider,
+XRechnung and ZUGFeRD are read directly and not sent, invoices are sent only after the current confirmation text was
+accepted, every request counts towards the monthly limit and an invoice shows its own usage. The intro of the card says the
+same for invoices, and the sentence about a missing „Dokumente einlesen“ model adds that scanned invoices are then not read.
+
+### Invoice processing: outcomes and usage (#500)
+
+The invoice screen (`/belege/:id`) states how the processing ended under its status line, in one paragraph from one map
+(`lib/invoiceProcessing.ts`, `INVOICE_PROCESSING_MESSAGES`, keyed by the reason code the backend stores with the attempt;
+`backend/tests/test_invoice_reason_texts.py` fails for a stored code without a text): what happened, that the original is kept
+and nothing was applied (“Das Original bleibt erhalten; es wurde nichts übernommen.”), and what to do (enter the values by hand
+with „Kostenposition erstellen“, start again, change settings, ask the operator). Texts that follow a request to a model add
+that starting again „verursacht erneut Kosten“. There is no text while the invoice waits, runs or succeeded; a code without a
+text shows “Die Verarbeitung konnte nicht abgeschlossen werden. …”, never the code. „Dokument ansehen“ stays in every state.
+The retry button reads „Verarbeitung erneut starten“ and is also offered after a cancellation caused by a lost permission; a
+refused start (all three attempts used) is explained in German, not with the server's message.
+
+The card „Verbrauch der KI-Verarbeitung“ (`components/InvoiceModelUsage.tsx`, from `GET /api/invoice-documents/{id}/model-usage`)
+sits below the actions and appears once a request was made. It reuses the blocks of „Verbrauch je Importlauf“: one block
+per stage and model („Dokumente einlesen“ with the number of calls, „Informationen extrahieren“) and „Gesamt“, over all attempts
+of the invoice including failed and ended ones. Usage the provider did not report is shown as „Reservierte Eingabetoken“ with
+„Konservative Kostenschätzung“, a model without a price as „kein Preis bekannt“, never as 0,00 USD. It loads again when the
+status changes; if it cannot be loaded the card is replaced by one alert sentence and no amount.
 
 ### Declaration import: consumption per stage and failure explanations
 

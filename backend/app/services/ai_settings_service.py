@@ -17,8 +17,11 @@ from app.repositories.organization_ai_settings_repo import OrganizationAiSetting
 from app.schemas.ai_settings import AiSettingsOut, AiConfirmationOut, AiModelOut, AiModelsOut
 
 # Version of the German provider-confirmation text the organization agrees to;
-# the copy lives in the frontend, the reviewed wording follows #26.
-AI_PROVIDER_CONFIRMATION_VERSION = '1'
+# the copy lives in the frontend, the reviewed wording follows #26. Version 2 names invoices beside the other
+# documents (issue #500): an organization that confirmed version 1 keeps its declaration import, and its invoices
+# stay on the host until it confirms the current text once more.
+AI_PROVIDER_CONFIRMATION_VERSION = '2'
+INVOICE_CONFIRMATION_FROM_VERSION = 2
 
 # Why the declaration import cannot run for an organization (structured, never message text).
 DECLARATION_IMPORT_DISABLED = 'DECLARATION_IMPORT_DISABLED'
@@ -29,10 +32,11 @@ DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING = 'DECLARATION_IMPORT_DOCUMENT_MODEL_M
 INVOICE_AI_IMPORT_DISABLED = 'ai_import_disabled'
 INVOICE_AI_DOCUMENT_MODEL_MISSING = 'ai_document_model_missing'
 INVOICE_AI_KEY_UNREADABLE = 'ai_key_unreadable'
+INVOICE_AI_CONFIRMATION_MISSING = 'ai_invoice_confirmation_missing'
 
 CONFIRMATION_REQUIRED_MESSAGE = ('Bitte bestätigen Sie vor dem Speichern, dass Ihre Organisation '
     'den Anbieter selbst ausgewählt und beauftragt hat und den Betreiber anweist, '
-    'Dokumente und extrahierte Texte an diesen Anbieter zu übermitteln.')
+    'Dokumente (Teilungserklärungen und Rechnungen) und extrahierte Texte an diesen Anbieter zu übermitteln.')
 
 
 def _cipher(organization_id):
@@ -59,6 +63,18 @@ class EffectiveAiSettings:
     base_url: str | None = None
     request_timeout_seconds: int | None = None
     document_model: str | None = None
+    # The recorded confirmation of this destination names invoices (text version 2 or later).
+    invoice_confirmed: bool = False
+
+
+def covers_invoices(confirmation) -> bool:
+    """Whether a recorded confirmation (as ``matching_confirmation`` returns it) is of a text that names invoices."""
+    if confirmation is None:
+        return False
+    try:
+        return int(confirmation[0].text_version) >= INVOICE_CONFIRMATION_FROM_VERSION
+    except ValueError:
+        return False
 
 
 def _confirmation_match(provider, base_url):
@@ -94,11 +110,15 @@ def invoice_import_blocker(effective: EffectiveAiSettings, *, needs_reading: boo
     naming what is missing.
 
     The invoice path shares the organization's AI import switch, confirmed key and extraction model with the
-    declaration import; no upgrade or default turns them on. Reading a page that has no text layer needs the document
-    reading model as well, which an administrator chooses; a document whose pages all have a text layer needs none.
+    declaration import; no upgrade or default turns them on. The confirmation must be of a text that names invoices:
+    one given before that stays valid for the declaration import and does not send an invoice anywhere. Reading a page
+    that has no text layer needs the document reading model as well, which an administrator chooses; a document whose
+    pages all have a text layer needs none.
     """
     if not effective.import_enabled or not effective.api_key or not effective.model:
         return INVOICE_AI_IMPORT_DISABLED
+    if not effective.invoice_confirmed:
+        return INVOICE_AI_CONFIRMATION_MISSING
     if needs_reading and not effective.document_model:
         return INVOICE_AI_DOCUMENT_MODEL_MISSING
     return None
@@ -109,16 +129,19 @@ async def effective_ai_settings(db, organization_id) -> EffectiveAiSettings:
     if row is None:
         return EffectiveAiSettings()
     key = None
+    confirmation = None
     if row.encrypted_api_key:
         try:
             key = SecretStr(_cipher(organization_id).decrypt(row.encrypted_api_key.encode()).decode())
         except (InvalidToken, ValueError):
             raise AiKeyUnreadableError() from None
-        if await matching_confirmation(db, organization_id, row.provider, row.base_url) is None:
+        confirmation = await matching_confirmation(db, organization_id, row.provider, row.base_url)
+        if confirmation is None:
             # A stored key without a recorded confirmation for its destination
             # stays unused: every AI entry point fails closed on a missing key.
             key = None
-    return EffectiveAiSettings(row.provider, key, row.model, row.import_enabled, row.qa_enabled, row.monthly_limit_usd, row.base_url, row.request_timeout_seconds, row.document_model)
+    return EffectiveAiSettings(row.provider, key, row.model, row.import_enabled, row.qa_enabled, row.monthly_limit_usd, row.base_url, row.request_timeout_seconds, row.document_model,
+                               invoice_confirmed=covers_invoices(confirmation))
 
 
 async def worker_ai_settings(organization_id):
@@ -141,7 +164,8 @@ def public_settings(row, confirmation=None) -> AiSettingsOut:
         qa_enabled=bool(row and row.qa_enabled), monthly_limit_usd=row.monthly_limit_usd if row else None,
         price_known=bool(row and model_price(row.model, row.provider)),
         document_price_known=bool(row and model_price(row.document_model, row.provider)),
-        confirmation=active, confirmation_required=bool(row and row.encrypted_api_key and confirmation is None))
+        confirmation=active, confirmation_required=bool(row and row.encrypted_api_key and confirmation is None),
+        invoice_confirmation_required=bool(row and row.encrypted_api_key and not covers_invoices(confirmation)))
 
 
 async def read_settings(db, organization_id):
@@ -223,9 +247,9 @@ async def write_settings(db, organization_id, body, auth):
         if stores_key and not body.confirmation:
             raise HTTPException(422, {'code': 'ORGANIZATION_AI_CONFIRMATION_REQUIRED', 'message': CONFIRMATION_REQUIRED_MESSAGE})
         # Confirming an already confirmed, unchanged key records nothing; a key
-        # kept without any confirmation (stored before this change) can be
-        # confirmed once, without re-entering it.
-        record_confirmation = bool(body.confirmation and (entered_new_key or existing_confirmation is None))
+        # kept without any confirmation (stored before this change), or with one of a text that does not name
+        # invoices yet, can be confirmed once, without re-entering it.
+        record_confirmation = bool(body.confirmation and (entered_new_key or not covers_invoices(existing_confirmation)))
     values = body.model_dump(exclude={'api_key', 'confirmation'})
     diff = _audit_diff(previous, body, encrypted, organization_id)
     if record_confirmation:

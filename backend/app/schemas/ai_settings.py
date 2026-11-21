@@ -49,6 +49,8 @@ class AiSettingsOut(BaseModel):
     document_price_known: bool
     confirmation: AiConfirmationOut | None = None
     confirmation_required: bool = False
+    # A stored key whose confirmation does not name invoices (none, or one of an earlier text): invoices stay on the host.
+    invoice_confirmation_required: bool = False
 
 
 class AiModelOut(BaseModel):

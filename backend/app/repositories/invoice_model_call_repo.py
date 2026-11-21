@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from sqlalchemy import update
 from app.models.invoice_model_call import InvoiceModelCall as Call
+from app.models.invoice_processing_attempt import InvoiceProcessingAttempt as Attempt
 from app.repositories.base import TenantRepository
 
 
@@ -29,4 +30,10 @@ class InvoiceModelCallRepository(TenantRepository[Call]):
     async def for_attempt(self, attempt_id: uuid.UUID) -> list[Call]:
         result = await self._session.execute(self._base_query().where(Call.attempt_id == attempt_id)
                                              .order_by(Call.created_at, Call.id).execution_options(populate_existing=True))
+        return list(result.scalars())
+
+    async def for_document(self, document_id: uuid.UUID) -> list[Call]:
+        """Every call of every attempt of one invoice document, in the order they were made."""
+        result = await self._session.execute(self._base_query().join(Attempt, (Attempt.organization_id == Call.organization_id) & (Attempt.id == Call.attempt_id))
+                                             .where(Attempt.document_id == document_id).order_by(Call.created_at, Call.id).execution_options(populate_existing=True))
         return list(result.scalars())

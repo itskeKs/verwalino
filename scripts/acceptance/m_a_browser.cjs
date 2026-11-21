@@ -137,10 +137,10 @@ async function viewportChecks(url) {
   const failureUpload = await responseAfter('/api/invoice-documents/upload', () => page.getByRole('button', { name: 'Hochladen', exact: true }).click());
   const failedDoc = await failureUpload.json();
   await page.locator(`a[href="/belege/${failedDoc.id}"]`).click();
-  await page.getByRole('button', { name: 'Texterkennung erneut starten', exact: true }).waitFor({ timeout: 45000 });
-  const retry = await responseAfter('/api/invoice-documents/' + failedDoc.id + '/retry', () => page.getByRole('button', { name: 'Texterkennung erneut starten', exact: true }).click());
+  await page.getByRole('button', { name: 'Verarbeitung erneut starten', exact: true }).waitFor({ timeout: 45000 });
+  const retry = await responseAfter('/api/invoice-documents/' + failedDoc.id + '/retry', () => page.getByRole('button', { name: 'Verarbeitung erneut starten', exact: true }).click());
   assert.equal(retry.status(), 200);
-  await page.getByRole('button', { name: 'Texterkennung erneut starten', exact: true }).waitFor({ timeout: 45000 });
+  await page.getByRole('button', { name: 'Verarbeitung erneut starten', exact: true }).waitFor({ timeout: 45000 });
   const failedState = await (await context.request.get(base + '/api/invoice-documents/' + failedDoc.id)).json();
   assert.equal(failedState.cost_entry_id, null); assert.equal(failedState.processing_error_code, 'encrypted_pdf');
   await shot('encrypted-source-retained');

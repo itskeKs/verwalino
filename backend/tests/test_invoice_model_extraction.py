@@ -7,6 +7,7 @@ import io
 import subprocess
 import sys
 import types
+import uuid
 from decimal import Decimal
 
 import psycopg2
@@ -134,6 +135,28 @@ async def monthly(org):
         return await OrganizationAiSettingsRepository(db, org).monthly_usage()
 
 
+async def usage(api, doc):
+    response = await api.get(f"/api/invoice-documents/{doc['id']}/model-usage")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+class DuringRead(FakeDocumentReadingProvider):
+    """Runs an action (sync or async) once, while the first page is being read: what happens to an invoice mid-run."""
+
+    def __init__(self, action, **options):
+        super().__init__(**options)
+        self.action = action
+
+    async def read_page(self, page, *, model, max_output_tokens):
+        result = await super().read_page(page, model=model, max_output_tokens=max_output_tokens)
+        if page.pdf_page == 1:
+            done = self.action()
+            if hasattr(done, "__await__"):
+                await done
+        return result
+
+
 def sql(query, *params):
     with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
         cursor.execute(query, params)
@@ -252,6 +275,29 @@ async def test_without_the_organizations_opt_in_no_provider_is_built_and_the_ori
     assert [(a["status"], a["error_code"], a["processor_version"]) for a in attempts] == [("unavailable", expected, "invoice-local-v1")]
     assert (await api.get(f"/api/invoice-documents/{doc['id']}/content")).content == original
     assert await ledger(org) == [] and await monthly(org) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_confirmation_from_before_invoices_were_covered_sends_no_invoice_until_it_is_renewed(worker_tenant):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org, text_version="1")
+    harness = Harness()
+    original = scan_pdf()
+    doc = await upload(api, original)
+    await process(org, harness)
+    assert harness.built == [] and harness.reader.reads == [] and harness.extractor.calls == []
+    document, attempts = await state(api, doc)
+    assert (document["processing_status"], document["processing_error_code"]) == ("unavailable", "ai_invoice_confirmation_missing")
+    assert [(a["status"], a["error_code"], a["processor_version"]) for a in attempts] == [("unavailable", "ai_invoice_confirmation_missing", "invoice-local-v1")]
+    assert no_proposal(document) and (await api.get(f"/api/invoice-documents/{doc['id']}/content")).content == original
+    assert await ledger(org) == [] and await monthly(org) == 0
+    # The organization confirms the current text; the invoice is then read when it is started again.
+    sql("""INSERT INTO organization_ai_confirmation(organization_id,confirmed_by_user_id,provider,base_url,text_version)
+        VALUES (%s,%s,'openai',NULL,'2')""", str(org), str(ids["user_a_admin_id"]))
+    assert (await api.post(f"/api/invoice-documents/{doc['id']}/retry")).status_code == 200
+    await process(org, harness)
+    assert (await state(api, doc))[0]["processing_status"] == "succeeded" and len(harness.reader.reads) == 1
 
 
 @pytest.mark.asyncio
@@ -439,3 +485,235 @@ async def test_another_organization_sees_nothing_of_the_ledger_and_its_usage(wor
         with pytest.raises(Exception):
             await db.execute(text("""INSERT INTO invoice_model_call(organization_id,attempt_id,stage,pdf_page,model_name,reserved_input_tokens,
                 reserved_output_tokens,reserved_cost_usd) VALUES (:org,:attempt,'read_page',1,'m',1,1,0)"""), {"org": org, "attempt": attempt})
+
+
+# ---- what the invoice shows: the usage of both stages, failed and cancelled attempts included ----------------
+
+@pytest.mark.asyncio
+async def test_the_invoice_shows_the_usage_of_both_stages_and_nothing_before_a_call(worker_tenant):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org)
+    doc = await upload(api, scan_pdf())
+    assert await usage(api, doc) == {"stages": [], "total": None}
+    await process(org, Harness(reader=FakeDocumentReadingProvider(usage=READING_USAGE), extractor=FakeInvoiceExtractionProvider(usage=EXTRACTION_USAGE)))
+    shown = await usage(api, doc)
+    reading, extraction = shown["stages"]
+    assert (reading["stage"], reading["model"], reading["calls"], reading["usage_status"]) == ("READING", READING_MODEL, 1, "REPORTED")
+    assert (reading["reported_input_tokens"], reading["reported_output_tokens"], Decimal(reading["estimated_cost_usd"])) == (1000, 200, Decimal("0.00165"))
+    assert (extraction["stage"], extraction["model"], extraction["usage_status"]) == ("EXTRACTION", EXTRACTION_MODEL, "REPORTED")
+    assert (extraction["input_tokens"], extraction["output_tokens"], Decimal(extraction["estimated_cost_usd"])) == (2000, 100, Decimal("0.00085"))
+    assert (shown["total"]["input_tokens"], shown["total"]["output_tokens"], Decimal(shown["total"]["estimated_cost_usd"])) == (3000, 300, Decimal("0.0025"))
+    assert await monthly(org) == Decimal("0.0025")
+
+
+@pytest.mark.asyncio
+async def test_usage_the_provider_could_not_report_is_shown_as_its_reservation_and_not_as_zero(worker_tenant):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org)
+    failure = ProviderFailure("PROVIDER_CONNECTION_ERROR", True, "usage unknown", usage_complete=False, attempt_count=1)
+    doc = await upload(api, scan_pdf())
+    await process(org, Harness(reader=FakeDocumentReadingProvider(failures={("invoice", 1): failure})))
+    (stage,) = (await usage(api, doc))["stages"]
+    (row,) = await ledger(org)
+    assert (stage["stage"], stage["usage_status"], stage["reported_input_tokens"], stage["reported_output_tokens"]) == ("READING", "RESERVED", None, None)
+    assert (stage["input_tokens"], stage["output_tokens"]) == (row.reserved_input_tokens, row.reserved_output_tokens)
+    assert row.reserved_cost_usd > 0
+    assert Decimal(stage["estimated_cost_usd"]) == row.reserved_cost_usd.quantize(Decimal("0.000001"))
+    assert await monthly(org) == row.reserved_cost_usd
+
+
+@pytest.mark.asyncio
+async def test_a_model_without_a_price_has_usage_but_no_cost(worker_tenant):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org, provider="openai_compatible", base_url="https://compatible.example/v1", model="local-extraction-model", document_model="local-vision-model")
+    doc = await upload(api, scan_pdf())
+    harness = Harness(reader=FakeDocumentReadingProvider(usage=ProviderUsage(1000, 200, Decimal("0"), 1)),
+                      extractor=FakeInvoiceExtractionProvider(usage=ProviderUsage(2000, 100, Decimal("0"), 1)))
+    await process(org, harness)
+    shown = await usage(api, doc)
+    assert [(stage["stage"], stage["usage_status"], stage["estimated_cost_usd"]) for stage in shown["stages"]] == [("READING", "REPORTED", None), ("EXTRACTION", "REPORTED", None)]
+    assert (shown["total"]["input_tokens"], shown["total"]["output_tokens"], shown["total"]["estimated_cost_usd"]) == (3000, 300, None)
+
+
+@pytest.mark.asyncio
+async def test_only_the_invoices_own_organization_can_read_its_usage(worker_tenant, seed_data, client_b_admin):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org)
+    doc = await upload(api, scan_pdf())
+    await process(org, Harness())
+    assert (await usage(api, doc))["total"] is not None
+    assert (await client_b_admin.get(f"/api/invoice-documents/{doc['id']}/model-usage")).status_code == 404
+    assert (await client_b_admin.get(f"/api/invoice-documents/{uuid.uuid4()}/model-usage")).status_code == 404
+
+
+# ---- when something goes wrong: no proposal, the original stays, what was used is recorded and visible -------
+
+def lower_monthly_limit(org, limit):
+    return lambda: sql("UPDATE organization_ai_settings SET monthly_limit_usd=%s WHERE organization_id=%s", limit, str(org))
+
+
+@pytest.mark.asyncio
+async def test_a_monthly_limit_reached_between_the_stages_stops_the_extraction_and_keeps_the_reading(worker_tenant):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org, monthly_limit_usd=Decimal("5"))
+    # The reading consumes three-quarters of a cent. The administrator lowers the limit to one cent while the page is
+    # being read: the extraction request, reserved at 0.4 cent on top of what is used, no longer fits.
+    reader = DuringRead(lower_monthly_limit(org, Decimal("0.01")), usage=ProviderUsage(1000, 1500, Decimal("0.0075"), 1))
+    harness = Harness(reader=reader)
+    original = scan_pdf()
+    doc = await upload(api, original)
+    await process(org, harness)
+    assert [read.pdf_page for read in reader.reads] == [1] and harness.extractor.calls == []
+    document, attempts = await state(api, doc)
+    assert [(a["status"], a["error_code"]) for a in attempts] == [("unavailable", "organization_ai_budget_exceeded")]
+    assert (document["processing_status"], document["processing_error_code"]) == ("unavailable", "organization_ai_budget_exceeded")
+    assert no_proposal(document) and document["cost_entry_id"] is None
+    assert (await api.get(f"/api/invoice-documents/{doc['id']}/content")).content == original
+    assert [(row.stage, row.status) for row in await ledger(org)] == [("read_page", "SETTLED")]
+    assert await monthly(org) == Decimal("0.0075")
+    shown = await usage(api, doc)
+    assert [(stage["stage"], stage["usage_status"]) for stage in shown["stages"]] == [("READING", "REPORTED")]
+    assert Decimal(shown["total"]["estimated_cost_usd"]) == Decimal("0.0075")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["reading", "extraction"])
+async def test_a_provider_failure_in_either_stage_leaves_no_proposal_and_shows_what_was_used(worker_tenant, stage):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org)
+    failure = ProviderFailure("PROVIDER_TIMEOUT", False, "timed out", usage=ProviderUsage(300, 0, Decimal("0.000225"), 1))
+    if stage == "reading":
+        harness = Harness(reader=FakeDocumentReadingProvider(failures={("invoice", 1): failure}))
+        expected_code, expected_cost = "model_reading_failed", Decimal("0.000225")
+    else:
+        harness = Harness(reader=FakeDocumentReadingProvider(usage=READING_USAGE), extractor=FakeInvoiceExtractionProvider(failure=failure))
+        expected_code, expected_cost = "model_extraction_failed", Decimal("0.00165") + Decimal("0.000225")
+    original = scan_pdf()
+    doc = await upload(api, original)
+    await process(org, harness)
+    document, attempts = await state(api, doc)
+    assert [(a["status"], a["error_code"]) for a in attempts] == [("failed", expected_code)]
+    assert (document["processing_status"], document["processing_error_code"]) == ("failed", expected_code)
+    assert no_proposal(document) and document["cost_entry_id"] is None
+    assert (await api.get(f"/api/invoice-documents/{doc['id']}/content")).content == original
+    assert Decimal((await usage(api, doc))["total"]["estimated_cost_usd"]) == expected_cost == await monthly(org)
+
+
+@pytest.mark.asyncio
+async def test_a_replaced_original_cancels_the_attempt_after_the_request_it_made_and_applies_nothing(worker_tenant):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org)
+    replaced = []
+
+    async def replace_original():
+        response = await api.post(f"/api/invoice-documents/{doc['id']}/version", files={"file": ("neu.pdf", scan_pdf(), "application/pdf")})
+        assert response.status_code == 201, response.text
+        replaced.append(response.json())
+
+    harness = Harness(reader=DuringRead(replace_original, usage=READING_USAGE))
+    original = scan_pdf()
+    doc = await upload(api, original)
+    await process(org, harness)
+    assert harness.extractor.calls == []
+    document, attempts = await state(api, doc)
+    assert [(a["status"], a["error_code"]) for a in attempts] == [("canceled", "source_no_longer_editable")]
+    assert (document["processing_status"], document["processing_error_code"], document["status"]) == ("canceled", "source_no_longer_editable", "superseded")
+    assert no_proposal(document)
+    assert (await api.get(f"/api/invoice-documents/{doc['id']}/content")).content == original
+    assert [row.status for row in await ledger(org)] == ["SETTLED"]
+    assert Decimal((await usage(api, doc))["total"]["estimated_cost_usd"]) == Decimal("0.00165") == await monthly(org)
+    # The replacement is a new original with its own processing; the cancelled one cannot be started again.
+    assert (await api.get(f"/api/invoice-documents/{replaced[0]['id']}")).json()["processing_status"] == "queued"
+    assert (await api.post(f"/api/invoice-documents/{doc['id']}/retry")).status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_a_user_who_loses_permission_mid_run_cancels_the_attempt_before_the_next_request(worker_tenant):
+    api, ids = worker_tenant
+    org, user = ids["org_a_id"], ids["user_a_admin_id"]
+    ai(org)
+    reader = DuringRead(lambda: sql("UPDATE membership SET role='READ_ONLY' WHERE user_id=%s", str(user)), usage=READING_USAGE)
+    harness = Harness(reader=reader)
+    doc = await upload(api, scan_pdf(2))
+    await process(org, harness)
+    # The second page and the extraction were never requested.
+    assert [read.pdf_page for read in reader.reads] == [1] and harness.extractor.calls == []
+    document, attempts = await state(api, doc)
+    assert [(a["status"], a["error_code"]) for a in attempts] == [("canceled", "scope_permission_changed")]
+    assert (document["processing_status"], document["processing_error_code"]) == ("canceled", "scope_permission_changed")
+    assert no_proposal(document)
+    assert Decimal((await usage(api, doc))["total"]["estimated_cost_usd"]) == Decimal("0.00165") == await monthly(org)
+
+
+def expire_lease(org):
+    return lambda: sql("UPDATE invoice_processing_attempt SET lease_until=now()-interval '1 second' WHERE organization_id=%s AND status='running'", str(org))
+
+
+@pytest.mark.asyncio
+async def test_a_lost_lease_applies_nothing_and_every_further_attempt_is_metered_up_to_the_cap(worker_tenant):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org)
+    reader = DuringRead(expire_lease(org), usage=READING_USAGE)
+    harness = Harness(reader=reader)
+    original = scan_pdf(2)
+    doc = await upload(api, original)
+    factory = get_worker_session_factory()
+    # Each attempt reads its first page, finds its lease gone before the second request and stops: nothing is
+    # applied. The expired claim is taken over by the next attempt, three at most; the fourth claim only ends it.
+    assert [await process_once(factory, org, providers=harness) for _ in range(4)] == [True, True, True, False]
+    assert [read.pdf_page for read in reader.reads] == [1, 1, 1] and harness.extractor.calls == []
+    document, attempts = await state(api, doc)
+    assert [(a["attempt_no"], a["status"], a["error_code"]) for a in attempts] == [
+        (3, "timeout", "worker_lease_expired"), (2, "timeout", "worker_lease_expired"), (1, "timeout", "worker_lease_expired")]
+    assert (document["processing_status"], document["processing_error_code"]) == ("failed", "retry_budget_exhausted")
+    assert no_proposal(document)
+    assert (await api.get(f"/api/invoice-documents/{doc['id']}/content")).content == original
+    assert [row.status for row in await ledger(org)] == ["SETTLED"] * 3
+    assert Decimal((await usage(api, doc))["total"]["estimated_cost_usd"]) == Decimal("0.00495") == await monthly(org)
+
+
+@pytest.mark.asyncio
+async def test_a_retry_after_a_failure_is_metered_again_and_the_retries_are_capped(worker_tenant):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org)
+    failure = ProviderFailure("PROVIDER_TIMEOUT", False, "timed out", usage=ProviderUsage(300, 0, Decimal("0.000225"), 1))
+    failing = Harness(reader=FakeDocumentReadingProvider(failures={("invoice", 1): failure}))
+    doc = await upload(api, scan_pdf())
+    await process(org, failing)
+    # Asking again queues the invoice and sends nothing: only the worker reaches a provider, and it meters.
+    built = len(failing.built)
+    retry = await api.post(f"/api/invoice-documents/{doc['id']}/retry")
+    assert (retry.status_code, retry.json()["processing_status"]) == (200, "queued")
+    assert len(failing.built) == built and len(failing.reader.reads) == 1 and await ledger(org) != []
+    # The retry succeeds: its reading and extraction are reserved and settled like the first attempt's, as their own rows.
+    working = Harness(reader=FakeDocumentReadingProvider(usage=READING_USAGE), extractor=FakeInvoiceExtractionProvider(usage=EXTRACTION_USAGE))
+    await process(org, working)
+    document, attempts = await state(api, doc)
+    assert [(a["attempt_no"], a["status"]) for a in attempts] == [(2, "succeeded"), (1, "failed")]
+    assert document["processing_status"] == "succeeded" and document["extraction_payload"]["gross_amount"] == "312.00"
+    rows = await ledger(org)
+    assert [(row.stage, row.status, row.error_code) for row in rows] == [
+        ("read_page", "SETTLED", "PROVIDER_TIMEOUT"), ("read_page", "SETTLED", None), ("extract_invoice", "SETTLED", None)]
+    assert len({row.attempt_id for row in rows}) == 2
+    assert Decimal((await usage(api, doc))["total"]["estimated_cost_usd"]) == Decimal("0.000225") + Decimal("0.0025") == await monthly(org)
+    # A document that has used its three attempts cannot be started again, and asking costs nothing.
+    second = await upload(api, scan_pdf(), name="second.pdf")
+    answers = []
+    for _ in range(3):
+        await process(org, failing)
+        answers.append((await api.post(f"/api/invoice-documents/{second['id']}/retry")).status_code)
+    assert answers == [200, 200, 409]
+    spent = len(await ledger(org))
+    assert (await api.post(f"/api/invoice-documents/{second['id']}/retry")).status_code == 409
+    assert await process_once(get_worker_session_factory(), org, providers=failing) is False
+    assert len(await ledger(org)) == spent
+    assert [a["status"] for a in (await state(api, second))[1]] == ["failed"] * 3

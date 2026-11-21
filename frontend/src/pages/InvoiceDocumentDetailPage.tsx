@@ -20,6 +20,7 @@ import {
   listProperties,
 } from "../api/endpoints";
 import type {
+  ExtractionPayload,
   InvoiceDocument,
   VerifyResult,
   CostCategory,
@@ -28,7 +29,9 @@ import type {
 } from "../api/types";
 import { ApiError } from "../api/client";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
-import { InvoiceProcessingStatus } from "../components/InvoiceProcessingStatus";
+import { InvoiceModelUsage } from "../components/InvoiceModelUsage";
+import { InvoiceProcessingExplanation, InvoiceProcessingStatus } from "../components/InvoiceProcessingStatus";
+import { INVOICE_RETRY_FAILED, INVOICE_RETRY_REFUSED } from "../lib/invoiceProcessing";
 import { Badge } from "../components/ui/badge";
 import { formatDate, formatDateTime } from "../lib/format";
 
@@ -38,6 +41,12 @@ const FORMAT_LABELS: Record<string, string> = {
   XRECHNUNG_CII: "XRechnung",
   ZUGFERD: "ZUGFeRD",
 };
+
+/** A proposal of an attempt, or fields a person or an earlier release stored; the stub every upload starts with is neither. */
+function hasProposal(ext: ExtractionPayload): boolean {
+  return Boolean(ext.attempt_id) || ext.is_einvoice === true || [ext.vendor_name, ext.invoice_date, ext.document_number, ext.gross_amount,
+    ext.vat_amount, ext.vat_rate, ext.service_period_from, ext.service_period_to, ext.suggested_category_code].some(value => value != null);
+}
 
 function confidenceColor(c: number): string {
   if (c >= 0.8) return "#2e7d32";
@@ -135,7 +144,7 @@ export function InvoiceDocumentDetailPage() {
     setActionLoading(true);
     setActionError(null);
     try { setDoc(await retryInvoiceExtraction(docId)); }
-    catch (err) { setActionError(err instanceof ApiError ? err.message : String(err)); }
+    catch (err) { setActionError(err instanceof ApiError && err.status === 409 ? INVOICE_RETRY_REFUSED : INVOICE_RETRY_FAILED); }
     finally { setActionLoading(false); }
   }
 
@@ -243,8 +252,9 @@ export function InvoiceDocumentDetailPage() {
         </Link>
       </p>
       <p><InvoiceProcessingStatus document={doc} /></p>
-      {["legacy", "needs_review", "unsupported", "unavailable", "timeout", "failed"].includes(doc.processing_status) && !doc.released_at && doc.status === "active" && (
-        <button className="btn" onClick={handleRetry} disabled={actionLoading}>Texterkennung erneut starten</button>
+      <InvoiceProcessingExplanation document={doc} />
+      {["legacy", "needs_review", "unsupported", "unavailable", "timeout", "failed", "canceled"].includes(doc.processing_status) && !doc.released_at && doc.status === "active" && (
+        <button className="btn" onClick={handleRetry} disabled={actionLoading}>Verarbeitung erneut starten</button>
       )}
       <h1>
         Beleg: {doc.original_filename ?? "Ohne Name"}{" "}
@@ -417,8 +427,11 @@ export function InvoiceDocumentDetailPage() {
         </div>
       )}
 
-      {/* Extraction payload review */}
-      {ext && (
+      {/* What the model-assisted processing of this invoice has cost so far */}
+      <InvoiceModelUsage documentId={doc.id} processingStatus={doc.processing_status} />
+
+      {/* Extraction payload review: not for the empty stub of an upload, which no attempt has filled */}
+      {ext && hasProposal(ext) && (
         <div className="card" style={{ marginBottom: "1.5rem" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
             <h2 style={{ margin: 0 }}>Extrahierte Felder</h2>

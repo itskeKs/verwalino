@@ -1,18 +1,12 @@
 import type { InvoiceDocument } from "../api/types";
-
-const labels: Record<string, string> = {
-  legacy: "Noch nicht automatisch geprüft",
-  queued: "Gespeichert · wartet auf Verarbeitung",
-  running: "Rechnung wird ausgelesen",
-  succeeded: "Felder vorbereitet · bitte prüfen",
-  needs_review: "Manuelle Prüfung erforderlich",
-  unsupported: "Format oder Umfang nicht unterstützt · Original prüfen",
-  unavailable: "Texterkennung nicht verfügbar · erneut versuchen oder manuell prüfen",
-  timeout: "Zeitlimit erreicht · erneut versuchen oder manuell prüfen",
-  failed: "Verarbeitung fehlgeschlagen · Original prüfen",
-  canceled: "Verarbeitung beendet · Beleg bereits freigegeben oder ersetzt",
-};
+import { INVOICE_STATUS_LABELS, invoiceProcessingMessage } from "../lib/invoiceProcessing";
 
 export function InvoiceProcessingStatus({ document }: { document: InvoiceDocument }) {
-  return <span role="status">{labels[document.processing_status] ?? labels.legacy}</span>;
+  return <span role="status">{INVOICE_STATUS_LABELS[document.processing_status] ?? INVOICE_STATUS_LABELS.legacy}</span>;
+}
+
+/** What happened to the invoice and what the user can do, from the one map of reasons; nothing while nothing went wrong. */
+export function InvoiceProcessingExplanation({ document }: { document: InvoiceDocument }) {
+  const text = invoiceProcessingMessage(document.processing_status, document.processing_error_code);
+  return text ? <p className="text-sm break-words max-w-prose mt-2 mb-3">{text}</p> : null;
 }
