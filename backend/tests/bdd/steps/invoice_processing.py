@@ -1,7 +1,9 @@
 """An invoice through the worker with in-process fake providers, observed through the HTTP API."""
 import io
+from contextlib import closing
 from decimal import Decimal
 
+import psycopg2
 import pytest
 from PIL import Image
 from pytest_bdd import given, parsers, then, when
@@ -13,6 +15,7 @@ from app.declarations.invoice_pipeline import InvoiceProviders
 from app.declarations.provider import ProviderFailure, ProviderUsage
 from app.workers.invoice_extraction import process_once
 from tests.ai_settings_support import configure_ai
+from tests.conftest import MIGRATOR_SYNC_URL
 from tests.invoice_model_support import no_invoice_model_data as no_invoice_model_data
 
 READING_USAGE = ProviderUsage(1000, 200, Decimal('0.00165'), 1)
@@ -20,9 +23,17 @@ EXTRACTION_USAGE = ProviderUsage(2000, 100, Decimal('0.00085'), 1)
 
 
 @pytest.fixture
-def invoice_workspace(tmp_path, no_invoice_model_data):
-    """A private document store and no invoice metering data left behind (the migration-chain tests meet none)."""
-    set_store(LocalFsDocumentStore(str(tmp_path)))
+def invoice_workspace(request, tmp_path, no_invoice_model_data):
+    """A private document store and no invoice metering data left behind (the migration-chain tests meet none).
+
+    A browser scenario shares the store of the stack it uploads to: the API process writes the originals there.
+    The worker claims the oldest waiting attempt of the organization, so the scenario starts with an empty queue:
+    an invoice that an earlier scenario of the session uploaded and nobody processed is not this scenario's.
+    """
+    with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection, connection, connection.cursor() as cursor:
+        cursor.execute("DELETE FROM public.invoice_processing_attempt WHERE status IN ('queued', 'running')")
+    root = request.getfixturevalue('browser_storage') if request.node.get_closest_marker('browser') else str(tmp_path)
+    set_store(LocalFsDocumentStore(root))
     yield
     set_store(None)
 
@@ -63,7 +74,7 @@ def ai_import_confirmed_earlier(world, invoice_workspace):
     assert world.act('GET', f'/api/organizations/{_organization(world)}/ai-settings').json()['invoice_confirmation_required'] is True
 
 
-def _process(world, *, reader=None, extractor=None):
+def _process(world, *, reader=None, extractor=None, count=1):
     reader = reader or FakeDocumentReadingProvider(usage=READING_USAGE)
     extractor = extractor or FakeInvoiceExtractionProvider(usage=EXTRACTION_USAGE)
     world.data['built'] = []
@@ -73,7 +84,8 @@ def _process(world, *, reader=None, extractor=None):
         return InvoiceProviders(reader=reader if effective.document_model else None, extractor=extractor)
 
     world.data['reader'], world.data['extractor'] = reader, extractor
-    assert world.run(process_once(get_worker_session_factory(), _organization(world), providers=providers))
+    for _ in range(count):
+        assert world.run(process_once(get_worker_session_factory(), _organization(world), providers=providers))
 
 
 @when('the administrator uploads a scanned building-insurance invoice and the worker processes it')

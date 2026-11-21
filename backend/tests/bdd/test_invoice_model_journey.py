@@ -1,0 +1,11 @@
+"""Bind the real-browser invoice journey with offline providers (issue #500)."""
+from pathlib import Path
+
+import pytest
+from pytest_bdd import scenarios
+
+from tests.bdd.world import target_url
+
+pytestmark = pytest.mark.skipif(bool(target_url()), reason='The worker with its in-process fake providers needs the local disposable database; live provider acceptance is separate.')
+
+scenarios(str(Path(__file__).resolve().parents[3] / "features" / "journeys" / "invoice_model_processing.feature"))
