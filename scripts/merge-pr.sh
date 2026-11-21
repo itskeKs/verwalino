@@ -26,7 +26,7 @@
 # still held when the wait ends, even one left behind by a crash, is reported with its `info` and left alone.
 set -euo pipefail
 
-# Fixed locations and limits; the contract test rewrites exactly these seven lines to run in a sandbox.
+# Fixed locations and limits; the contract test rewrites exactly these eight lines to run in a sandbox.
 MAINTAINER_LOCK=/tmp/verwalino-maintainer.lock
 MERGE_LOCK=/tmp/hausverwaltung-merge.lock
 SCRATCH_PREFIX=/tmp/verwalino-merge-pr
@@ -36,6 +36,8 @@ LOCK_POLL_SECONDS=60
 # 45 minutes: the whole suite runs in about 25, and the lock may not be held for longer than CI, the gates and the merge.
 CI_WAIT_SECONDS=2700
 CI_POLL_SECONDS=30
+# The pause before the one retry of the fetch that verifies the merge, when another session's fetch holds a ref lock.
+FETCH_RETRY_SECONDS=2
 
 REPO=itskeKs/verwalino
 REMOTE=origin
@@ -387,7 +389,12 @@ print("commit=%s" % (data.get("mergeCommit") or {}).get("oid", ""))
   [ "$state" = MERGED ] || die "PR #$PR was not merged (gh exited with $status; the note is posted); nothing else was done"
   [ "$status" -eq 0 ] || left "gh exited with $status after merging PR #$PR; check what it did not finish"
   echo "Merged PR #$PR: merge commit ${MERGE_COMMIT:-unknown}"
-  git -C "$ROOT" fetch --quiet "$REMOTE" || left "cannot fetch $REMOTE to verify the merge commit"
+  # Another session may fetch at the same moment and hold the lock on a ref: one retry after a short pause settles it.
+  git -C "$ROOT" fetch --quiet "$REMOTE" || {
+    echo "Fetching $REMOTE failed; trying once more in ${FETCH_RETRY_SECONDS}s."
+    nap "$FETCH_RETRY_SECONDS"
+    git -C "$ROOT" fetch --quiet "$REMOTE" || left "cannot fetch $REMOTE to verify the merge commit"
+  }
   if [ -z "$MERGE_COMMIT" ]; then
     left "GitHub names no merge commit for PR #$PR; check it by hand"
   elif ! is_ancestor "$MERGE_COMMIT" "$REMOTE/$MAIN"; then
