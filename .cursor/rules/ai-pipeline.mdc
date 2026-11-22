@@ -61,7 +61,11 @@ alwaysApply: false
   ledger rows carry `intake_attempt_id`; proposals are `intake-model-v1`. A field is located at page level only
   where the page and passage the model names are one of that document's selected pages and occur in its read text
   (`model_evidence`); otherwise it stays unlocated, never a guessed place. An inbox document is sent only under a
-  confirmation text that names inbox documents (version 3); an earlier text keeps what it covered. XML and a PDF
+  confirmation text that names inbox documents. `CONFIRMATION_TEXTS` in `ai_settings_service.py` is the one table of
+  text versions and the kinds each names (declarations, invoices, inbox documents); every path asks it whether the newest
+  confirmation of the destination names its kind, and the settings card shows and a new confirmation records the text for
+  exactly the kinds the installation sends. An earlier text keeps what it named and is asked once more, without the key,
+  for the rest; a version the table does not know names nothing. XML and a PDF
   with valid embedded ZUGFeRD data are parsed by the local stage (`core/intake_extraction.py`) and never reach a
   model; the inbox has no Tesseract step either.
 - A stage that calls a model meters it in the shared ledger by the model that made the call (reserve

@@ -283,6 +283,7 @@ from tests.bdd.steps.browser_scope_forms import *  # noqa: E402,F401,F403
 from tests.bdd.steps.invoice_processing import *  # noqa: E402,F401,F403
 from tests.bdd.steps.inbox_model_processing import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_invoice import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_inbox import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_statements import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_reconciliation import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_mandates import *  # noqa: E402,F401,F403

@@ -84,13 +84,13 @@ cd "$ROOT"
 cd "$BACKEND"
 echo "Checking invoice worker (database, storage, PDF renderer)..."
 uv run python -m app.workers.invoice_extraction --healthcheck
-echo "Checking inbox worker (database, storage, ClamAV signatures, German OCR)..."
+echo "Checking inbox worker (database, storage, ClamAV signatures, PDF renderer)..."
 if uv run python -m app.workers.workflow_runner --healthcheck; then
   echo "Starting local inbox worker..."
   uv run python -m app.workers.workflow_runner --all-organizations &
   INBOX_WORKER_PID=$!
 else
-  echo "Inbox worker skipped: check ClamAV (clamscan and signatures), worker database access, document storage and German OCR; API and UI will continue."
+  echo "Inbox worker skipped: check ClamAV (clamscan and signatures), worker database access, document storage and the PDF renderer (Poppler); API and UI will continue."
 fi
 echo "Starting local invoice worker..."
 uv run python -m app.workers.invoice_extraction &

@@ -181,7 +181,7 @@ Administrators can download a redacted diagnostics bundle via **Problem melden**
 
 ### Local development
 
-`scripts/dev-local.sh` needs Poppler, and Tesseract with the German language pack for the inbox worker; see [CONTRIBUTING.md](CONTRIBUTING.md#development-environment).
+`scripts/dev-local.sh` needs Poppler for the invoice and inbox workers (no Tesseract: documents are read by the organization's models); see [CONTRIBUTING.md](CONTRIBUTING.md#development-environment).
 
 Install both dependency sets:
 

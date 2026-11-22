@@ -16,18 +16,30 @@ from app.repositories.audit_repo import AuditRepository
 from app.repositories.organization_ai_settings_repo import OrganizationAiSettingsRepository
 from app.schemas.ai_settings import AiSettingsOut, AiConfirmationOut, AiModelOut, AiModelsOut
 
-# Version of the German provider-confirmation text the organization agrees to;
-# the copy lives in the frontend, the reviewed wording follows #26. Version 2 names invoices beside the other
-# documents (issue #500): an organization that confirmed version 1 keeps its declaration import, and its invoices
-# stay on the host until it confirms a text that names them. Version 3 names the documents of the inbox as well (issue
-# #501): an organization that confirmed version 2 keeps its declaration import and its invoices, and an inbox document
-# stays on the host until it confirms a text that names it; the key is not entered again. An installation that does not
-# process invoices (``HV_INVOICE_EXTRACTION_ENABLED=false``) shows the text of version 1 and records that version, so a
-# confirmation given there never counts for invoices or the inbox when processing is switched on later.
+# The kinds of document an organization instructs the operator to send to its provider (issue #500, #501).
+DECLARATIONS = 'declarations'
+INVOICES = 'invoices'
+INBOX = 'inbox'
+
+# The one table of the provider-confirmation texts: each version of the German text the organization agrees to, and the
+# kinds of document that text names. The copy lives in the frontend, the reviewed wording follows #26. Every path asks
+# this table whether the newest confirmation of the organization's destination names its kind (``named_kinds``), and the
+# card shows, and a new confirmation records, the text that names exactly the kinds this installation can send
+# (``installation_kinds``). A confirmation keeps what its text named: an organization is asked once more, without
+# entering the key again, only for the kinds its confirmation does not name. A version this table does not know names
+# nothing, so nothing is sent on it.
+#   1  declarations                       (before invoices were covered)
+#   2  declarations, invoices             (#500)
+#   3  declarations, invoices, inbox      (#501; an installation that processes invoices)
+#   4  declarations, inbox                (#501; an installation that does not, ``HV_INVOICE_EXTRACTION_ENABLED=false``)
+CONFIRMATION_TEXTS = {
+    '1': frozenset({DECLARATIONS}),
+    '2': frozenset({DECLARATIONS, INVOICES}),
+    '3': frozenset({DECLARATIONS, INVOICES, INBOX}),
+    '4': frozenset({DECLARATIONS, INBOX}),
+}
+# The text that names every kind: the one an installation that processes invoices records.
 AI_PROVIDER_CONFIRMATION_VERSION = '3'
-DECLARATIONS_CONFIRMATION_VERSION = '1'
-INVOICE_CONFIRMATION_FROM_VERSION = 2
-INBOX_CONFIRMATION_FROM_VERSION = 3
 
 # Why the declaration import cannot run for an organization (structured, never message text).
 DECLARATION_IMPORT_DISABLED = 'DECLARATION_IMPORT_DISABLED'
@@ -43,13 +55,28 @@ INVOICE_AI_CONFIRMATION_MISSING = 'ai_invoice_confirmation_missing'
 INBOX_AI_CONFIRMATION_MISSING = 'ai_inbox_confirmation_missing'
 INVOICE_AI_SETTINGS_CHANGED = 'ai_settings_changed'
 
+def installation_kinds() -> frozenset[str]:
+    """The kinds of document this installation can send to an organization's provider: declarations always, invoices
+    where it processes them, and the documents of the inbox, which the inbox worker reads with the organization's two
+    models on every installation (it has no operator switch of its own)."""
+    return frozenset({DECLARATIONS, INBOX} | ({INVOICES} if settings.invoice_extraction_enabled else set()))
+
+
 def confirmation_text_version() -> str:
-    """The version of the confirmation text this installation shows, and so the one a new confirmation records."""
-    return AI_PROVIDER_CONFIRMATION_VERSION if settings.invoice_extraction_enabled else DECLARATIONS_CONFIRMATION_VERSION
+    """The version of the confirmation text this installation shows, and so the one a new confirmation records: the
+    text that names exactly the kinds it can send."""
+    for version, kinds in CONFIRMATION_TEXTS.items():
+        if kinds == installation_kinds():
+            return version
+    raise LookupError('no confirmation text names exactly the kinds this installation can send')
+
+
+_KIND_TEXT = {DECLARATIONS: 'Teilungserklärungen', INVOICES: 'Rechnungen', INBOX: 'Dokumente im Posteingang'}
 
 
 def confirmation_required_message() -> str:
-    documents = 'Dokumente (Teilungserklärungen, Rechnungen und Dokumente im Posteingang)' if settings.invoice_extraction_enabled else 'Dokumente'
+    named = [text for kind, text in _KIND_TEXT.items() if kind in installation_kinds()]
+    documents = 'Dokumente' if len(named) == 1 else f"Dokumente ({', '.join(named[:-1])} und {named[-1]})"
     return ('Bitte bestätigen Sie vor dem Speichern, dass Ihre Organisation '
         'den Anbieter selbst ausgewählt und beauftragt hat und den Betreiber anweist, '
         f'{documents} und extrahierte Texte an diesen Anbieter zu übermitteln.')
@@ -79,28 +106,16 @@ class EffectiveAiSettings:
     base_url: str | None = None
     request_timeout_seconds: int | None = None
     document_model: str | None = None
-    # The recorded confirmation of this destination names invoices (text version 2 or later) and inbox documents (3 or later).
-    invoice_confirmed: bool = False
-    inbox_confirmed: bool = False
+    # The kinds of document the recorded confirmation of this destination names (``named_kinds``); none without one.
+    confirmed_kinds: frozenset[str] = frozenset()
 
 
-def _covers(confirmation, from_version: int) -> bool:
+def named_kinds(confirmation) -> frozenset[str]:
+    """The kinds of document a recorded confirmation (as ``matching_confirmation`` returns it) names, from its text
+    version in the table above; none for no confirmation or a version the table does not know."""
     if confirmation is None:
-        return False
-    try:
-        return int(confirmation[0].text_version) >= from_version
-    except ValueError:
-        return False
-
-
-def covers_invoices(confirmation) -> bool:
-    """Whether a recorded confirmation (as ``matching_confirmation`` returns it) is of a text that names invoices."""
-    return _covers(confirmation, INVOICE_CONFIRMATION_FROM_VERSION)
-
-
-def covers_inbox(confirmation) -> bool:
-    """Whether a recorded confirmation is of a text that names the documents of the inbox (and so invoices)."""
-    return _covers(confirmation, INBOX_CONFIRMATION_FROM_VERSION)
+        return frozenset()
+    return CONFIRMATION_TEXTS.get(confirmation[0].text_version, frozenset())
 
 
 def _confirmation_match(provider, base_url):
@@ -136,21 +151,21 @@ def invoice_import_blocker(effective: EffectiveAiSettings, *, needs_reading: boo
     naming what is missing.
 
     The invoice path shares the organization's AI import switch, confirmed key and extraction model with the
-    declaration import; no upgrade or default turns them on. The confirmation must be of a text that names invoices:
-    one given before that stays valid for the declaration import and does not send an invoice anywhere. Reading a page
-    that has no text layer needs the document reading model as well, which an administrator chooses; a document whose
-    pages all have a text layer needs none.
+    declaration import. The confirmation must be of a text that names invoices: one given before that stays valid for
+    the declaration import and does not send an invoice anywhere. Reading a page that has no text layer needs the
+    document reading model as well, which an administrator chooses; a document whose pages all have a text layer needs
+    none.
 
-    A document of the inbox (``inbox``) is decided the same way, but its confirmation must name inbox documents: one
-    that names declarations and invoices only keeps those, and the inbox document stays on the host until the text that
-    names it is confirmed.
+    A document of the inbox (``inbox``) is decided the same way, but its confirmation must name inbox documents, and
+    only that: one that names declarations and invoices keeps those and the inbox document stays on the host until the
+    text that names it is confirmed, and one that names inbox documents but no invoices (the text of an installation
+    that processes none) sends the inbox document.
     """
     if not effective.import_enabled or not effective.api_key or not effective.model:
         return INVOICE_AI_IMPORT_DISABLED
-    if inbox and not effective.inbox_confirmed:
-        return INBOX_AI_CONFIRMATION_MISSING
-    if not effective.invoice_confirmed:
-        return INVOICE_AI_CONFIRMATION_MISSING
+    kind, missing = (INBOX, INBOX_AI_CONFIRMATION_MISSING) if inbox else (INVOICES, INVOICE_AI_CONFIRMATION_MISSING)
+    if kind not in effective.confirmed_kinds:
+        return missing
     if needs_reading and not effective.document_model:
         return INVOICE_AI_DOCUMENT_MODEL_MISSING
     return None
@@ -168,12 +183,12 @@ async def effective_ai_settings(db, organization_id) -> EffectiveAiSettings:
         except (InvalidToken, ValueError):
             raise AiKeyUnreadableError() from None
         confirmation = await matching_confirmation(db, organization_id, row.provider, row.base_url)
-        if confirmation is None:
-            # A stored key without a recorded confirmation for its destination
+        if DECLARATIONS not in named_kinds(confirmation):
+            # A stored key without a recorded confirmation for its destination (or one of a text that names no kind)
             # stays unused: every AI entry point fails closed on a missing key.
             key = None
     return EffectiveAiSettings(row.provider, key, row.model, row.import_enabled, row.qa_enabled, row.monthly_limit_usd, row.base_url, row.request_timeout_seconds, row.document_model,
-                               invoice_confirmed=covers_invoices(confirmation), inbox_confirmed=covers_inbox(confirmation))
+                               confirmed_kinds=named_kinds(confirmation))
 
 
 async def worker_ai_settings(organization_id):
@@ -191,15 +206,17 @@ def public_settings(row, confirmation=None) -> AiSettingsOut:
     if row and row.encrypted_api_key and confirmation:
         record, confirmer_name = confirmation
         active = AiConfirmationOut(confirmed_by_name=confirmer_name, confirmed_at=record.confirmed_at)
+    kept = bool(row and row.encrypted_api_key)
+    shown, named = installation_kinds(), named_kinds(confirmation)
     return AiSettingsOut(request_timeout_seconds=row.request_timeout_seconds if row else None, provider=row.provider if row else 'openai', base_url=row.base_url if row else None, key_set=bool(row and row.encrypted_api_key),
         model=row.model if row else None, document_model=row.document_model if row else None, import_enabled=bool(row and row.import_enabled),
         qa_enabled=bool(row and row.qa_enabled), monthly_limit_usd=row.monthly_limit_usd if row else None,
         price_known=bool(row and model_price(row.model, row.provider)),
         document_price_known=bool(row and model_price(row.document_model, row.provider)),
-        confirmation=active, confirmation_required=bool(row and row.encrypted_api_key and confirmation is None),
-        invoice_processing_enabled=settings.invoice_extraction_enabled,
-        invoice_confirmation_required=bool(settings.invoice_extraction_enabled and row and row.encrypted_api_key and not covers_invoices(confirmation)),
-        inbox_confirmation_required=bool(settings.invoice_extraction_enabled and row and row.encrypted_api_key and not covers_inbox(confirmation)))
+        confirmation=active, confirmation_required=kept and DECLARATIONS not in named,
+        invoice_processing_enabled=INVOICES in shown, inbox_processing_enabled=INBOX in shown,
+        invoice_confirmation_required=kept and INVOICES in shown and INVOICES not in named,
+        inbox_confirmation_required=kept and INBOX in shown and INBOX not in named)
 
 
 async def read_settings(db, organization_id):
@@ -280,10 +297,10 @@ async def write_settings(db, organization_id, body, auth):
         existing_confirmation = await matching_confirmation(db, organization_id, body.provider, body.base_url)
         if stores_key and not body.confirmation:
             raise HTTPException(422, {'code': 'ORGANIZATION_AI_CONFIRMATION_REQUIRED', 'message': confirmation_required_message()})
-        # Confirming an already confirmed, unchanged key records nothing; a key
-        # kept without any confirmation (stored before this change), or, where invoices and the inbox are processed,
-        # with one of a text that does not name them yet, can be confirmed once, without re-entering it.
-        shown_text_confirmed = existing_confirmation is not None and (covers_inbox(existing_confirmation) or not settings.invoice_extraction_enabled)
+        # Confirming an already confirmed, unchanged key records nothing; a key kept without any confirmation (stored
+        # before this change), or with one of a text that does not name every kind this installation sends, can be
+        # confirmed once, without re-entering it.
+        shown_text_confirmed = installation_kinds() <= named_kinds(existing_confirmation)
         record_confirmation = bool(body.confirmation and (entered_new_key or not shown_text_confirmed))
     values = body.model_dump(exclude={'api_key', 'confirmation'})
     diff = _audit_diff(previous, body, encrypted, organization_id)

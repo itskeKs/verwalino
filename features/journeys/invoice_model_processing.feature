@@ -15,11 +15,11 @@ Feature: The building-insurance invoice of Journey 2 reaches the organization's 
     And the models received what the invoice prints, including the IBAN of the insurer's bank statement line
     And nothing is posted and the original can be opened
 
-  Scenario: The settings card of the local stack, which processes no invoices, names none
+  Scenario: The settings card of the local stack, which processes no invoices, names none and names the documents of the inbox
     Given an administrator of "Verwaltung Alpha" is signed in
     And the organization has enabled the AI import with its own key and both models
     When the administrator opens the AI settings of the organization
-    Then the one switch reads that it imports declarations only and no text of the card names invoices at 1280 and 360 pixels
+    Then the one switch reads that it imports declarations and evaluates the documents of the inbox and no text of the card names invoices at 1280 and 360 pixels
 
   Scenario: XRechnung and ZUGFeRD are read directly and no provider is built
     Given an administrator of "Verwaltung Alpha" is signed in

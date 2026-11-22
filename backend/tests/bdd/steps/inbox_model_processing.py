@@ -97,8 +97,10 @@ def _process(world, monkeypatch, *, pages, reader, extractor):
         monkeypatch.setattr(workflow, "process_once", inspect)
         monkeypatch.setattr(intake_extraction, "process_once", extract)
 
+    organization = world.data.setdefault("organization_id", _organization(world))
+
     async def organizations():
-        return (world.data["organization_id"],)
+        return (organization,)
 
     runner = WorkflowRunner(organizations, build_adapters(intake_providers=harness))
     for _ in range(20):

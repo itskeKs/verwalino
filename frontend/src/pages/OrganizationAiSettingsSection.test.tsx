@@ -9,7 +9,7 @@ const settings = {
   provider: "openai", base_url: null, key_set: true, model: "evaluated-model",
   document_model: "reading-model", document_price_known: true,
   import_enabled: false, qa_enabled: true, monthly_limit_usd: "5.00", price_known: true,
-  request_timeout_seconds: null, confirmation, confirmation_required: false, invoice_processing_enabled: true, invoice_confirmation_required: false, inbox_confirmation_required: false,
+  request_timeout_seconds: null, confirmation, confirmation_required: false, invoice_processing_enabled: true, inbox_processing_enabled: true, invoice_confirmation_required: false, inbox_confirmation_required: false,
 };
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -215,10 +215,12 @@ it("keeps what the stored confirmation covered and asks once more only for the d
 });
 
 // Where this installation does not process invoices (HV_INVOICE_EXTRACTION_ENABLED=false, the portable stack) the card
-// is about the declaration import alone: it says nothing about invoices being evaluated or sent.
+// is about the declaration import and the documents of the inbox, which every installation reads with the organization's
+// models: it says nothing about invoices being evaluated or sent. What the card names comes from the settings answer.
 const withoutInvoices = { ...settings, invoice_processing_enabled: false };
+const withoutInvoicesText = (container: HTMLElement) => (container.textContent ?? "").replace(/E-Rechnung\w*|XRechnung/g, "");
 
-it("claims nothing about invoices before the settings say whether this installation processes them", async () => {
+it("claims nothing about invoices or the inbox before the settings say what this installation processes", async () => {
   vi.spyOn(api, "get").mockReturnValue(new Promise(() => {}) as never);
   const { container } = render(<OrganizationAiSettingsSection organizationId="org-1" />);
 
@@ -227,21 +229,21 @@ it("claims nothing about invoices before the settings say whether this installat
   expect(container).not.toHaveTextContent(/Rechnung|Posteingang/);
 });
 
-it("names no invoices and no inbox documents in the switch, its description, the hints or the confirmation where they are not processed", async () => {
+it("names the documents of the inbox and no invoices in the switch, its description, the hints and the confirmation where invoices are not processed", async () => {
   vi.spyOn(api, "get").mockResolvedValue({ ...withoutInvoices, import_enabled: true, document_model: null, document_price_known: false, confirmation_required: true, confirmation: null } as never);
   const { container } = render(<OrganizationAiSettingsSection organizationId="org-1" />);
 
-  const toggle = await screen.findByLabelText("Teilungserklärungen importieren");
+  const toggle = await screen.findByLabelText("Teilungserklärungen importieren sowie Dokumente im Posteingang auswerten");
   expect(toggle).toBeChecked();
-  expect(toggle).not.toHaveAttribute("aria-describedby");
-  expect(container.querySelector("#ai-import-info")).toBeNull();
-  expect(screen.getByText(/Für den Import von Teilungserklärungen fehlt noch ein Modell unter „Dokumente einlesen“/)).toBeVisible();
-  expect(screen.getByLabelText(/Anbieter selbst gewählt/).closest("label")).toHaveTextContent("Dokumente und extrahierte Texte an den gewählten Anbieter zu übermitteln.");
-  expect(container).not.toHaveTextContent(/Rechnung|Posteingang/);
+  expect(toggle).toHaveAccessibleDescription(/Teilungserklärungen sowie Dokumente im Posteingang ohne strukturierte E-Rechnungsdaten \(zum Beispiel Scans\) an den gewählten Anbieter.*E-Rechnungen im Format XRechnung oder ZUGFeRD werden direkt gelesen und nicht übermittelt.*Dokumente im Posteingang werden erst übermittelt, wenn Ihre Organisation den aktuellen Bestätigungstext angenommen hat.*was ein Dokument im Posteingang verbraucht hat, steht dort/s);
+  expect(screen.getByText(/Das gilt auch für Dokumente im Posteingang: Hochgeladene Dokumente \(PDF, PNG oder JPEG\)/)).toBeVisible();
+  expect(screen.getByText(/Für den Import von Teilungserklärungen fehlt noch ein Modell unter „Dokumente einlesen“.*Dokumente im Posteingang, die gescannt sind oder Seiten ohne Text haben, werden dann ebenfalls nicht ausgewertet/s)).toBeVisible();
+  expect(screen.getByLabelText(/Anbieter selbst gewählt/).closest("label")).toHaveTextContent("Dokumente (Teilungserklärungen und Dokumente im Posteingang) und extrahierte Texte an den gewählten Anbieter zu übermitteln.");
+  expect(withoutInvoicesText(container)).not.toMatch(/Rechnung/);
 });
 
-it("stores the confirmation without a word about invoices where they are not processed, and asks nothing more about them", async () => {
-  vi.spyOn(api, "get").mockResolvedValue({ ...withoutInvoices, confirmation_required: true, confirmation: null } as never);
+it("stores the confirmation that names the inbox and no invoices where they are not processed, and asks nothing more", async () => {
+  vi.spyOn(api, "get").mockResolvedValue({ ...withoutInvoices, confirmation_required: true, confirmation: null, inbox_confirmation_required: true } as never);
   const put = vi.spyOn(api, "put").mockImplementation(async (_url, body) => ({ ...withoutInvoices, ...(body as object), confirmation }) as never);
   render(<OrganizationAiSettingsSection organizationId="org-1" />);
 
@@ -252,10 +254,52 @@ it("stores the confirmation without a word about invoices where they are not pro
   expect(screen.queryByLabelText(/Anbieter selbst gewählt/)).not.toBeInTheDocument();
 });
 
+it("offers the confirmation for the inbox where invoices are not processed and the stored confirmation predates it, without the key and without a word about invoices", async () => {
+  // The text of version 1 named declarations only; on this installation the inbox is sent as well, invoices are not.
+  const earlier = { ...withoutInvoices, import_enabled: true, inbox_confirmation_required: true };
+  vi.spyOn(api, "get").mockResolvedValue(earlier as never);
+  const put = vi.spyOn(api, "put").mockImplementation(async (_url, body) => ({
+    ...earlier, ...(body as object), key_set: true, inbox_confirmation_required: (body as { confirmation?: boolean }).confirmation !== true,
+    confirmation: { confirmed_by_name: "Admin Beta", confirmed_at: "2026-11-22T10:00:00+00:00" } }) as never);
+  const { container } = render(<OrganizationAiSettingsSection organizationId="org-1" />);
+
+  expect(await screen.findByText(/galt, bevor Dokumente im Posteingang ausgewertet wurden\. Teilungserklärungen sind davon nicht betroffen\. Dokumente im Posteingang werden erst nach einer neuen Bestätigung an den Anbieter übermittelt.*Den Schlüssel müssen Sie dafür nicht erneut eingeben/s)).toBeVisible();
+  expect(withoutInvoicesText(container)).not.toMatch(/Rechnung/);
+  fireEvent.click(screen.getByLabelText(/Anbieter selbst gewählt/));
+  fireEvent.click(screen.getByRole("button", { name: "KI-Einstellungen speichern" }));
+  expect(await screen.findByText(/Bestätigt am .* von Admin Beta\./)).toBeVisible();
+  expect(put).toHaveBeenLastCalledWith("/api/organizations/org-1/ai-settings", expect.objectContaining({ confirmation: true }));
+  expect(put.mock.calls[0][1]).not.toHaveProperty("api_key");
+});
+
+it("asks once more for invoices only, where a confirmation of the text without them is stored and invoices are processed from now on", async () => {
+  // Version 4 named declarations and the inbox: the inbox stays sent, invoices wait for the text that names them.
+  const earlier = { ...settings, import_enabled: true, invoice_confirmation_required: true, inbox_confirmation_required: false };
+  vi.spyOn(api, "get").mockResolvedValue(earlier as never);
+  render(<OrganizationAiSettingsSection organizationId="org-1" />);
+
+  expect(await screen.findByText(/galt, bevor Rechnungen ausgewertet wurden\. Teilungserklärungen und Dokumente im Posteingang sind davon nicht betroffen\. Rechnungen werden erst nach einer neuen Bestätigung an den Anbieter übermittelt; bis dahin bleiben sie in Verwalino und können von Hand erfasst werden/s)).toBeVisible();
+  expect(screen.queryByText(/galt, bevor Rechnungen und Dokumente/)).not.toBeInTheDocument();
+});
+
+// Every combination of what an installation sends: the switch, its description and the confirmation name exactly that.
+it.each([
+  [false, false, "Teilungserklärungen importieren", "Dokumente"],
+  [true, false, "Teilungserklärungen importieren sowie Rechnungen auswerten", "Dokumente (Teilungserklärungen und Rechnungen)"],
+  [false, true, "Teilungserklärungen importieren sowie Dokumente im Posteingang auswerten", "Dokumente (Teilungserklärungen und Dokumente im Posteingang)"],
+  [true, true, "Teilungserklärungen importieren sowie Rechnungen und Dokumente im Posteingang auswerten", "Dokumente (Teilungserklärungen, Rechnungen und Dokumente im Posteingang)"],
+])("names exactly what the installation sends (invoices %s, inbox %s) in the switch and in the confirmation", async (invoices, inbox, label, documents) => {
+  vi.spyOn(api, "get").mockResolvedValue({ ...settings, invoice_processing_enabled: invoices, inbox_processing_enabled: inbox, confirmation_required: true, confirmation: null } as never);
+  render(<OrganizationAiSettingsSection organizationId="org-1" />);
+
+  expect(await screen.findByLabelText(label)).toBeInTheDocument();
+  expect(screen.getByLabelText(/Anbieter selbst gewählt/).closest("label")?.textContent).toContain(`${documents} und extrahierte Texte`);
+});
+
 it("shows the invoice wording again once the settings say that invoices are processed", async () => {
   vi.spyOn(api, "get").mockResolvedValueOnce(withoutInvoices as never).mockResolvedValueOnce({ ...settings, invoice_confirmation_required: true, inbox_confirmation_required: true } as never);
   const { unmount } = render(<OrganizationAiSettingsSection organizationId="org-1" />);
-  expect(await screen.findByLabelText("Teilungserklärungen importieren")).toBeInTheDocument();
+  expect(await screen.findByLabelText("Teilungserklärungen importieren sowie Dokumente im Posteingang auswerten")).toBeInTheDocument();
   unmount();
 
   render(<OrganizationAiSettingsSection organizationId="org-1" />);

@@ -49,16 +49,17 @@ certainty of the proposal and has no evidence row. A proposal stored before the 
 
 The field lives in the stored proposal (`invoice_document.extraction_payload`, a JSON document) and in the revision
 the worker records through `record_invoice_extraction_revision`, whose installed function accepts the optional key
-(0197 changes the function; no further revision). The prompt and schema versions (`invoice-v1`, `invoice-1`) and the
-processor version `invoice-model-v1` are those of this release's first shape and stay: nothing was stored under
-them before the field existed.
+(0197 changes the function; no further revision). The prompt and schema versions are `invoice-v2` and `invoice-2` since the inbox shares the contract (#501): the
+model also names the page and the passage each stated value was found on, which the invoice path ignores and the inbox
+checks against the pages of its document. The processor version `invoice-model-v1` stays: a proposal stored under
+`invoice-v1` is not rewritten.
 
 ## Opt-in: nothing is sent without it
 
 An unstructured invoice reaches a provider only when the organization's AI import
 switch is on („Teilungserklärungen importieren und Rechnungen auswerten“), a key is
 stored, an extraction model is chosen and the provider confirmation was given **with the text
-that names invoices** (confirmation text version 2). A scan also needs the reading model; a PDF whose
+that names invoices** (confirmation text version 2 or 3; one table in `services/ai_settings_service.py` maps each text version to the kinds it names, and every path asks it). A scan also needs the reading model; a PDF whose
 pages all have a text layer needs only the extraction model. An upgrade turns nothing on.
 
 An organization that confirmed the first text (version 1) keeps its declaration import
@@ -72,12 +73,14 @@ exists; the manual path (**Kostenposition erstellen**) stays open.
 
 **An installation that does not process invoices says nothing about them.** Where
 `HV_INVOICE_EXTRACTION_ENABLED` is `false` (the portable stack, including the hosted server) the settings card
-„KI für Ihre Organisation“ is about the declaration import alone: its switch reads „Teilungserklärungen importieren“,
-and neither the description nor the confirmation text names invoices (the settings answer carries
-`invoice_processing_enabled` for this). A confirmation given there is recorded as text version 1, because that is the
-text the organization saw. If invoice processing is switched on later, that confirmation does not cover invoices:
-none is sent until an administrator has seen and confirmed the text that names them
-(`ai_invoice_confirmation_missing`), exactly as for an organization that confirmed before invoices were covered.
+„KI für Ihre Organisation“ is about the declaration import and the documents of the inbox ([inbox flow](inbox-review-chain.md#reading-with-the-organizations-models)), which every
+installation reads with the organization's models: its switch reads „Teilungserklärungen importieren sowie Dokumente im
+Posteingang auswerten“, and neither the description nor the confirmation text names invoices (the settings answer carries
+`invoice_processing_enabled` and `inbox_processing_enabled` for this). A confirmation given there is recorded as text
+version 4, which names declarations and inbox documents but no invoices, because that is the text the organization saw. If
+invoice processing is switched on later, that confirmation does not cover invoices: none is sent until an administrator
+has seen and confirmed the text that names them (`ai_invoice_confirmation_missing`, text version 3), exactly as for an
+organization that confirmed before invoices were covered; its inbox documents stay covered.
 
 **The opt-in is read again before every request.** The reservation of each request (the transaction that
 also extends the lease and checks the monthly limit) re-reads the organization's settings under the budget lock that every

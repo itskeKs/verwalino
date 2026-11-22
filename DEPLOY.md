@@ -1019,9 +1019,10 @@ The source receives the released migrations and synthetic records; both owned
 databases are dropped on exit. The shared database is neither reset nor seeded.
 Ordinary test runs skip it with a reason; it also skips when Docker is missing.
 
-The portable stack starts the declaration worker with no configured AI credentials. Administrators enable declaration import and Q&A per organization in Einstellungen. SMTP and the ordinary invoice worker remain disabled by default. The optional [inbox worker](#inbox-worker) processes
-intake documents locally; it requires scanner signatures and, for scans, German
-OCR. The T10 worker is configured in the local production Compose file. The
+The portable stack starts the declaration worker with no configured AI credentials. Administrators enable declaration import and Q&A per organization in Einstellungen. SMTP and the ordinary invoice worker remain disabled by default. The optional [inbox worker](#inbox-worker) inspects
+intake documents locally and requires scanner signatures; it reads an unstructured
+document only with the organization's models, once an operator has wired a provider
+route for it (not yet decided), otherwise the document waits for manual completion. The T10 worker is configured in the local production Compose file. The
 first tag publication and native arm64 image installation,
 complete clean-host setup/login/restart and real domain/TLS acceptance still
 need operator checks; do not treat the mock installer tests as
@@ -1749,11 +1750,11 @@ run `docker compose down -v` or delete the volumes.
 A deploy workflow that was disabled by hand during a release is re-enabled in the same release,
 before that release is declared done.
 
-## Migration compatibility: 0029–0197
+## Migration compatibility: 0029–0198
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0197 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0198 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -1817,13 +1818,14 @@ before that release is declared done.
 | 0194 (accepted source; parent 0193) | The debt of a lease counts every booked payment of that lease for the period, whichever accounting scope's account received it (issue #803): adds the function `lease_payments_outside_scope(org, lease, listed)`. A rent statement of one scope used to count the lease's full rent as owed but only the payments row security let that scope read, so two rental scopes that cover one lease each showed the other scope's payments as unpaid. The function returns the booked payments of the one lease the request names that the caller did not read (`listed` holds the ids it did read, so none counts twice): type, direction, amount, assigned month, value date and booking time, never an id, account, counterparty, text or scope. It answers only where the statement is admitted: for the caller's organization and where `payment_computation_context_valid` (0036) accepts the lease, which for a selected scope also asks for the caller's live `read` grant, a scope whose financial inputs are classified and a lease whose unit the scope covers, so an unknown id, a lease of another organization, a lease outside the selected scope and a caller without a grant get no rows. The function has definer rights, `search_path=pg_catalog,pg_temp`, row security off, `EXECUTE` revoked from PUBLIC and granted to `app_rw`. No row is read or rewritten by the migration and no data can be lost: downgrade drops the function and needs no data check; the statement then counts only the payments of the selected scope again. Existing payments, scope bindings and statements of single-scope leases are unchanged. 0193 stays as the accepted source. |
 | 0195 (accepted source; parent 0194) | The organization import restores a dunning notice that another user prepared, with the archived preparer as its preparer (issue #694, ADR 0016): replaces only the function `protect_dunning_context()` of 0039 (`CREATE OR REPLACE`; definer rights, `search_path=pg_catalog,pg_temp`, both advisory locks and the ACL stay). Its condition that `created_by` of a new context is the signed-in user gets one alternative: the transaction-local setting `app.organization_import_dunning_context`, which only the import sets around the insert of one context, names this context's notice and its `created_by`, and `created_by` is an inactive account of the same organization with the unusable password `!` (the placeholder the import writes for an archived user; a colleague deactivated in the user list keeps their password and is none). Every other condition stays for the signed-in user (organization, selected scope, live `prepare` grant, a context that precedes its notice), and a context stays immutable (UPDATE and DELETE are refused, setting or not). No row is read or rewritten by the migration and no data can be lost: downgrade restores the text of 0039 and needs no data check; an import then refuses a notice another user prepared again at `dunning_scope_context`. Existing contexts and notices are unchanged. 0194 stays as the accepted source. |
 | 0196 (accepted source; parent 0195) | Two model roles and the reading stage's persistence (issue #499, ADR 0017). Adds the nullable `organization_ai_settings.document_model`, the organization's document reading model (the existing `model` stays the extraction and property Q&A model), the nullable `declaration_extraction_run.document_model_name` (the reading model a run used beside `model_name`) and the table `declaration_page_reading` (the transcript of every page the reading model finished, so that a resumed import neither reads nor pays for it again): forced row-level security, composite foreign keys to the import's document with cascade, insert and delete only by the worker role with each insert fenced to the live lease by the worker effect receipt, `SELECT, INSERT, DELETE` granted to `app_rw` and nothing to `app_worker` or `app_review` (the retention catalog classifies the table `delete`). Two installed functions change: the ledger validator `declaration_import_pass_safe_metadata_is_valid` accepts the pass id `read_page`, and `organization_ai_monthly_usage` holds a RUNNING run at its cap when its extraction model or its reading model is priced (it asked only for the extraction model). No existing row is read or rewritten: `document_model` is NULL for every organization after the upgrade and is never filled in on an administrator's behalf, so the declaration import refuses to run (`DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING`) until an administrator chooses a reading model, while uploaded originals stay. Downgrade refuses while any organization has chosen a reading model ("Configured document reading models require this release") and while a reading pass record exists ("Reading pass records require this release"); otherwise it restores both functions, drops the table and the two columns. The transcripts are working data that the older runtime cannot use: a resumed job reads its pages again. They are kept as long as the import's documents (until the organization is erased) and are not part of the organization export, so after a restore the evidence re-check of a scanned import is unavailable. 0195 stays as the accepted source. |
-| 0197 (head; parent 0196) | The metering ledger of the model-assisted invoice path (issue #500, ADR 0017). Adds the table `invoice_model_call`: one row per model request of an unstructured invoice (its attempt, its stage `read_page` or `extract_invoice`, the page it read, the model that served it, the reservation made before the request and, once it finished, the usage it consumed and the stable code of a failure): forced row-level security, a composite foreign key to the invoice attempt, rows inserted and settled only by the worker role (a trigger lets a RESERVED row become SETTLED once and change nothing else), `SELECT, INSERT, UPDATE, DELETE` granted to `app_rw` and nothing to `app_worker` or `app_review` (the retention catalog classifies the table `delete`); it is not part of the organization export. Three installed definitions change: `organization_ai_monthly_usage` adds the table as a third charge (a RESERVED call counts at its reservation, a SETTLED call at its consumed cost), the CHECK `extraction_revision_typed_attempt` and the function `record_invoice_extraction_revision` accept the processor version `invoice-model-v1` beside `invoice-local-v1` for an invoice attempt (the intake version is untouched); the same function also accepts the optional tenth key `vendor_iban` of an invoice proposal (a string of IBAN shape or null) and a certainty of that key, and the inbox's function stays as it was. No row is read or rewritten and nothing is sent anywhere because of the upgrade: whether an organization's unstructured invoices reach its provider stays governed by its own AI import switch, confirmed key and models. Downgrade refuses while a call record exists ("Invoice model call records require this release") and while a `invoice-model-v1` proposal or attempt exists ("Model-read invoice proposals require this release"); otherwise it restores the three definitions and drops the table. 0196 stays as the accepted source. |
+| 0197 (accepted source; parent 0196) | The metering ledger of the model-assisted invoice path (issue #500, ADR 0017). Adds the table `invoice_model_call`: one row per model request of an unstructured invoice (its attempt, its stage `read_page` or `extract_invoice`, the page it read, the model that served it, the reservation made before the request and, once it finished, the usage it consumed and the stable code of a failure): forced row-level security, a composite foreign key to the invoice attempt, rows inserted and settled only by the worker role (a trigger lets a RESERVED row become SETTLED once and change nothing else), `SELECT, INSERT, UPDATE, DELETE` granted to `app_rw` and nothing to `app_worker` or `app_review` (the retention catalog classifies the table `delete`); it is not part of the organization export. Three installed definitions change: `organization_ai_monthly_usage` adds the table as a third charge (a RESERVED call counts at its reservation, a SETTLED call at its consumed cost), the CHECK `extraction_revision_typed_attempt` and the function `record_invoice_extraction_revision` accept the processor version `invoice-model-v1` beside `invoice-local-v1` for an invoice attempt (the intake version is untouched); the same function also accepts the optional tenth key `vendor_iban` of an invoice proposal (a string of IBAN shape or null) and a certainty of that key, and the inbox's function stays as it was. No row is read or rewritten and nothing is sent anywhere because of the upgrade: whether an organization's unstructured invoices reach its provider stays governed by its own AI import switch, confirmed key and models. Downgrade refuses while a call record exists ("Invoice model call records require this release") and while a `invoice-model-v1` proposal or attempt exists ("Model-read invoice proposals require this release"); otherwise it restores the three definitions and drops the table. 0196 stays as the accepted source. |
+| 0198 (head; parent 0197) | The inbox reads and extracts through the organization's two models (issue #501, ADR 0017). The model call ledger `invoice_model_call` serves the inbox as well: a row belongs to an invoice attempt or to an inbox extraction attempt (new column `intake_attempt_id`, exactly one of the two, composite foreign key, same forced row-level security, worker-only insert and settle-once guard; the monthly total already sums the whole table, no DELETE trigger is added). New functions: `renew_intake_extraction` (extends the lease of a live claim before every paid request and re-checks the initiator, true only while the attempt holds the fence) and `intake_model_usage` (the ledger rows of one logical document over all its attempts for the people who may read it). `complete_intake_extraction` now accepts the processor version `intake-model-v1`, the optional tenth proposal key `vendor_iban`, the page method `reading_model` and a blank page; `field_evidence` accepts the method `reading_model` for a located field. No row is read or rewritten and nothing is sent because of the upgrade. `downgrade()` refuses while a ledger row of an inbox attempt, an `intake-model-v1` proposal or located evidence of a model-read page exists. |
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0197 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0197, 0139→0197 and accepted-source 0140→0197, 0141→0197 and
-0142→0197, 0143→0197, 0144→0197, 0145→0197, 0146→0197, 0147→0197, 0148→0197, 0149→0197, 0150→0197, 0151→0197, 0152→0197, 0153→0197, 0154→0197, 0155→0197, 0159→0197, 0160→0197, 0161→0197, 0162→0197, 0163→0197, 0164→0197, 0165→0197, 0166→0197, 0167→0197, 0168→0197, 0169→0197, 0170→0197, 0171→0197, 0172→0197, 0173→0197, 0174→0197, 0175→0197, 0176→0197, 0177→0197, 0178→0197, 0179→0197, 0180→0197, 0181→0197 and 0182→0197 (accepted sources), 0183→0197, 0184→0197 and 0185→0197 rehearsals, and the 0187→0188 rehearsal of the new tables, also
+0028→0198 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0198, 0139→0198 and accepted-source 0140→0198, 0141→0198 and
+0142→0198, 0143→0198, 0144→0198, 0145→0198, 0146→0198, 0147→0198, 0148→0198, 0149→0198, 0150→0198, 0151→0198, 0152→0198, 0153→0198, 0154→0198, 0155→0198, 0159→0198, 0160→0198, 0161→0198, 0162→0198, 0163→0198, 0164→0198, 0165→0198, 0166→0198, 0167→0198, 0168→0198, 0169→0198, 0170→0198, 0171→0198, 0172→0198, 0173→0198, 0174→0198, 0175→0198, 0176→0198, 0177→0198, 0178→0198, 0179→0198, 0180→0198, 0181→0198 and 0182→0198 (accepted sources), 0183→0198, 0184→0198 and 0185→0198 rehearsals, and the 0187→0188 rehearsal of the new tables, also
 compare existing ACLs, allowing only the explicit organization INSERT/reserve UPDATE revocations and the capability-checked
 0159 binding adapter and the 0168 column-level resolution-link grant;
 it does not prove live data validity or cross-version runtime compatibility.
@@ -1899,10 +1901,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0197**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0198**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0197**,
-**0122 → 0197**, **0139 → 0197**, **0140 → 0197**, **0141 → 0197**, **0142 → 0197**, **0143 → 0197**, **0144 → 0197**, **0145 → 0197**, **0146 → 0197**, **0147 → 0197**, **0148 → 0197**, **0149 → 0197**, **0150 → 0197**, **0151 → 0197**, **0152 → 0197**, **0153 → 0197**, **0154 → 0197**, **0155 → 0197**, **0159 → 0197**, **0160 → 0197**, **0161 → 0197**, **0162 → 0197**, **0163 → 0197**, **0164 → 0197**, **0165 → 0197**, **0166 → 0197** (accepted sources), **0167 → 0197** (accepted source), **0168 → 0197** (accepted source), **0169 → 0197** (accepted source), **0170 → 0197** (accepted source), **0171 → 0197** (accepted source), **0172 → 0197** (accepted source), **0173 → 0197** (accepted source), **0174 → 0197** (accepted source), **0175 → 0197** (accepted source), **0176 → 0197** (accepted source), **0177 → 0197**, **0178 → 0197**, **0179 → 0197**, **0180 → 0197**, **0181 → 0197**, **0182 → 0197**, **0183 → 0197**, **0184 → 0197**, **0185 → 0197** or **0186 → 0197**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0198**,
+**0122 → 0198**, **0139 → 0198**, **0140 → 0198**, **0141 → 0198**, **0142 → 0198**, **0143 → 0198**, **0144 → 0198**, **0145 → 0198**, **0146 → 0198**, **0147 → 0198**, **0148 → 0198**, **0149 → 0198**, **0150 → 0198**, **0151 → 0198**, **0152 → 0198**, **0153 → 0198**, **0154 → 0198**, **0155 → 0198**, **0159 → 0198**, **0160 → 0198**, **0161 → 0198**, **0162 → 0198**, **0163 → 0198**, **0164 → 0198**, **0165 → 0198**, **0166 → 0198** (accepted sources), **0167 → 0198** (accepted source), **0168 → 0198** (accepted source), **0169 → 0198** (accepted source), **0170 → 0198** (accepted source), **0171 → 0198** (accepted source), **0172 → 0198** (accepted source), **0173 → 0198** (accepted source), **0174 → 0198** (accepted source), **0175 → 0198** (accepted source), **0176 → 0198** (accepted source), **0177 → 0198**, **0178 → 0198**, **0179 → 0198**, **0180 → 0198**, **0181 → 0198**, **0182 → 0198**, **0183 → 0198**, **0184 → 0198**, **0185 → 0198** or **0186 → 0198**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 
@@ -2113,7 +2115,7 @@ scanner/storage or worker-role/queue access is unavailable. Healthchecks use
 engine alongside a job; startup additionally scans a synthetic XML probe through
 the bounded inspector. Neither claims work. See the [flow and review commands](docs/operations/inbox-review-chain.md).
 
-The image includes ClamAV, Poppler and German Tesseract. **Before enabling the
+The image includes ClamAV, Poppler and, until [#502](https://github.com/itskeKs/verwalino/issues/502) removes it, German Tesseract (no code of the inbox calls it). **Before enabling the
 worker**, provision a host directory of official, current ClamAV signatures
 (using the host's `freshclam` installation), readable by uid 10001. Maintain
 updates on the host; the worker has no network updater. Set
@@ -2158,12 +2160,34 @@ the invoice worker and, when its healthcheck passes, the inbox worker on the tes
 DB; the inbox worker uses the host ClamAV installation.
 No new configuration switch or provider setting is introduced.
 
+**Unstructured inbox documents are no longer read locally (0198, issue #501).** Earlier releases read a scanned PDF, a PNG or a
+JPEG of the inbox with Tesseract and a local pattern matcher. Now such an original is read by the organization's own two models
+(„Dokumente einlesen“ and „Informationen extrahieren“), page by page of each logical document, exactly as an invoice is
+([Invoice worker](#invoice-worker-t10)): only after the organization's AI import switch, key, both models and a provider
+confirmation that **names inbox documents** (text version 3; on an installation with `HV_INVOICE_EXTRACTION_ENABLED=false`, the
+portable stack, version 4, which names declarations and the inbox but no invoices). Nothing is turned on by the upgrade. An
+organization that confirmed an earlier text keeps what that text named (its declaration import, and its invoices if the text
+named them) and is asked **once more, without entering its key again**, in Einstellungen; until then its inbox documents are
+retained with the reason `ai_inbox_confirmation_missing`, nothing is sent, and the established retry (**Auswertung erneut
+anfordern**) works once the cause is removed. Without opt-in, models, key or budget, or on a provider failure, the original is
+kept, nothing is applied and the screen says what happened in German; people enter the values by hand. XRechnung and ZUGFeRD
+originals are still read locally and never sent. Requests are metered in `invoice_model_call` (0198 adds its inbox attempt
+column) and count towards the organization's monthly limit; what a document consumed is on its source page („Verbrauch der
+KI-Verarbeitung“).
+
+**What an operator must know before relying on it.** Which process runs the inbox model stage in each stack and how it reaches
+a provider is an open owner decision (#65): the `inbox-worker` of both Compose files has no provider egress and no session
+secret that decrypts the organization's key, and this release does not change a Compose file or a worker loop. Until that is
+decided and built, an unstructured inbox document is retained for manual completion on every installation. The image keeps
+Tesseract until [#502](https://github.com/itskeKs/verwalino/issues/502) removes it; no code of the inbox path calls it, and no
+new configuration key exists.
+
 ## Invoice worker (T10)
 
 The `invoice-worker` service in `docker-compose.prod.yml` belongs to the owner's
 local production configuration and is covered by
 `tests/test_invoice_extraction_worker.py`. It adds no migration of its own (the ledger of its model
-requests is revision 0197).
+requests is revision 0197; since 0198 the same ledger serves the inbox).
 **The portable stack, including the hosted server, does not start this worker; automatic invoice
 extraction is disabled there** (`HV_INVOICE_EXTRACTION_ENABLED: "false"`), so an invoice uploaded to a
 portable installation is saved and waits for manual entry. Structured invoices and the models are therefore
@@ -2196,9 +2220,9 @@ nonzero on an iteration failure. Retry/lease budgets and human review are unchan
 
 **What an invoice costs and when it is sent.** An unstructured PDF is sent to the organization's provider
 only when its AI import switch, key and extraction model allow it and its provider confirmation names invoices (text
-version 2; an organization that confirmed version 1 keeps its declaration import and is asked once more for invoices,
-and nothing is sent until then; an installation with `HV_INVOICE_EXTRACTION_ENABLED=false` shows and records the text
-without invoices, so a confirmation given there does not cover them if processing is switched on later). The switch,
+version 2 or 3; an organization that confirmed version 1 keeps its declaration import and is asked once more for invoices,
+and nothing is sent until then; an installation with `HV_INVOICE_EXTRACTION_ENABLED=false` shows and records version 4, which names
+the inbox but no invoices, so a confirmation given there does not cover them if processing is switched on later). The switch,
 key and confirmation are read again before every request, so turning them off stops a running invoice before its next
 request. **On upgrade, an organization without the opt-in no longer gets a locally read proposal for a PDF with a text
 layer: it ends without one and is entered by hand; structured invoices (XRechnung, ZUGFeRD/Factur-X) are unaffected.**
@@ -2662,7 +2686,7 @@ a numeric ledger placeholder is never displayed as free usage.
 Migration 0179 preserves existing encrypted settings and adds the optional compatible
 endpoint and provider constraint. Downgrade refuses configured non-OpenAI destinations
 rather than silently losing their configuration. Existing rows keep their OpenAI
-origin and credentials. 0180 is an accepted source for upgrades to 0197 alongside the
+origin and credentials. 0180 is an accepted source for upgrades to 0198 alongside the
 previous sources; production moves only through a reviewed release.
 
 ### Document reading and extraction models (0196)
@@ -2694,8 +2718,8 @@ and the same memory and CPU limits: no new service, port or volume. The worker r
 a time with Poppler (`pdftoppm`) and checks PDFs with qpdf; **it no longer needs Tesseract or the
 German language pack**, and its healthcheck (`python -m app.workers.declaration_import
 --healthcheck`) no longer asks for them (it checks qpdf, `pdftoppm`, the database role and the
-document storage). The invoice worker no longer needs it either (#500). The image keeps Tesseract for the
-inbox worker until its path reads with a model too (#501, #502). The reading model must accept image input: otherwise
+document storage). The invoice worker no longer needs it either (#500). The inbox worker reads with a model too since 0198 (#501); the image keeps
+Tesseract only until #502 removes it, and no code calls it. The reading model must accept image input: otherwise
 the job ends with `PROVIDER_IMAGE_INPUT_UNSUPPORTED` and the import screen says so in German;
 the original is kept and nothing is applied. Reading and extraction are both metered and count
 together against the per-import limits (`HV_DECLARATION_MAX_*`; they default to 2,500,000 input tokens,
@@ -2707,9 +2731,9 @@ pages in high resolution can exceed it before the page limit is reached.
 
 **Version defaults.** The extraction prompt version is `declaration-v4` and the harness version
 `4` (compatible endpoints `8`, Anthropic fingerprint `v5`); the reading prompt is `reading-v1`
-with schema `reading-1`; the invoice extraction prompt is `invoice-v1` with schema `invoice-1` (ten fields, the vendor's IBAN among them), and a proposal
-that the models made carries the processor version `invoice-model-v1` (the deterministic parsers keep
-`invoice-local-v1`). The reading and invoice versions are constants, not settings. `docker-compose.prod.yml` and `.env.example` carry the new defaults.
+with schema `reading-1`; the invoice extraction prompt is `invoice-v2` with schema `invoice-2` (ten fields, the vendor's IBAN among them, and for every stated value the page and passage it was found on; shared by the inbox, #501), and a proposal
+that the models made carries the processor version `invoice-model-v1` (the inbox's `intake-model-v1`; the deterministic parsers keep
+`invoice-local-v1` and `intake-local-v1`). The reading and invoice versions are constants, not settings. `docker-compose.prod.yml` and `.env.example` carry the new defaults.
 A protected env file that still pins `HV_DECLARATION_PROMPT_VERSION=declaration-v3` or
 `HV_DECLARATION_HARNESS_VERSION=3` keeps recording the old labels on new runs: remove the pins
 when upgrading.

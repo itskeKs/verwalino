@@ -130,6 +130,29 @@ what Verwalino does not assign by itself.
     provider call, with or without any AI configuration.
   - Where no invoice worker runs (the portable install does not start one), the page says „Die automatische
     Verarbeitung ist auf diesem Server abgeschaltet.“, keeps the original and Sabine enters the cost by hand.
+- **The same kind of document through „Posteingang“.** Sabine puts a scan with two documents into the inbox: a four-page
+  original with the building-insurance invoice on pages 1 and 2 (312,00 €, number RE-2026-0042, „Mustermann Versicherungen AG“)
+  and a water bill on pages 3 and 4 (99,00 €, „Stadtwerke Test GmbH“, the two pages scanned), and marks pages 1–2 and 3–4 as the
+  two documents under „Belege und Vorschläge“. Unstructured originals are no longer read locally: they go to the organization's
+  models, never to a text-recognition program on the server.
+  - Where an administrator has switched on the AI import (key, a model under „Dokumente einlesen“ and one under „Informationen
+    extrahieren“) and confirmed the text that names the inbox, each document is read **from its own pages only**: pages 1–2
+    propose 312,00 € and „Mustermann Versicherungen AG“, pages 3–4 propose 99,00 € and „Stadtwerke Test GmbH“, and neither
+    proposal mentions the other document. Every value shows its page and its passage („Fundstelle auf Seite 4 · vom
+    Lesemodell gelesen“ with „Gesamtbetrag 99,00 EUR“ for a scanned page, „… · PDF-Text“ for a page with text); a value the
+    document does not support says „Keine Fundstelle bestätigt“. The card „Verbrauch der KI-Verarbeitung“ lists the reading
+    and the extraction model with their usage. Nothing is posted; the original can be downloaded.
+  - A structured e-invoice in the inbox (XRechnung or ZUGFeRD) shows „Fundstelle im XML“ with its values, no usage card, and
+    nothing is sent to a provider, with or without any AI configuration.
+  - Without the AI import, with a failing provider or an exhausted monthly budget, the batch page and the source page say in German
+    what happened, that the original is kept and that nothing was applied; what was already used stays visible, and „Auswertung
+    erneut anfordern“ stays available once the cause is removed.
+  - An organization that confirmed the provider before the inbox was covered keeps its declaration import (and its invoices where
+    its text named them). Its inbox documents wait with the sentence that the organization has to confirm again, until an
+    administrator ticks the confirmation once more under „KI für Ihre Organisation“ without entering the key; the card names the
+    inbox and, on the portable install, no invoices. Then „Auswertung erneut anfordern“ reads the document.
+  - Where the inbox worker has no route to a provider (as shipped it has none; wiring one is an open owner decision, see
+    DEPLOY.md), the document stays retained and Sabine enters the values by hand.
 
 **Checked by:** agent
 **Also at 360 px:** no
@@ -156,6 +179,14 @@ and the same IBAN read from their payment data, a provider failure and the
 unconfigured organization explained in German with the original kept. The API-level
 [invoice_model_processing.feature](../../features/invoice_model_processing.feature) adds the confirmation that predates
 invoices, a misread IBAN that is not proposed, the exhausted monthly budget and organization isolation. A real provider belongs to no automated run.
+The inbox is automated in [inbox_model_processing.feature](../../features/journeys/inbox_model_processing.feature) with the real
+workers and fake providers in a real browser at 1280 and 360 px: the four-page scan split into its two documents with each
+proposal built from its own pages (amounts, number and vendor from the sample, page and passage of every value, the scanned
+pages read by the reading model, the usage of both models), a structured e-invoice with no model call and no usage, the
+organization that confirmed the first text asked once for the inbox without its key and then read, the AI import off and a
+provider failure explained in German with the original kept and the usage visible. The API-level
+[inbox_model_processing.feature](../../features/inbox_model_processing.feature) adds the monthly limit and organization isolation.
+The portable card of the twin names the inbox and no invoices. A real provider belongs to no automated run.
 The remaining assignment checks still require blind acceptance.
 
 ## Journey 3: Dunning letter to Anna

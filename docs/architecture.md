@@ -34,6 +34,21 @@ confirmation that names invoices). Each request is reserved before it leaves and
 characters, 300,000 input and 64,000 output tokens, 0.25 USD); the monthly organization limit counts both
 stages. Details and outcomes: [invoice extraction](operations/invoice-extraction.md).
 
+The inbox reads on the same shared core (ADR 0017, issue #501; `workers/intake_extraction.py`, `declarations/intake_pipeline.py`
+on `InvoiceModelPipeline`, processor `intake-model-v1`, versions `invoice-v2`/`invoice-2`). The isolated local stage
+(`core/intake_extraction.py`) parses a structured original (XRechnung XML, a PDF with valid ZUGFeRD/Factur-X data), which
+never reaches a model, and hands the page texts and sizes of an unstructured PDF, PNG or JPEG to the worker. Only the selected
+pages of that logical document are sent, with the original's page numbers, under the same opt-in and bounds, and only after a
+confirmation that names inbox documents; a value counts as located only if its page is one of the document's pages and its
+quotation occurs in the text read from that page. Requests are reserved and settled in `invoice_model_call` (0198, column
+`intake_attempt_id`) and count towards the monthly limit. Without opt-in, model, key or budget, or on a provider failure, the
+original is retained with a structured reason in the state the established manual and retry workflow expects; Tesseract is not
+used (the image keeps it until #502). Which confirmation text versions name which kinds of document is one table
+(`CONFIRMATION_TEXTS` in `services/ai_settings_service.py`: 1 declarations, 2 declarations and invoices, 3 all three, 4
+declarations and the inbox), which the settings card, a new confirmation and every path read. **Not wired:** which process runs
+this stage in each stack and how it reaches a provider is an open owner decision, so the inbox worker has no route to a
+provider yet and such a document waits for manual completion. See the [inbox flow](operations/inbox-review-chain.md).
+
 The dedicated healthcheck verifies storage, the worker role, queue access and the PDF renderer
 (`pdftoppm`; no Tesseract) without queue consumption
 or a provider call. SIGTERM lets a running bounded extraction run out, without

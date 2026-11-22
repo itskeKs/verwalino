@@ -24,6 +24,7 @@ from app.repositories.organization_ai_settings_repo import OrganizationAiSetting
 from app.services.ai_settings_service import (
     AI_PROVIDER_CONFIRMATION_VERSION,
     INBOX_AI_CONFIRMATION_MISSING,
+    INVOICE_AI_CONFIRMATION_MISSING,
     effective_ai_settings,
     invoice_import_blocker,
 )
@@ -391,3 +392,22 @@ async def test_an_organization_that_confirmed_the_earlier_text_keeps_invoices_an
         status, ended = await state_of(api, document)
     assert ended == ("unavailable", "ai_inbox_confirmation_missing", True)
     assert harness.built == [] and await ledger(ids["org"]) == [], "no provider is constructed and nothing is sent"
+
+
+async def test_the_text_of_an_installation_without_invoices_names_the_inbox_so_its_documents_go_to_the_models(migrator_session, scope_seed, store):
+    """Version 4 names declarations and the inbox but no invoices: what an installation that processes no invoices
+    shows and records. Its inbox documents are read by the organization's models; its invoices would not be."""
+    ids = await fixture(migrator_session, scope_seed)
+    enable_models(ids["org"], text_version="4")
+    async with get_worker_tenant_session(ids["org"]) as db:
+        effective = await effective_ai_settings(db, ids["org"])
+    assert invoice_import_blocker(effective, needs_reading=False, inbox=True) is None
+    assert invoice_import_blocker(effective, needs_reading=False) == INVOICE_AI_CONFIRMATION_MISSING
+    async with client(ids) as api:
+        ref = await receive_original(api, ids, document_pdf([None, FIRST]), pages=2)
+        (document,) = (await documents(api, ref)).values()
+        harness = Harness(reader=Reader(), extractor=FakeInvoiceExtractionProvider())
+        assert await extract_all(ids["org"], harness, processor=extract_logical) == 1
+        status, _ = await state_of(api, document)
+    assert status["status"] == "succeeded"
+    assert [row.stage for row in await ledger(ids["org"])] == ["read_page", "extract_invoice"]
