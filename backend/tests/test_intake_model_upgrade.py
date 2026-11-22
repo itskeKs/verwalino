@@ -18,6 +18,7 @@ from sqlalchemy.exc import DBAPIError
 from app import deployment
 from app.core.intake_extraction import extract_logical
 from tests.conftest import MIGRATOR_SYNC_URL
+from tests import intake_model_support
 from tests.intake_model_support import Harness, confirm_partition, document_pdf, enable_models, extract_all
 from tests.invoice_model_support import discard_invoice_model_data
 from tests.test_financial_scope_boundary import scope_seed as scope_seed, worker_tenant as worker_tenant
@@ -268,6 +269,9 @@ REQUEST = """INSERT INTO invoice_model_call(organization_id,intake_attempt_id,st
 
 
 async def test_an_attempt_counts_against_the_limit_only_when_a_request_left_the_host_or_the_run_was_abandoned(migrator_session, scope_seed, store):
+    # The rows made here (ledger rows of an inbox attempt, attempts beyond the third) are discarded after the test: the 0198
+    # downgrade refuses them, and the chain-wide downgrade tests meet them on a database that earlier tests have used.
+    intake_model_support.dirty = True
     ids = await fixture(migrator_session, scope_seed)
     async with client(ids) as api:
         await source(api, ids)
