@@ -126,7 +126,8 @@ provider, endpoint, timeout and key. One page is one request; a failed page is r
   or 422, by the structured identifiers of the provider's error object, its `param` naming the image
   part or an image `code`; never by message text) ends the job with
   `PROVIDER_IMAGE_INPUT_UNSUPPORTED`; any other rejected request with `OPENAI_REQUEST_FAILED`, as in
-  the extraction passes; a refusal or malformed answer with `PROVIDER_REFUSAL` or `PROVIDER_SCHEMA_FAILURE`. The application
+  the extraction passes; a refusal with `PROVIDER_REFUSAL`, an answer that did not complete with `PROVIDER_INCOMPLETE` and a
+  completed but malformed answer with `PROVIDER_SCHEMA_FAILURE`. The application
   never switches model or provider. A reading failure ends the run; the job is `RETRY_WAIT` for
   a retryable code and `FAILED` otherwise.
 - **Metering.** Before each call the worker reserves the page at the reading model's price (an
@@ -180,8 +181,8 @@ not be merged into a single “four outcomes” schema:
 | Class | Handling |
 | --- | --- |
 | `PROVIDER_REFUSAL` | no schema repair and no data retransmission; existing worker policy |
-| `PROVIDER_INCOMPLETE` | its own bounded worker retry; no schema repair |
-| `PROVIDER_SCHEMA_FAILURE` | exactly one schema-only repair with the same bounded input; afterwards a final failure |
+| `PROVIDER_INCOMPLETE` | the provider's answer did not complete, for example because it was cut off at the output allowance; no schema repair, whatever usage is left. The failure keeps the reported usage (every stage books it as consumed, not as the reservation) and, for the declaration passes, the request id and returned model of the pass ledger row; without reported usage the reservation stays booked. The declaration worker treats it as retryable (`RETRY_WAIT`, a new run after five minutes, at most `declaration_max_attempts` runs); the invoice and inbox stages end the attempt as `failed` |
+| `PROVIDER_SCHEMA_FAILURE` | a completed answer that is not the schema's JSON: exactly one schema-only repair with the same bounded input, only when the first answer reported its usage and that leaves room in the call's original output allowance (the repair may use what the first answer left); without usage, or with the allowance used up, no repair, and a final failure |
 | `PROVIDER_TIMEOUT`, `PROVIDER_CONNECTION_ERROR`, `PROVIDER_RATE_LIMIT`, `PROVIDER_SERVER_ERROR`, `OPENAI_REQUEST_FAILED` | transport group; retryability follows the individual stable code and the worker policy |
 | `PROVIDER_USAGE_INVALID` (concretely `OPENAI_USAGE_INVALID` in the OpenAI adapter) | separate usage metering; cost/usage contract fails closed, no publication |
 
@@ -627,12 +628,19 @@ prices are enforced; unknown-price models remain selectable and the page explain
 that they are not limited. Known requests explicitly use the standard service tier
 and no implicit SDK retry. Monetary unknowns are recorded as unpriced zero estimates,
 not as a claim that OpenAI is free. Token/time limits remain bounded. The extraction
-harness version is `4` (compatible endpoints `8`, Anthropic fingerprint `v5`), with wire schema version `2`. The adapter converts only
+harness version is `5` (compatible endpoints `8`, Anthropic fingerprint `v5`), with wire schema version `2`. The adapter converts only
 the two known, disjoint `kind` unions to `anyOf` after the SDK's strict-schema
 transformation. Parsing, reservations and schema fingerprints use that same
 wire model; inherited local validation remains unchanged. Offline SDK transport
 checks verify serialization, not live provider acceptance. Pass metadata uses `default`
 when reasoning is omitted for a model with no known effort contract.
+
+The native OpenAI adapter receives each response through the SDK's `responses.create`, with the request body
+the SDK's `responses.parse` sent before, and validates usage, refusal and completion before it parses the output
+text with the SDK's own parser: `parse` validates the text first, so an answer cut off in the middle of its JSON
+raised there and lost its status and usage. The compatible and Anthropic transports are unchanged. The version `5`
+changes the harness fingerprint of the native requests and, for `gpt-5.6-luna`, their explicit prompt-cache key, so the
+first request of each pass after an upgrade writes a new cache prefix; a stored run keeps the harness version it ran with.
 
 Prompt version `declaration-v4` also tells the extraction passes that a page may be a
 transcript with `[table]` blocks and `[unreadable]` markers (the reading stage's own prompt

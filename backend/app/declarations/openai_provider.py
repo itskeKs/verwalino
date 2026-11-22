@@ -33,7 +33,9 @@ from openai import (
     ContentFilterFinishReasonError,
     LengthFinishReasonError,
     RateLimitError,
+    omit,
 )
+from openai.lib._parsing._responses import parse_response
 from pydantic import ValidationError
 
 from app.core.config import Settings, settings
@@ -148,8 +150,8 @@ def png_dimensions(data_url: str) -> tuple[int, int]:
 _PNG_DATA_URL = re.compile(r"^data:image/png;base64,([A-Za-z0-9+/]*={0,2})$")
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _STATIC_HARNESS = (
-    "declaration-responses-v4|structured-output-kind-anyof|store=false|"
-    "no-previous-response-id|fixed-pass-manager"
+    "declaration-responses-v5|structured-output-kind-anyof|store=false|"
+    "no-previous-response-id|fixed-pass-manager|usage-before-output-parse"
 )
 _SAFE_RESPONSE_IDENTIFIER = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _OPENAI_API_BASE_URL = "https://api.openai.com/v1"
@@ -240,6 +242,30 @@ def _safe_response_identifier(value: object) -> str | None:
     if isinstance(value, str) and _SAFE_RESPONSE_IDENTIFIER.fullmatch(value):
         return value
     return None
+
+
+def _log_schema_exception(
+    error: Exception, output_type: type[StrictModel], pass_id: str, stage: str,
+) -> None:
+    try:
+        exception_class = (
+            "ValidationError" if isinstance(error, ValidationError)
+            else "JSONDecodeError" if isinstance(error, JSONDecodeError)
+            else "APIResponseValidationError" if isinstance(error, APIResponseValidationError)
+            else "UNKNOWN_SCHEMA_EXCEPTION"
+        )
+        errors = (
+            error.errors(include_url=False, include_context=False, include_input=False)
+            if isinstance(error, ValidationError) else []
+        )
+        log_schema_validation_diagnostic(
+            exception_class=exception_class, errors=errors,
+            schema=output_type.model_json_schema(), pass_id=pass_id, stage=stage,
+        )
+    except Exception:
+        # Diagnostic failures must never replace the provider failure
+        # or expose the original exception through fallback logging.
+        pass
 
 
 def _metadata_tuple(
@@ -1311,21 +1337,28 @@ class OpenAiDeclarationProvider:
             output_type=output_type,
             max_output_tokens=max_output_tokens,
         )
+        # The native SDK's ``parse`` validates the output text before it returns, so an answer the provider cut off
+        # raises there and its status and usage are lost. ``create`` sends the same request and hands the response back
+        # as it came; usage, refusal and completion are checked below, and only then is the output parsed strictly.
+        native_sdk = isinstance(self._client, AsyncOpenAI)
         try:
-            response = await self._client.responses.parse(
-                model=request_kwargs["model"],
-                input=request_kwargs["input"],
-                text_format=_sdk_output_type(output_type),
-                store=request_kwargs["store"],
-                service_tier=request_kwargs["service_tier"],
-                timeout=self._timeout_seconds,
-                max_output_tokens=request_kwargs["max_output_tokens"],
-                **{
-                    key: value
-                    for key, value in request_kwargs.items()
-                    if key in {"prompt_cache_key", "prompt_cache_options", "reasoning"}
-                },
-            )
+            if native_sdk:
+                response = await self._client.responses.create(**request_kwargs, timeout=self._timeout_seconds)
+            else:
+                response = await self._client.responses.parse(
+                    model=request_kwargs["model"],
+                    input=request_kwargs["input"],
+                    text_format=_sdk_output_type(output_type),
+                    store=request_kwargs["store"],
+                    service_tier=request_kwargs["service_tier"],
+                    timeout=self._timeout_seconds,
+                    max_output_tokens=request_kwargs["max_output_tokens"],
+                    **{
+                        key: value
+                        for key, value in request_kwargs.items()
+                        if key in {"prompt_cache_key", "prompt_cache_options", "reasoning"}
+                    },
+                )
         except Exception as error:
             elapsed = self._latency_ms(started)
             if isinstance(error, ContentFilterFinishReasonError):
@@ -1429,22 +1462,7 @@ class OpenAiDeclarationProvider:
                 )
                 raise ProviderFailure(code, True, "OpenAI server request failed.", attempt_metadata=(metadata,)) from None
             if self._is_schema_exception(error):
-                try:
-                    exception_class = (
-                        'ValidationError' if isinstance(error, ValidationError)
-                        else 'JSONDecodeError' if isinstance(error, JSONDecodeError)
-                        else 'APIResponseValidationError' if isinstance(error, APIResponseValidationError)
-                        else 'UNKNOWN_SCHEMA_EXCEPTION'
-                    )
-                    errors = error.errors(include_url=False, include_context=False, include_input=False) if isinstance(error, ValidationError) else []
-                    log_schema_validation_diagnostic(
-                        exception_class=exception_class, errors=errors,
-                        schema=output_type.model_json_schema(), pass_id=pass_id, stage=stage,
-                    )
-                except Exception:
-                    # Diagnostic failures must never replace the provider failure
-                    # or expose the original exception through fallback logging.
-                    pass
+                _log_schema_exception(error, output_type, pass_id, stage)
                 metadata = self._metadata(
                     pass_id=pass_id,
                     attempt_no=attempt_no,
@@ -1548,8 +1566,15 @@ class OpenAiDeclarationProvider:
                 attempt_metadata=(metadata,),
             )
         try:
-            parsed = response.output_parsed
-        except Exception:
+            if native_sdk:
+                parsed = parse_response(
+                    text_format=_sdk_output_type(output_type), input_tools=omit, response=response
+                ).output_parsed
+            else:
+                parsed = response.output_parsed
+        except Exception as error:
+            if self._is_schema_exception(error):
+                _log_schema_exception(error, output_type, pass_id, stage)
             metadata = self._metadata(
                 pass_id=pass_id,
                 attempt_no=attempt_no,

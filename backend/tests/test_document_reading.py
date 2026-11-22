@@ -5,8 +5,9 @@ import json
 from decimal import Decimal
 
 import httpx
+import httpx2
 import pytest
-from openai import APIStatusError, BadRequestError, InternalServerError, UnprocessableEntityError
+from openai import APIStatusError, AsyncOpenAI, BadRequestError, InternalServerError, UnprocessableEntityError
 from PIL import Image
 from pydantic import SecretStr, ValidationError
 
@@ -16,6 +17,7 @@ from app.declarations.openai_provider import OpenAiDeclarationProvider
 from app.declarations.prompts import PAGE_READING_PROMPT, READING_PROMPT_VERSION
 from app.declarations.provider import (
     PROVIDER_IMAGE_INPUT_UNSUPPORTED,
+    PROVIDER_INCOMPLETE,
     PROVIDER_REFUSAL,
     PROVIDER_SCHEMA_FAILURE,
     PageImage,
@@ -240,6 +242,37 @@ async def test_a_malformed_answer_ends_in_a_typed_error_that_keeps_the_reported_
     assert transport.count() == 2
     assert (error.usage.input_tokens, error.usage.output_tokens, error.usage.attempt_count) == (200, 10, 2)
     assert error.usage_complete is True
+
+
+@pytest.mark.asyncio
+async def test_a_page_whose_transcript_the_sdk_cut_off_keeps_its_usage_and_is_read_once():
+    """Through the real SDK client: the reading model stopped at its output allowance in the middle of the JSON."""
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx2.Response(200, headers={'x-request-id': 'req_cut_off'}, json={
+            'id': 'resp_reading', 'object': 'response', 'created_at': 0, 'model': READING_MODEL, 'status': 'incomplete',
+            'incomplete_details': {'reason': 'max_output_tokens'},
+            'output': [{'id': 'msg_reading', 'type': 'message', 'role': 'assistant', 'status': 'incomplete',
+                        'content': [{'type': 'output_text', 'text': '{"blocks":[{"kind":"TEXT","text":"Teilungs', 'annotations': []}]}],
+            'usage': {'input_tokens': 100, 'output_tokens': 2000, 'total_tokens': 2100,
+                      'input_tokens_details': {'cached_tokens': 0, 'cache_write_tokens': 0},
+                      'output_tokens_details': {'reasoning_tokens': 0}}})
+
+    async with AsyncOpenAI(api_key='synthetic-sdk-key', base_url='https://api.openai.com/v1', max_retries=0,
+                           http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond))) as client:
+        provider = OpenAiDeclarationProvider(client=client, primary_model=READING_MODEL, escalation_model=READING_MODEL,
+                                             token_encoder=_Encoder())
+        with pytest.raises(ProviderFailure) as failure:
+            await provider.read_page(PAGE, model=READING_MODEL, max_output_tokens=2000)
+
+    error = failure.value
+    assert error.code == PROVIDER_INCOMPLETE
+    assert (error.usage.input_tokens, error.usage.output_tokens, error.usage.attempt_count) == (100, 2000, 1)
+    assert error.usage_complete is True and error.attempt_count == 1
+    assert len(requests) == 1, 'a cut-off transcript is not repaired'
+    assert (error.metadata.pass_id, error.metadata.request_id, error.metadata.failure_class) == ('read_page', 'req_cut_off', PROVIDER_INCOMPLETE)
 
 
 @pytest.mark.asyncio

@@ -2783,12 +2783,12 @@ upload limit of 25 MiB per PDF (`HV_DECLARATION_MAX_PDF_BYTES`) bounds a large s
 pages in high resolution can exceed it before the page limit is reached.
 
 **Version defaults.** The extraction prompt version is `declaration-v4` and the harness version
-`4` (compatible endpoints `8`, Anthropic fingerprint `v5`); the reading prompt is `reading-v1`
+`5` (compatible endpoints `8`, Anthropic fingerprint `v5`); the reading prompt is `reading-v1`
 with schema `reading-1`; the invoice extraction prompt is `invoice-v2` with schema `invoice-2` (ten fields, the vendor's IBAN among them, and for every stated value the page and passage it was found on; shared by the inbox, #501), and a proposal
 that the models made carries the processor version `invoice-model-v1` (the inbox's `intake-model-v1`; the deterministic parsers keep
 `invoice-local-v1` and `intake-local-v1`). The reading and invoice versions are constants, not settings. `docker-compose.prod.yml` and `.env.example` carry the new defaults.
 A protected env file that still pins `HV_DECLARATION_PROMPT_VERSION=declaration-v3` or
-`HV_DECLARATION_HARNESS_VERSION=3` keeps recording the old labels on new runs: remove the pins
+`HV_DECLARATION_HARNESS_VERSION=3` or `4` keeps recording the old labels on new runs: remove the pins
 when upgrading.
 
 ### Tesseract is removed (issue #502)
