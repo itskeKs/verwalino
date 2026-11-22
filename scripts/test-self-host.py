@@ -2584,6 +2584,11 @@ class StackContractTests(unittest.TestCase):
         self.assertNotIn('invoice-worker', self.stack['services'])
         self.assertNotIn('HV_OPENAI_API_KEY', worker['environment'])
         self.assertEqual(worker['cap_drop'], ['ALL'])
+        # It is also the process that runs the extraction stage of the inbox (#501, core/invoice_claimant.py), the one that
+        # reads an unstructured document with the organization's models: the documents, the worker role, the secret and the
+        # route to the provider asserted above are all it needs, and the inbox worker has none of the latter two.
+        self.assertEqual(worker['environment']['HV_DOCUMENT_STORAGE_ROOT'], '/data/documents')
+        self.assertIn('documents:/data/documents', worker['volumes'])
 
     def test_inbox_worker_is_opt_in_and_has_only_local_worker_authority(self):
         worker = self.stack["services"]["inbox-worker"]
@@ -2596,7 +2601,11 @@ class StackContractTests(unittest.TestCase):
         self.assertNotIn("HV_DATABASE_URL", worker["environment"])
         self.assertNotIn("HV_DATABASE_URL_REVIEW", worker["environment"])
         self.assertNotIn("HV_OPENAI_API_KEY", worker["environment"])
+        # It never reaches a provider (#501): no secret to read the organization's key with and no route out, and the runner
+        # it starts has no stage that reads a document with a model (the declaration worker runs that).
+        self.assertNotIn("HV_SESSION_SECRET", worker["environment"])
         self.assertEqual(worker["networks"], ["backend"])
+        self.assertNotIn("--stage", worker["command"])
         self.assertNotIn("ports", worker)
         self.assertIn("documents:/data/documents:ro", worker["volumes"])
         self.assertTrue(worker["read_only"])

@@ -4,7 +4,8 @@ import { contextCandidatesApi, type ContextCandidate, type ContextCandidates, ty
 const labels: Record<ContextEvidence['kind'], string> = { property_id: 'Beschriftete Objekt-ID', meter_number: 'Zählernummer', service_address: 'Beschriftete Leistungsadresse' };
 const exclusions: Record<string, string> = { unsupported_scope: 'Dieser Kreis wird für die Übernahme noch nicht unterstützt.', missing_period: 'Ein vollständiger Leistungszeitraum fehlt.', period_outside_scope: 'Der vorgeschlagene Leistungszeitraum liegt außerhalb dieses Kreises.', hint_disagrees: 'Der Upload-Hinweis nennt einen anderen Kreis.' };
 const statuses: Record<string, string> = { unsupported_source: 'Für diesen Beleg sind keine auswertbaren Textseiten verfügbar.', source_limit: 'Zu viele oder zu umfangreiche Kontextangaben. Bitte den Beleg manuell zuordnen.', comparison_limit: 'Der zugängliche Vergleichsbereich ist zu groß. Bitte den Kreis manuell auswählen.', no_labelled_evidence: 'Keine unterstützte beschriftete Kontextangabe gefunden.', no_matching_context: 'Keine passende zugängliche Zuordnung gefunden.' };
-function Evidence({ item }: { item: ContextEvidence }) { return <p className="break-words">{labels[item.kind]} · Seite {item.page_number}{item.method === 'ocr' ? ' · Texterkennung' : ''}: „{item.quotation}“</p>; }
+const readAs: Partial<Record<ContextEvidence['method'], string>> = { reading_model: ' · vom Lesemodell gelesen', ocr: ' · Texterkennung (frühere Version)' };
+function Evidence({ item }: { item: ContextEvidence }) { return <p className="break-words">{labels[item.kind]} · Seite {item.page_number}{readAs[item.method] ?? ''}: „{item.quotation}“</p>; }
 export function ContextCandidatesPanel({ logicalId, partitionId, extractionId, disabled, parentGeneration, onPick }: {
   logicalId: string; partitionId: string | null; extractionId: string | null; disabled: boolean; parentGeneration: number; onPick: (item: ContextCandidate) => void;
 }) {

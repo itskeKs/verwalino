@@ -220,16 +220,19 @@ async def test_disabled_worker_still_stores_manual_review_source(client_a_admin,
         set_store(None)
 
 
-def zugferd_pdf(cii=None):
+def zugferd_pdf(cii=None, pages=1):
     """A PDF with an embedded Factur-X invoice (CII): the structured data that replaces any reading of its pages."""
     from tests.test_m5_einvoice import CII
     CII = cii or CII
+    extra = [b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << >> >>"] * (pages - 1)
+    kids = " ".join(["3 0 R"] + [f"{number} 0 R" for number in range(6, 6 + len(extra))])
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(factur-x.xml) 4 0 R] >> >> >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        f"<< /Type /Pages /Kids [{kids}] /Count {pages} >>".encode(),
         b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << >> >>",
         b"<< /Type /Filespec /F (factur-x.xml) /EF << /F 5 0 R >> >>",
         b"<< /Type /EmbeddedFile /Length " + str(len(CII)).encode() + b" >>\nstream\n" + CII + b"\nendstream",
+        *extra,
     ]
     data = b"%PDF-1.7\n"
     offsets = []
@@ -361,12 +364,13 @@ async def test_worker_readiness_checks_the_renderer_and_database_and_needs_no_te
         await worker.check_readiness()
 
 
-@pytest.mark.asyncio
-async def test_the_inbox_readiness_keeps_its_text_recognition_requirement(monkeypatch):
+def test_the_inbox_readiness_needs_the_pdf_renderer_and_no_text_recognition(monkeypatch):
     from app.workers import intake_extraction as worker
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/pdftoppm" if name == "pdftoppm" else None)
-    with pytest.raises(RuntimeError, match="ocr_unavailable"):
-        worker.check_ocr_readiness()
+    worker.check_readiness()
+    monkeypatch.setattr("shutil.which", lambda _: None)
+    with pytest.raises(RuntimeError, match="pdf_renderer_unavailable"):
+        worker.check_readiness()
 
 
 def test_local_launcher_owns_worker_and_isolated_storage():

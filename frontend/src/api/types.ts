@@ -2030,10 +2030,14 @@ export interface OrganizationAiSettings {
   document_price_known: boolean;
   confirmation: OrganizationAiConfirmation | null;
   confirmation_required: boolean;
-  /** This installation processes invoices with the organization's models; where it does not, the card names no invoices. */
+  /** The kinds of document this installation sends to the provider decide what the card names and which confirmation text it records (one table in the backend). Invoices only where it processes them. */
   invoice_processing_enabled: boolean;
-  /** A stored key whose confirmation does not name invoices (none, or one of an earlier text), where invoices are processed: they stay on the host. */
+  /** The documents of the inbox, which every installation reads with the organization's models. */
+  inbox_processing_enabled: boolean;
+  /** A stored key whose confirmation does not name invoices (none, or one of a text that does not), where invoices are processed: they stay on the host. */
   invoice_confirmation_required: boolean;
+  /** The same for the documents of the inbox: a confirmation that does not name them keeps what it named and asks once more for the inbox; no key is entered again. */
+  inbox_confirmation_required: boolean;
 }
 export interface AiModel { id: string; evaluated: boolean; price_known: boolean }
-export type OrganizationAiSettingsBody = Omit<OrganizationAiSettings, 'key_set' | 'price_known' | 'document_price_known' | 'confirmation' | 'confirmation_required' | 'invoice_processing_enabled' | 'invoice_confirmation_required'> & { api_key?: string | null; confirmation?: boolean };
+export type OrganizationAiSettingsBody = Omit<OrganizationAiSettings, 'key_set' | 'price_known' | 'document_price_known' | 'confirmation' | 'confirmation_required' | 'invoice_processing_enabled' | 'inbox_processing_enabled' | 'invoice_confirmation_required' | 'inbox_confirmation_required'> & { api_key?: string | null; confirmation?: boolean };

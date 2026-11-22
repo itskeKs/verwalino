@@ -10,7 +10,8 @@ paths:
   `engine`, `core` only `core`; `declarations`, `workers` and `evals` sit beside `services` and
   use the same inner layers. Only `main.py` imports `api`. Known exceptions are debt tracked in
   #80, not licence: raw `text()` SQL in 14 api modules and `select()` in 7, the cycle
-  `repositories` ↔ `declarations`, and `workers/invoice_extraction.py` importing a service.
+  `repositories` ↔ `declarations`, and `workers/invoice_extraction.py` and
+  `workers/intake_extraction.py` importing a service.
 - Routes are thin: validate, resolve the organization context, call a service or repository,
   map the result. New data access goes into a repository.
 - Red first, then inside out: write the failing `features/` scenario and the unit tests, then

@@ -37,6 +37,26 @@ confirmation that names invoices). Each request is reserved before it leaves and
 characters, 300,000 input and 64,000 output tokens, 0.25 USD); the monthly organization limit counts both
 stages. Details and outcomes: [invoice extraction](operations/invoice-extraction.md).
 
+The inbox reads on the same shared core (ADR 0017, issue #501; `workers/intake_extraction.py`, `declarations/intake_pipeline.py`
+on `InvoiceModelPipeline`, processor `intake-model-v1`, versions `invoice-v2`/`invoice-2`). The isolated local stage
+(`core/intake_extraction.py`) parses a structured original (XRechnung XML, a PDF with valid ZUGFeRD/Factur-X data), which
+never reaches a model, and hands the page texts and sizes of an unstructured PDF, PNG or JPEG to the worker. Only the selected
+pages of that logical document are sent, with the original's page numbers, under the same opt-in and bounds, and only after a
+confirmation that names inbox documents; a value counts as located only if its page is one of the document's pages, its
+quotation occurs in the text read from that page and the quotation shows the value. A PNG or JPEG is decoded for the
+reading model in a killable child with an address-space limit (`core/image_reading.py`), never in the worker. Requests are reserved and settled in `invoice_model_call` (0198, column
+`intake_attempt_id`) and count towards the monthly limit. Without opt-in, model, key or budget, or on a provider failure, the
+original is retained with a structured reason in the state the established manual and retry workflow expects; Tesseract is not
+used (the image keeps it until #502). Which confirmation text versions name which kinds of document is one table
+(`CONFIRMATION_TEXTS` in `services/ai_settings_service.py`: 1 declarations, 2 declarations and invoices, 3 all three, 4
+declarations and the inbox), which the settings card, a new confirmation and every path read. In every stack the declaration
+worker runs this stage in its loop and no other process does (`core/invoice_claimant.py` is the one place that says which worker
+kind runs which model work; the inbox worker keeps inspection and delivery and has neither the session secret nor a route to a
+provider). A document of an original of more than one page is sent only after a person has confirmed how the original divides
+(the source partition, one of its documents or the whole as one document): until then its job waits as `awaiting_split` and
+nothing is requested; a single page is processed at once, a structured original needs no decision. See the
+[inbox flow](operations/inbox-review-chain.md).
+
 The dedicated healthcheck verifies storage, the worker role, queue access and the PDF renderer
 (`pdftoppm`; no Tesseract) without queue consumption
 or a provider call. SIGTERM lets a running bounded extraction run out, without

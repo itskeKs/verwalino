@@ -2308,17 +2308,24 @@ Storing or replacing the key requires the provider confirmation: a checkbox at t
 key field states that the organization chose and contracted the provider itself
 (data processing, storage location and no training use) and instructs the operator
 of this installation to transmit documents and extracted text to that provider; the
-wording is provisional until the reviewed AV-Vertrag of #26 and names „Dokumente (Teilungserklärungen und Rechnungen)“
-since text version 2 (#500) where the installation processes invoices (`invoice_processing_enabled`); where it does not
-(the operator's `HV_INVOICE_EXTRACTION_ENABLED=false`) it names only „Dokumente“, the refusal message likewise, and
-the confirmation is recorded as text version 1, so it does not cover invoices if processing is switched on later. Saving without the tick
+wording is provisional until the reviewed AV-Vertrag of #26 and names the kinds of document this installation sends: „Dokumente
+(Teilungserklärungen, Rechnungen und Dokumente im Posteingang)“ where it processes invoices (text version 3), „Dokumente
+(Teilungserklärungen und Dokumente im Posteingang)“ where it does not (the operator's `HV_INVOICE_EXTRACTION_ENABLED=false`; text
+version 4); the settings answer carries `invoice_processing_enabled` and `inbox_processing_enabled` for this, the
+refusal message names the same, and the confirmation is recorded as the version of the text that was shown. One table in the
+backend (`CONFIRMATION_TEXTS`) says which kinds each text version names (1 declarations, 2 declarations and invoices, 3 all
+three, 4 declarations and inbox documents), and every path asks it whether the newest confirmation of the destination names its
+kind. Saving without the tick
 is refused with a German message at the field (structured code
 `ORGANIZATION_AI_CONFIRMATION_REQUIRED`) and no key is stored. A key stored before
 this requirement keeps the checkbox visible without re-entering it and stays unused
-until confirmed once; the confirmed state names who confirmed and when. A key confirmed with the first text keeps the
-declaration import and asks again for invoices: while `invoice_confirmation_required` is set, the key field shows the checkbox
-again with the sentence „Die Bestätigung vom … von … galt, bevor Rechnungen ausgewertet wurden. …“ (declarations are not
-affected; invoices stay on the host until the tick is saved, without entering the key again). Removing the
+until confirmed once; the confirmed state names who confirmed and when. A confirmation of an earlier text keeps what its text named
+and asks once more, without entering the key again, for the rest that this installation sends: while `invoice_confirmation_required`
+or `inbox_confirmation_required` is set, the key field shows the checkbox again with the sentence „Die Bestätigung vom … von …
+galt, bevor <missing> ausgewertet wurden. <still covered> sind davon nicht betroffen. <missing> werden erst nach einer neuen
+Bestätigung an den Anbieter übermittelt; bis dahin bleiben sie in Verwalino und können von Hand erfasst werden. Den Schlüssel
+müssen Sie dafür nicht erneut eingeben.“ (`<missing>` and `<still covered>` are the kinds in the order „Rechnungen“, „Dokumente im
+Posteingang“ that this installation sends and the confirmation does not, or does, name; „Teilungserklärungen“ are always covered). Removing the
 key ends the instruction; the record of earlier confirmations stays. The form
 uses existing Button, Input, Label, card, spacing and error/status styles; it stays
 usable at 360 px with long model names. Personal settings screenshots above include
@@ -2338,15 +2345,17 @@ the administrator's organization card after this change.
 | Import on, reading model not chosen | [view](docs/assets/design/ai-settings/models-missing-reading-model-1280.png) | [view](docs/assets/design/ai-settings/models-missing-reading-model-360.png) |
 | Import screen without a reading model | [view](docs/assets/design/ai-settings/models-import-refused-1280.png) | [view](docs/assets/design/ai-settings/models-import-refused-360.png) |
 
-The one switch of the card is labelled „Teilungserklärungen importieren und Rechnungen auswerten“ and described
-(`aria-describedby`) in one paragraph: invoices without structured e-invoice data (scans, PDFs) go to the chosen provider,
-XRechnung and ZUGFeRD are read directly and not sent, invoices are sent only after the current confirmation text was
-accepted, every request counts towards the monthly limit and an invoice shows its own usage. The intro of the card says the
-same for invoices, and the sentence about a missing „Dokumente einlesen“ model adds that scanned invoices are then not read.
-Where the installation does not process invoices (`invoice_processing_enabled` false) the card is about declarations alone:
-the switch reads „Teilungserklärungen importieren“ without a description paragraph, and the intro, the
-missing-model sentence and the confirmation name no invoices; the invoice paragraph, the earlier-confirmation sentence and
-`invoice_confirmation_required` do not appear. Until the settings are loaded the intro claims nothing about invoices.
+The one switch of the card is labelled after what the installation sends, from the same two settings fields: „Teilungserklärungen
+importieren sowie Rechnungen und Dokumente im Posteingang auswerten“ where invoices are processed, „Teilungserklärungen importieren
+sowie Dokumente im Posteingang auswerten“ where they are not (the operator switched invoice processing off). It is described (`aria-describedby`) in one
+paragraph: documents without structured e-invoice data (scans, PDFs) go to the chosen provider, XRechnung and ZUGFeRD are read
+directly and not sent, they are sent only after the current confirmation text was accepted, every request counts towards the
+monthly limit and a document shows its own usage. The intro of the card says the same, and the sentence about a missing „Dokumente
+einlesen“ model adds that scanned documents of those kinds are then not read. Where an installation sent neither kind
+(`invoice_processing_enabled` and `inbox_processing_enabled` both false; no installation is built so today) the card would be about
+declarations alone: the switch reads „Teilungserklärungen importieren“ without a description paragraph. The invoice words and the
+confirmation names never appear for a kind the installation does not send. Until the settings are loaded the intro claims nothing
+about invoices or the inbox.
 
 ### Invoice processing: outcomes and usage (#500)
 
@@ -2408,7 +2417,69 @@ run with `VERWALINO_CAPTURE_STATE=before` against the previous frontend the "bef
 | Card „Extrahierte Felder“ of the scan with the row „IBAN des Rechnungsstellers“ (no such row before; the card itself is not captured before) | none | none | [view](docs/assets/design/invoice-processing/invoice-fields-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-fields-after-360.png) |
 | Card „Verbrauch der KI-Verarbeitung“ (no such card before) | none | none | [view](docs/assets/design/invoice-processing/invoice-usage-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-usage-after-360.png) |
 | AI settings card of an installation that processes invoices: one switch for declarations and invoices, invoice paragraph | [view](docs/assets/design/invoice-processing/settings-card-before-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-before-360.png) | [view](docs/assets/design/invoice-processing/settings-card-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-after-360.png) |
-| AI settings card of an installation that processes no invoices (the local stack, as an installation whose operator switched invoice processing off): declarations only; the before files are the card above, which named invoices there | [view](docs/assets/design/invoice-processing/settings-card-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-after-360.png) | [view](docs/assets/design/invoice-processing/settings-card-no-invoices-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-no-invoices-after-360.png) |
+| AI settings card of an installation that processes no invoices (the local stack, as an installation whose operator switched invoice processing off) as of #500: declarations only; the before files are the card above, which named invoices there. Since #501 the card of such an installation names the inbox, see the inbox rows below | [view](docs/assets/design/invoice-processing/settings-card-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-after-360.png) | [view](docs/assets/design/invoice-processing/settings-card-no-invoices-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-no-invoices-after-360.png) |
+
+### Inbox processing: outcomes, evidence and usage (#501)
+
+The documents of the inbox are read by the organization's two models like invoices (`declarations/intake_pipeline.py`); the
+screens say so and show where a value was found. The batch page (`/posteingang/:batchId`) names the stage „Auswertung“ (it read
+„Texterkennung“ before), and a file whose evaluation did not finish is explained under its stage line, from the same map of
+reasons as the invoice screen (`lib/invoiceProcessing.ts`, `invoiceProcessingMessage(…, 'inbox')`; the codes of the inspection
+keep their own sentences): what happened, that the original is kept and nothing was applied (“Das Original bleibt erhalten; es
+wurde nichts übernommen.”), what the organization or the administration can do and that the established retry stays open. A file whose evaluation waits for
+the organization (AI import off, confirmation, reading model or key missing) is counted and badged „Empfangen“ and not
+„Gesperrt / fehlgeschlagen“: nothing failed, the original is kept and the evaluation can be requested again. The
+source page (`/posteingang/belege/:documentRefId`) calls the states „Wartet auf Auswertung“, „Auswertung läuft“, „Auswertung
+nicht möglich“ and „Wartet auf die Aufteilung“, and its retry „Auswertung erneut anfordern“ with the reason field „Grund für die erneute Auswertung“. Each
+document of an original shows, below its status line, the card „Verbrauch der KI-Verarbeitung“
+(`components/intake/IntakeModelUsage.tsx`, from `GET /api/logical-documents/{id}/model-usage`), built from the blocks of the
+invoice card (`components/InvoiceModelUsage.tsx`: one block per stage and model, „Gesamt“, usage the provider did not report as
+„Reservierte Eingabetoken“, a model without a price as „kein Preis bekannt“) over all attempts of that document; it is absent
+while no request was made.
+
+A multipage upload is not sent as a whole (owner decision of 2026-11-22 on #501): it waits until a reviewer has divided it into documents
+or confirmed it as one document under „Seiten zu Belegen zusammenstellen“ (the existing division panel, whose intro now says so and
+that choosing only the document with all pages confirms the original as one document; a new range „bleibt ein ungeprüfter Vorschlag;
+ausgewertet wird er erst, wenn Sie eine Aufteilung mit ihm gespeichert haben“). While it waits it is the reviewer's turn and nothing
+failed: the batch page counts the original under „Zur Sichtung“, names the stage „Aufteilung ausstehend“ (stage `split`) and explains
+under it, from the same map (`awaiting_split`), that the original has more than one page and is evaluated only after the division is
+confirmed, where to confirm it („Seiten zu Belegen zusammenstellen“: the documents it falls into, or the whole original as one document),
+that nothing was sent to an AI provider until then, that each document is then evaluated with only its own pages and that the original
+is kept. The source page shows „Wartet auf die Aufteilung“ with the same sentence and offers no retry (there
+is nothing to retry); the status line names „Versuch N von höchstens 3“ only once an attempt has made a request to an AI provider (a park
+or a refusal before the first request uses none of the three). A document the confirmed division leaves out (the unsplit whole after the
+split, or a document whose run was stopped by a new division) says (`not_in_split`) that it does not belong to the confirmed division and is
+not evaluated, that nothing more is sent and where what was already requested stands („Verbrauch der KI-Verarbeitung“), and how to include
+it; it does not hold the original back
+from „Zur Sichtung“. A single page and a structured e-invoice are processed at once and show none of this. A request that never left the host
+(`provider_unreachable`) is explained in the inbox words (the Anfrage wurde nicht gesendet, no cost, the usage already incurred under
+„Verbrauch der KI-Verarbeitung“) and is not listed on that card.
+
+Every proposed value is a card with its label, the value in the display formats of the invoice page (a date as TT.MM.JJJJ, an amount
+as `1.234,56 €`, the VAT rate as `19 %`, the category as the name of the cost category; a value a format cannot read as it is
+stored), the certainty and where it was found: „Fundstelle auf Seite N · PDF-Text“ for a page with a text layer, „· vom Lesemodell gelesen“ for a page the
+organization's reading model read, „Fundstelle im XML · Strukturiertes Feld“ for a structured e-invoice (with its XML path), and
+„· Texterkennung (frühere Version)“ for a result of an earlier release; below it the passage as a quotation. A model names the page
+and the passage it found a value on, and a value counts as found only if that page belongs to this document, the passage
+occurs in the text read from it and the passage shows the value (the same amount, date or text in any common spelling); otherwise the card says „Keine Fundstelle bestätigt: Das Modell hat keine Seite und Textstelle
+genannt, die sich in diesem Beleg nachweisen lässt.“ (a result of the local stage keeps „Keine eindeutige Fundstelle
+ermittelt.“). The twin checks at both widths that the pages are those of the document, that a scanned page names the reading
+model and that nothing scrolls horizontally.
+
+Screenshots come from the real-browser twin of the inbox (`features/journeys/inbox_model_processing.feature`) on the test database
+with synthetic data: a four-page scan with an insurance invoice on pages 1 and 2 and a water bill on pages 3 and 4, read by fake
+providers. `VERWALINO_CAPTURE_DESIGN=1` writes the "after" files, the same run with `VERWALINO_CAPTURE_STATE=before` against the
+frontend of `main` the "before" files; a card that did not exist before is captured as far as the previous frontend has it (the waiting
+state has no before: `main` evaluates the whole upload at once):
+
+| Inbox screen (#501) | Before, 1280 px | Before, 360 px | After, 1280 px | After, 360 px |
+|---|---|---|---|---|
+| Batch page: a file held back because the organization has not confirmed the inbox text, counted as „Empfangen“, explained in German with the original kept (the after pictures also show the sentence about the division of a multipage original) | [view](docs/assets/design/inbox-processing/batch-explained-before-1280.png) | [view](docs/assets/design/inbox-processing/batch-explained-before-360.png) | [view](docs/assets/design/inbox-processing/batch-explained-after-1280.png) | [view](docs/assets/design/inbox-processing/batch-explained-after-360.png) |
+| Batch page: a four-page upload that waits for the division („Zur Sichtung“, „Aufteilung ausstehend“, what to do, nothing was sent) | none | none | [view](docs/assets/design/inbox-processing/batch-waits-after-1280.png) | [view](docs/assets/design/inbox-processing/batch-waits-after-360.png) |
+| Source page of the same upload: the division panel with its intro and „Wartet auf die Aufteilung“ with the same sentence, no retry | none | none | [view](docs/assets/design/inbox-processing/source-waits-after-1280.png) | [view](docs/assets/design/inbox-processing/source-waits-after-360.png) |
+| Source page, pages 1 to 2: proposal with the page and passage of every value (the after pictures show the display formats) | [view](docs/assets/design/inbox-processing/source-proposal-before-1280.png) | [view](docs/assets/design/inbox-processing/source-proposal-before-360.png) | [view](docs/assets/design/inbox-processing/source-proposal-after-1280.png) | [view](docs/assets/design/inbox-processing/source-proposal-after-360.png) |
+| Source page, pages 3 to 4 (scan): reading-model passages and the card „Verbrauch der KI-Verarbeitung“ (no such card before) | [view](docs/assets/design/inbox-processing/source-scan-before-1280.png) | [view](docs/assets/design/inbox-processing/source-scan-before-360.png) | [view](docs/assets/design/inbox-processing/source-scan-after-1280.png) | [view](docs/assets/design/inbox-processing/source-scan-after-360.png) |
+| AI settings card of the local stack (no invoices) holding a confirmation of the first text: asks once for the inbox, without the key | [view](docs/assets/design/inbox-processing/settings-card-confirmation-before-1280.png) | [view](docs/assets/design/inbox-processing/settings-card-confirmation-before-360.png) | [view](docs/assets/design/inbox-processing/settings-card-confirmation-after-1280.png) | [view](docs/assets/design/inbox-processing/settings-card-confirmation-after-360.png) |
 
 ### Declaration import: consumption per stage and failure explanations
 

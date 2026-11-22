@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { centsFromDecimal, formatDate, formatDateTime, formatIban, formatMoney, formatPercent } from "./format";
+import { centsFromDecimal, formatDate, formatDateTime, formatDecimalMoney, formatIban, formatMoney, formatPercent, shown } from "./format";
 
 describe("formatMoney", () => {
   it("groups thousands with a dot and suffixes the euro sign", () => {
@@ -109,5 +109,21 @@ describe("formatPercent", () => {
     expect(formatPercent("19 Prozent")).toBe("19 Prozent");
     expect(formatPercent("19,00")).toBe("19,00");
     expect(formatPercent("")).toBe("");
+  });
+});
+
+describe("shown", () => {
+  it("renders a stored value in the given display format and keeps null as null", () => {
+    expect(shown("2026-01-15", formatDate)).toBe("15.01.2026");
+    expect(shown("1234.5", formatDecimalMoney)).toBe("1.234,50 €");
+    expect(shown("19.00", formatPercent)).toBe("19 %");
+    expect(shown("DE75512108001245126199", formatIban)).toBe("DE75 5121 0800 1245 1261 99");
+    expect(shown(null, formatDate)).toBeNull();
+    expect(shown(undefined, formatDate)).toBeNull();
+  });
+  it("shows a value the format cannot read as stored", () => {
+    expect(() => formatDecimalMoney("312,00 EUR")).toThrow(RangeError);
+    expect(shown("312,00 EUR", formatDecimalMoney)).toBe("312,00 EUR");
+    expect(shown("einhundert", formatDecimalMoney)).toBe("einhundert");
   });
 });

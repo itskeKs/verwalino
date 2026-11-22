@@ -168,21 +168,23 @@ async def open_settings(browser_world):
     await _capture(browser_world, "/einstellungen", "settings-card-no-invoices", card="KI für Ihre Organisation")
 
 
-@then("the one switch reads that it imports declarations only and no text of the card names invoices at 1280 and 360 pixels")
+@then("the one switch reads that it imports declarations and evaluates the documents of the inbox and no text of the card names invoices at 1280 and 360 pixels")
 @browser_step
 async def settings_switch(browser_world):
     """The stack runs with HV_INVOICE_EXTRACTION_ENABLED=false, as an installation whose operator switched invoice processing
-    off: its card is about declarations alone. The wording of an installation that processes invoices is tested in the
-    card's own component test."""
+    off: its card is about declarations and the documents of the inbox, which every installation reads with the organization's
+    models, and names no invoice. The wording of an installation that processes invoices is tested in the card's own
+    component test."""
     page = browser_world.page
     for viewport in (DESKTOP, PHONE):
         await page.set_viewport_size(viewport)
         await browser_world.visit("/einstellungen")
-        switch = page.get_by_label("Teilungserklärungen importieren", exact=True)
+        switch = page.get_by_label("Teilungserklärungen importieren sowie Dokumente im Posteingang auswerten", exact=True)
         await expect(switch).to_be_checked()
-        await expect(switch).not_to_have_attribute("aria-describedby", "ai-import-info")
+        await expect(switch).to_have_attribute("aria-describedby", "ai-import-info")
         card = page.locator("section").filter(has=page.get_by_role("heading", name="KI für Ihre Organisation", exact=True))
-        await expect(card).not_to_contain_text("Rechnung")
+        # A structured e-invoice is named as what is read directly ("E-Rechnung", "XRechnung"); no invoice is evaluated or sent.
+        await expect(card).not_to_contain_text(re.compile(r"(?<!E-)(?<!X)Rechnung"))
         await _fits_the_width(page)
     await page.set_viewport_size(DESKTOP)
 

@@ -19,15 +19,16 @@ BACKEND_PID=""
 VITE_PID=""
 INVOICE_WORKER_PID=""
 INBOX_WORKER_PID=""
+DECLARATION_WORKER_PID=""
 
 cleanup() {
   echo "Stopping local services..."
-  for pid in "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID" "$INBOX_WORKER_PID"; do
+  for pid in "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID" "$INBOX_WORKER_PID" "$DECLARATION_WORKER_PID"; do
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       kill "$pid" 2>/dev/null || true
     fi
   done
-  for pid in "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID" "$INBOX_WORKER_PID"; do
+  for pid in "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID" "$INBOX_WORKER_PID" "$DECLARATION_WORKER_PID"; do
     if [ -n "$pid" ]; then wait "$pid" 2>/dev/null || true; fi
   done
 }
@@ -84,17 +85,24 @@ cd "$ROOT"
 cd "$BACKEND"
 echo "Checking invoice worker (database, storage, PDF renderer)..."
 uv run python -m app.workers.invoice_extraction --healthcheck
-echo "Checking inbox worker (database, storage, ClamAV signatures, German OCR)..."
+echo "Checking declaration worker (database, storage, qpdf and PDF renderer)..."
+uv run python -m app.workers.declaration_import --healthcheck
+echo "Checking inbox worker (database, storage, ClamAV signatures, PDF renderer)..."
 if uv run python -m app.workers.workflow_runner --healthcheck; then
   echo "Starting local inbox worker..."
   uv run python -m app.workers.workflow_runner --all-organizations &
   INBOX_WORKER_PID=$!
 else
-  echo "Inbox worker skipped: check ClamAV (clamscan and signatures), worker database access, document storage and German OCR; API and UI will continue."
+  echo "Inbox worker skipped: check ClamAV (clamscan and signatures), worker database access, document storage and the PDF renderer (Poppler); API and UI will continue."
 fi
 echo "Starting local invoice worker..."
 uv run python -m app.workers.invoice_extraction &
 INVOICE_WORKER_PID=$!
+# The declaration worker runs the inbox's extraction stage (the one that reads a document with the organization's models);
+# the invoice worker above claims the invoices, as in docker-compose.prod.yml, so its own switch is off.
+echo "Starting local declaration worker (declaration import and the inbox's extraction stage)..."
+HV_INVOICE_EXTRACTION_ENABLED=false uv run python -m app.workers.declaration_import &
+DECLARATION_WORKER_PID=$!
 echo "Starting FastAPI backend on :18000..."
 uv run uvicorn app.main:app --host 127.0.0.1 --port 18000 &
 BACKEND_PID=$!
@@ -137,7 +145,7 @@ echo ""
 echo "Press Ctrl+C to stop."
 
 if [ -n "$INBOX_WORKER_PID" ]; then
-  wait "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID" "$INBOX_WORKER_PID"
+  wait "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID" "$INBOX_WORKER_PID" "$DECLARATION_WORKER_PID"
 else
-  wait "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID"
+  wait "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID" "$DECLARATION_WORKER_PID"
 fi

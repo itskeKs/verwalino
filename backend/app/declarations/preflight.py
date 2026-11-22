@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Callable
 
 from app.core.document_limits import MAX_UPLOAD_BYTES
+from app.core.image_reading import PIXELS, TIMEOUT, ImageReadingError, fit_pixels, run_isolated_image_reading
 
 
 _PDF_TRAILING_WHITESPACE = b" \t\r\n\x0b\x0c\x00"
@@ -300,7 +301,7 @@ class PdfPreflight:
                     if budget.rendered_pixels > self._max_pixels_per_import:
                         raise DocumentIntegrityError("OCR_IMPORT_RENDERED_PIXEL_LIMIT_EXCEEDED")
                     encoded = io.BytesIO()
-                    _fit_pixels(image, READING_MAX_IMAGE_PIXELS).save(encoded, format="PNG")
+                    fit_pixels(image, READING_MAX_IMAGE_PIXELS).save(encoded, format="PNG")
         except DocumentIntegrityError:
             raise
         except (PDFPopplerTimeoutError, TimeoutError, subprocess.TimeoutExpired) as error:
@@ -313,6 +314,33 @@ class PdfPreflight:
             budget.temporary_bytes -= held
         self._ensure_deadline(budget)
         return encoded.getvalue()
+
+    def render_image_for_reading(self, image_bytes: bytes, *, budget: ImportPreflightBudget) -> bytes:
+        """The PNG of an uploaded PNG or JPEG original for the reading model.
+
+        The image was inspected in an isolated process already (one frame, at most 20 million pixels, fully decodable);
+        it is decoded in one again, never in this process: a child with an address-space limit that is killed at the
+        shared budget's deadline (``core/image_reading.py``). The pixel bound is checked there from the header before the
+        image is decoded, the rotation of the EXIF header is applied, transparency is flattened on white and a picture
+        above ``READING_MAX_IMAGE_PIXELS`` is scaled down deterministically, as a rendered page is.
+        """
+        if not isinstance(image_bytes, bytes):
+            raise DocumentIntegrityError("PAGE_RENDER_UNAVAILABLE")
+        self._ensure_deadline(budget)
+        try:
+            png = run_isolated_image_reading(
+                image_bytes,
+                max_pixels=self._max_pixels_per_page,
+                max_output_pixels=READING_MAX_IMAGE_PIXELS,
+                timeout=self._vision_operation_timeout(budget),
+            )
+        except ImageReadingError as error:
+            # One stable code per reason, never a detail: a picture inspection accepted may still not decode now.
+            raise DocumentIntegrityError(
+                {PIXELS: "OCR_RENDERED_PIXELS_LIMIT_EXCEEDED", TIMEOUT: "PAGE_RENDER_TIMEOUT"}.get(error.reason, "PAGE_RENDER_UNAVAILABLE")
+            ) from None
+        self._ensure_deadline(budget)
+        return png
 
     def run_bytes(
         self,
@@ -565,18 +593,6 @@ def _pixel_count(width_points: float, height_points: float, dpi: int) -> int:
     width = math.ceil(width_points * dpi / 72)
     height = math.ceil(height_points * dpi / 72)
     return width * height
-
-
-def _fit_pixels(image, max_pixels: int):
-    """The image itself when it has at most ``max_pixels``, else the same picture scaled down to fit them."""
-    pixels = image.width * image.height
-    if pixels <= max_pixels:
-        return image
-    from PIL import Image
-
-    scale = math.sqrt(max_pixels / pixels)
-    size = (max(1, math.floor(image.width * scale)), max(1, math.floor(image.height * scale)))
-    return image.resize(size, Image.LANCZOS)
 
 
 def _directory_size(directory: Path) -> int:

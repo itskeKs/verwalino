@@ -16,11 +16,15 @@ from tests.test_scope_payment_reconciliation import read_value
 from tests.test_invoice_extraction_worker import pdf_bytes
 from tests.test_intake_batches import receive,work_sql
 from tests.test_error_tracking import offline_tracker as offline_tracker
+from tests.intake_model_support import Harness,enable_models,inbox_adapters,tesseract_unusable as tesseract_unusable
+from tests.test_intake_extraction import model_result
 
-pytestmark=pytest.mark.asyncio
+pytestmark=[pytest.mark.asyncio,pytest.mark.usefixtures('tesseract_unusable')]
 
 
 async def source(api,ids,*,scoped=False):
+    """A clean one-page original with its logical document; the organization has opted in with both models."""
+    enable_models(ids['org'])
     _,receipt=await receive(api,pdf_bytes(),**({'scope_hint_id':str(ids['scope'])} if scoped else {}))
     assert await inspect_once(get_worker_session_factory(),ids['org'],inspector=lambda data,mime:result(data,'clean',mime=mime,pages=1))
     assert await deliver_once(get_worker_session_factory(),ids['org'])
@@ -29,20 +33,23 @@ async def source(api,ids,*,scoped=False):
     return ref,child
 
 
-async def test_clean_source_has_durable_located_history_and_no_costs(migrator_session,scope_seed,store):
+async def test_clean_source_has_durable_proposal_history_and_no_costs(migrator_session,scope_seed,store):
     ids=await fixture(migrator_session,scope_seed)
     async with client(ids) as api:
         ref,child=await source(api,ids)
         status=await api.get('/api/logical-documents/'+child['id']+'/processing')
         assert status.status_code==200 and status.json()['status']=='queued'
-        assert await process_once(get_worker_session_factory(),ids['org'],processor=extract_logical)
-        assert not await process_once(get_worker_session_factory(),ids['org'],processor=extract_logical)
+        harness=Harness()
+        assert await process_once(get_worker_session_factory(),ids['org'],processor=extract_logical,providers=harness)
+        assert not await process_once(get_worker_session_factory(),ids['org'],processor=extract_logical,providers=harness)
         history=(await api.get('/api/document-refs/'+ref['id']+'/extractions')).json()['items']
         assert len(history)==1 and history[0]['logical_document_id']==child['id']
         assert history[0]['invoice_attempt_id'] is None and history[0]['intake_attempt_id'] is not None
         detail=(await api.get('/api/extraction-revisions/'+history[0]['id'])).json()
         amount=next(field for field in detail['fields'] if field['field_name']=='gross_amount')
-        assert (amount['value'],amount['page_number'],amount['quotation'],amount['locator_status'])==('119.00',1,'Gesamtbetrag: 119,00 EUR','page_quote')
+        assert (amount['value'],amount['page_number'],amount['quotation'],amount['locator_status'])==('312.00',None,None,'unlocated')
+        assert history[0]['processor_version']=='intake-model-v1'
+        assert [call.pages for call in harness.extractor.calls]==[(1,)] and harness.reader.reads==[]
         assert amount['validation_status']=='unverified'
         assert (await api.get('/api/logical-documents/'+child['id']+'/processing')).json()['status']=='succeeded'
         async with client(ids,'actor') as other:
@@ -77,7 +84,7 @@ async def test_finish_is_atomic_and_stale_replay_has_no_effect(migrator_session,
     claim=await work_sql(ids,'SELECT claim_intake_extraction(:org)')
     from app.core.storage import get_store
     data=get_store().get(claim['storage_uri'])
-    answer=extract_logical(data,claim['mime_type'],claim['page_start'],claim['page_end'],claim['verified_page_count'])
+    answer=model_result(data,claim['mime_type'],claim['page_start'],claim['page_end'],claim['verified_page_count'])
     params={**ids,'job':uuid.UUID(claim['job_id']),'fence':uuid.UUID(claim['fence']),'result':json.dumps(answer)}
     sql='SELECT complete_intake_extraction(:org,:job,:fence,CAST(:result AS jsonb))'
     pending="SELECT count(*) FROM jsonb_array_elements(access_disposition_work(:org)) w WHERE w->>'kind'='intake_extraction_job'"
@@ -101,7 +108,7 @@ async def test_worker_discards_malformed_result_and_integrity_failure(migrator_s
     async with client(ids) as api:
         ref,child=await source(api,ids)
         def invalid(*args):
-            answer=extract_logical(*args);answer['evidence']['gross_amount']['page_number']=2
+            answer=model_result(*args);answer['evidence']['gross_amount']['page_number']=2
             return answer
         assert await process_once(get_worker_session_factory(),ids['org'],processor=invalid)
         revision=(await api.get('/api/document-refs/'+ref['id']+'/extractions')).json()['items'][0]
@@ -112,7 +119,7 @@ async def test_worker_discards_malformed_result_and_integrity_failure(migrator_s
 
 async def test_shared_runner_claim_competition_and_attempt_limit(migrator_session,scope_seed,store):
     import asyncio
-    from app.workers.workflow_runner import WorkflowRunner,build_adapters
+    from app.workers.workflow_runner import WorkflowRunner
     ids=await fixture(migrator_session,scope_seed)
     async with client(ids) as api:await source(api,ids)
     claims=await asyncio.gather(*[work_sql(ids,'SELECT claim_intake_extraction(:org)') for _ in range(2)])
@@ -126,7 +133,7 @@ async def test_shared_runner_claim_competition_and_attempt_limit(migrator_sessio
     async with client(ids) as api:
         await source(api,ids)
         async def organizations():return (ids['org'],)
-        runner=WorkflowRunner(organizations,build_adapters(['intake_extraction']))
+        runner=WorkflowRunner(organizations,inbox_adapters(['intake_extraction'],Harness()))
         assert (await runner.run_once()).code=='PROCESSED'
         assert (await runner.run_once()).code=='IDLE'
 
@@ -136,7 +143,7 @@ async def test_intake_completion_exhaustion_reports_failure_then_recovers_its_du
     from unittest.mock import AsyncMock
     from sqlalchemy.ext.asyncio import AsyncSession
     from app.core import locking
-    from app.workers.workflow_runner import WorkflowRunner, build_adapters
+    from app.workers.workflow_runner import WorkflowRunner
 
     ids = await fixture(migrator_session, scope_seed)
     async with client(ids) as api:
@@ -152,7 +159,7 @@ async def test_intake_completion_exhaustion_reports_failure_then_recovers_its_du
     monkeypatch.setattr(locking, 'asyncio', SimpleNamespace(sleep=AsyncMock()))
     async def organizations():
         return (ids['org'],)
-    runner = WorkflowRunner(organizations, build_adapters(['intake_extraction']))
+    runner = WorkflowRunner(organizations, inbox_adapters(['intake_extraction'], Harness()))
     assert (await runner.run_once()).code == 'STAGE_ERROR'
     assert len(completions) == 10
     assert (await runner.run_once()).code == 'IDLE'
@@ -176,21 +183,23 @@ async def test_explicit_retry_replay_keeps_history_and_budget(migrator_session,s
     ids=await fixture(migrator_session,scope_seed)
     async with client(ids) as api:
         ref,child=await source(api,ids)
-        def unavailable(data,mime,start,end,count):return outcome(data,mime,start,end,count,'unavailable','ocr_unavailable')
+        def unavailable(data,mime,start,end,count):return outcome(data,mime,start,end,count,'unavailable','ai_import_disabled')
         assert await process_once(get_worker_session_factory(),ids['org'],processor=unavailable)
         current=(await api.get('/api/logical-documents/'+child['id']+'/processing')).json()
         assert current['can_retry']
-        headers={'Idempotency-Key':str(uuid.uuid4())};body={'expected_fence':current['fence'],'reason':'Local OCR restored'}
+        headers={'Idempotency-Key':str(uuid.uuid4())};body={'expected_fence':current['fence'],'reason':'Organization models switched on'}
         url='/api/logical-documents/'+child['id']+'/retry-extraction'
         first=await api.post(url,headers=headers,json=body)
         assert first.status_code==202,first.text
-        assert await process_once(get_worker_session_factory(),ids['org'],processor=extract_logical)
+        assert await process_once(get_worker_session_factory(),ids['org'],processor=extract_logical,providers=Harness())
         replay=await api.post(url,headers=headers,json=body)
         assert replay.status_code==202 and replay.json()==first.json()
         assert (await api.post(url,headers=headers,json={**body,'reason':'Changed body'})).status_code==409
         assert (await api.post(url,headers={'Idempotency-Key':str(uuid.uuid4())},json=body)).status_code==409
         status=(await api.get('/api/logical-documents/'+child['id']+'/processing')).json()
-        assert status['status']=='succeeded' and status['attempt_number']==2 and not status['can_retry']
+        # The first attempt was refused before any request (it used none of the three), the second made the requests.
+        assert status['status']=='succeeded' and status['attempt_number']==1 and not status['can_retry']
+        assert await read_value('SELECT attempt_number FROM intake_extraction_job WHERE organization_id=:org',ids)==2, 'two claims were made'
         history=(await api.get('/api/document-refs/'+ref['id']+'/extractions')).json()['items']
         assert [row['status'] for row in history]==['succeeded','unavailable']
 
@@ -268,6 +277,9 @@ async def test_migration_backfill_guard_and_function_identity(migrator_session,s
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
+                # The metering ledger of 0198 references the inbox attempts that 0098 drops; newer migrations go first.
+                db.execute(text('TRUNCATE invoice_model_call'))
+                importlib.import_module('migrations.versions.0198_intake_model_extraction').downgrade()
                 importlib.import_module('migrations.versions.0160_shared_retention_deadlines').downgrade()
                 importlib.import_module('migrations.versions.0159_person_retention_bindings').downgrade()
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
@@ -360,16 +372,21 @@ async def test_database_completion_rejects_invalid_identity_pages_and_fields(mig
     ids=await fixture(migrator_session,scope_seed)
     async with client(ids) as api:await source(api,ids)
     claim=await work_sql(ids,'SELECT claim_intake_extraction(:org)')
-    answer=extract_logical(get_store().get(claim['storage_uri']),claim['mime_type'],claim['page_start'],claim['page_end'],claim['verified_page_count'])
+    answer=model_result(get_store().get(claim['storage_uri']),claim['mime_type'],claim['page_start'],claim['page_end'],claim['verified_page_count'])
     for corrupt in (
         lambda r:r.update(content_sha256='0'*64),
         lambda r:r.update(page_end=2),
         lambda r:r['payload'].update(gross_amount='not-a-number'),
         lambda r:r['payload'].update(source_pages=[2]),
-        lambda r:r['evidence']['gross_amount'].update(page_number=None),
-        lambda r:r['evidence']['gross_amount'].update(quotation='fabricated'),
+        lambda r:r['evidence']['gross_amount'].update(page_number=1),
+        lambda r:r['evidence']['gross_amount'].update(locator_status='page_quote',page_number=1,quotation='fabricated',method='reading_model'),
         lambda r:r['evidence']['gross_amount'].update(locator_status='xml_path',xml_path='./ID',page_number=None,method='xml'),
         lambda r:r['pages'][0].update(method=None),
+        lambda r:r['pages'][0].update(method='tesseract'),
+        lambda r:r.update(processor_version='intake-model-v2'),
+        lambda r:r['payload'].update(vendor_iban='de89370400440532013000'),
+        lambda r:r['payload'].update(vendor_iban=1),
+        lambda r:r['payload']['field_confidences'].update(unknown_field=1),
     ):
         forged=copy.deepcopy(answer);corrupt(forged)
         with pytest.raises(DBAPIError):
@@ -377,6 +394,11 @@ async def test_database_completion_rejects_invalid_identity_pages_and_fields(mig
                 job=uuid.UUID(claim['job_id']),fence=uuid.UUID(claim['fence']),result=json.dumps(forged))
     assert await read_value('SELECT count(*) FROM extraction_revision WHERE organization_id=:org',ids)==0
     assert await read_value('SELECT status FROM intake_extraction_job WHERE organization_id=:org',ids)=='running'
+    # What the function accepts: the model version, the tenth key, a page of the reading model and a blank page.
+    accepted=copy.deepcopy(answer);accepted['pages'][0]['text']='';accepted['payload']['raw_text']=''
+    assert await work_sql(ids,'SELECT complete_intake_extraction(:org,:job,:fence,CAST(:result AS jsonb))',
+        job=uuid.UUID(claim['job_id']),fence=uuid.UUID(claim['fence']),result=json.dumps(accepted))
+    assert await read_value("SELECT processor_version FROM extraction_revision WHERE organization_id=:org",ids)=='intake-model-v1'
 
 
 async def test_worker_retries_completed_extraction_without_running_processor_again(migrator_session,scope_seed,store,monkeypatch):
@@ -398,7 +420,7 @@ async def test_worker_retries_completed_extraction_without_running_processor_aga
     monkeypatch.setattr(AsyncSession,'scalar',contended)
     async with client(ids) as api:
         ref,child=await source(api,ids)
-        assert await process_once(get_worker_session_factory(),ids['org'],processor=processor)
+        assert await process_once(get_worker_session_factory(),ids['org'],processor=processor,providers=Harness())
         assert (await api.get('/api/logical-documents/'+child['id']+'/processing')).json()['status']=='succeeded'
     assert len(extractions)==1
     assert len(finishes)==2 and finishes[0]==finishes[1]

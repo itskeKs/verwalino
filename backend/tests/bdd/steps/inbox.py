@@ -64,28 +64,28 @@ def process_invoice(world, monkeypatch):
     from app.core.intake_extraction import extract_logical
     from app.core.intake_inspection import result
     from app.workers import intake_extraction, workflow
-    from app.workers.workflow_runner import WorkflowRunner, build_adapters
+    from app.workers.workflow_runner import WorkflowRunner
+    from tests.intake_model_support import Harness, enable_models, inbox_adapters
 
-    # Existing inspector double; extraction uses the real text-layer fallback.
+    # Existing inspector double; the organization has opted in and the fake models answer: a text invoice keeps its
+    # text layer, so the reading model is not asked.
+    enable_models(world.data["organization_id"])
+    harness = Harness()
     inspect_once, extract_once = workflow.process_once, intake_extraction.process_once
 
     async def inspect(factory, org):
         return await inspect_once(factory, org, inspector=lambda data, mime: result(data, "clean", mime=mime, pages=1))
 
-    async def extract(factory, org):
-        return await extract_once(factory, org, processor=extract_logical)
-
-    def forbidden(*args):
-        raise AssertionError("A text invoice must not invoke OCR")
+    async def extract(factory, org, **options):
+        return await extract_once(factory, org, processor=extract_logical, **options)
 
     monkeypatch.setattr(workflow, "process_once", inspect)
     monkeypatch.setattr(intake_extraction, "process_once", extract)
-    monkeypatch.setattr("app.core.intake_extraction.ocr_page", forbidden)
 
     async def organizations():
         return (world.data["organization_id"],)
 
-    runner = WorkflowRunner(organizations, build_adapters())
+    runner = WorkflowRunner(organizations, inbox_adapters(("intake_inspection", "outbox", "intake_extraction"), harness))
     stages = []
     for _ in range(10):
         tick = world.run(runner.run_once())
@@ -95,6 +95,7 @@ def process_invoice(world, monkeypatch):
         stages.append(tick.stage)
     assert stages == ["intake_inspection", "outbox", "intake_extraction"]
     assert world.run(runner.run_once()).code == "IDLE"
+    assert harness.reader.reads == [] and len(harness.extractor.calls) == 1
 
 
 def get(world, path, **params):

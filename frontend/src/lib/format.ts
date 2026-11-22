@@ -87,3 +87,19 @@ export function formatPercent(value: string): string {
 export function formatIban(iban: string): string {
   return iban.replace(/\s/g, "").replace(/(.{4})/g, "$1 ").trim();
 }
+
+/** An amount as the API stores it (`"1234.56"`) in the money contract; a value that is not an API decimal throws, as `centsFromDecimal` does. */
+export function formatDecimalMoney(value: string): string {
+  return formatMoney(centsFromDecimal(value));
+}
+
+/** A proposal's stored value in a display format (``shown(value, formatDate)``); null stays null, and a value the format cannot read
+ *  (an older proposal, a model's odd answer) is shown as stored. One wrapper for every screen that shows a proposal. */
+export function shown(value: string | null | undefined, format: (value: string) => string): string | null {
+  if (value == null) return null;
+  try {
+    return format(value);
+  } catch {
+    return value;
+  }
+}

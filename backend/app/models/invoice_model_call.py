@@ -1,9 +1,11 @@
-"""One model request of the model-assisted invoice path: its reservation and, once it finished, its usage.
+"""One model request of the model-assisted invoice and inbox paths: its reservation and, once it finished, its usage.
 
 The ledger of the two stages (``read_page`` for a page, ``extract_invoice`` for the document). The worker reserves a
 call before it leaves and settles it with the consumed usage afterwards; the organization's monthly total counts a
-RESERVED row at its reservation and a SETTLED row at its cost (migration 0197). Working and accounting data of the
-runtime: not part of the organization export.
+RESERVED row at its reservation and a SETTLED row at its cost (migration 0197). A row belongs to an invoice attempt
+(``attempt_id``) or to an inbox extraction attempt (``intake_attempt_id``), exactly one of the two (migration 0198);
+the inbox attempts are private tables without a mapped model, so that foreign key lives in the database only.
+Working and accounting data of the runtime: not part of the organization export.
 """
 import uuid
 from datetime import datetime
@@ -22,7 +24,8 @@ REQUEST_NOT_SENT = "PROVIDER_REQUEST_NOT_SENT"
 class InvoiceModelCall(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "invoice_model_call"
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    attempt_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    attempt_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    intake_attempt_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     stage: Mapped[str] = mapped_column(String, nullable=False)
     pdf_page: Mapped[int | None] = mapped_column(Integer)
     model_name: Mapped[str] = mapped_column(String(255), nullable=False)

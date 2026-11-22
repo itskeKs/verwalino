@@ -49,12 +49,18 @@ class AiSettingsOut(BaseModel):
     document_price_known: bool
     confirmation: AiConfirmationOut | None = None
     confirmation_required: bool = False
-    # Whether this installation processes invoices with the organization's models (``HV_INVOICE_EXTRACTION_ENABLED``). Where
-    # it does not, the card names no invoices and the confirmation it records is the text without them.
+    # What this installation sends to an organization's provider, which decides the text the card shows and the
+    # confirmation it records (the one table in ``services/ai_settings_service.py``). Invoices only where it processes
+    # them (``HV_INVOICE_EXTRACTION_ENABLED``); the documents of the inbox are read with the organization's models on
+    # every installation. Declarations are always named.
     invoice_processing_enabled: bool
-    # A stored key whose confirmation does not name invoices (none, or one of an earlier text), where invoices are
+    inbox_processing_enabled: bool
+    # A stored key whose confirmation does not name invoices (none, or one of a text that does not), where invoices are
     # processed: they stay on the host until the current text is confirmed.
     invoice_confirmation_required: bool = False
+    # The same for the documents of the inbox: the confirmation of an organization that confirmed a text without them
+    # keeps what that text named, and its inbox documents stay on the host until it confirms again.
+    inbox_confirmation_required: bool = False
 
 
 class AiModelOut(BaseModel):

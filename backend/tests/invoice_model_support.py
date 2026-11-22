@@ -1,8 +1,9 @@
-"""Tests that run the model-assisted invoice path leave no 0197 data behind.
+"""Tests that run the model-assisted invoice or inbox path leave no 0197 or 0198 data behind.
 
-The 0197 downgrade refuses to discard metering records and model-read proposals, and the migration-chain tests of the
-suite downgrade through it on a database that earlier tests have used. The tests that make such rows remove them
-before and after, with the owner's rights: the extraction records are immutable for the runtime, not for the owner.
+The 0197 and 0198 downgrades refuse to discard metering records and model-read proposals, and the migration-chain tests of
+the suite downgrade through them on a database that earlier tests have used. The tests that make such rows remove them
+before and after, with the owner's rights: the extraction records are immutable for the runtime, not for the owner. A
+model-read inbox proposal is not deleted (assignment proposals and reviews may rest on it) but made a locally read one.
 """
 from contextlib import closing
 
@@ -11,6 +12,10 @@ import pytest
 
 from tests.conftest import MIGRATOR_SYNC_URL
 
+# The inbox jobs a claim number beyond three marks, by the job's counter or by the number of one of its attempts.
+_BEYOND_THREE = ("(SELECT j.id FROM public.intake_extraction_job j WHERE j.attempt_number>3 UNION"
+                 " SELECT a.job_id FROM public.intake_extraction_attempt a WHERE a.attempt_number>3)")
+
 DISCARD = (
     "DELETE FROM public.invoice_model_call",
     "ALTER TABLE public.field_evidence DISABLE TRIGGER USER",
@@ -18,6 +23,20 @@ DISCARD = (
     "DELETE FROM public.field_evidence WHERE extraction_revision_id IN"
     " (SELECT id FROM public.extraction_revision WHERE processor_version='invoice-model-v1')",
     "DELETE FROM public.extraction_revision WHERE processor_version='invoice-model-v1'",
+    # A document of the inbox that was claimed more than three times (an attempt that sent nothing does not use up its limit)
+    # cannot go back to the older rule, which numbers its attempts from one to three: its history goes with it.
+    "ALTER TABLE public.intake_extraction_retry DISABLE TRIGGER USER",
+    "DELETE FROM public.field_evidence WHERE extraction_revision_id IN (SELECT r.id FROM public.extraction_revision r WHERE r.intake_attempt_id IN"
+    " (SELECT a.id FROM public.intake_extraction_attempt a WHERE a.job_id IN " + _BEYOND_THREE + "))",
+    "DELETE FROM public.extraction_revision WHERE intake_attempt_id IN"
+    " (SELECT a.id FROM public.intake_extraction_attempt a WHERE a.job_id IN " + _BEYOND_THREE + ")",
+    "DELETE FROM public.intake_extraction_retry WHERE job_id IN " + _BEYOND_THREE,
+    "DELETE FROM public.intake_extraction_attempt WHERE job_id IN " + _BEYOND_THREE,
+    "DELETE FROM public.intake_extraction_job WHERE id IN " + _BEYOND_THREE,
+    "ALTER TABLE public.intake_extraction_retry ENABLE TRIGGER USER",
+    "UPDATE public.extraction_revision SET processor_version='intake-local-v1' WHERE processor_version='intake-model-v1'",
+    # The location a model stated on a page it read is no location of a locally read proposal.
+    "UPDATE public.field_evidence SET locator_status='unlocated', page_number=NULL, quotation=NULL, xml_path=NULL, method='unlocated' WHERE method='reading_model'",
     "ALTER TABLE public.extraction_revision ENABLE TRIGGER USER",
     "ALTER TABLE public.field_evidence ENABLE TRIGGER USER",
     "UPDATE public.invoice_processing_attempt SET processor_version='invoice-local-v1' WHERE processor_version='invoice-model-v1'",
@@ -30,13 +49,15 @@ def discard_invoice_model_data(execute) -> None:
         execute(statement)
 
 
+def discard_now() -> None:
+    """Discard the data in its own transaction (a module-level fixture's use of the function above)."""
+    with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection:
+        with connection, connection.cursor() as cursor:
+            discard_invoice_model_data(cursor.execute)
+
+
 @pytest.fixture
 def no_invoice_model_data():
-    def discard():
-        with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection:
-            with connection, connection.cursor() as cursor:
-                discard_invoice_model_data(cursor.execute)
-
-    discard()
+    discard_now()
     yield
-    discard()
+    discard_now()

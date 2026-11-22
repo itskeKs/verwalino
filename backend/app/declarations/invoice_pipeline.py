@@ -1,4 +1,4 @@
-"""Model-assisted extraction of an unstructured invoice (issue #500, ADR 0017).
+"""Model-assisted extraction of an unstructured invoice (issue #500, ADR 0017); the inbox path shares it (issue #501).
 
 The pages of an unstructured invoice PDF are read by the organization's document reading model (a page with a text
 layer is used as it is), then the organization's extraction model fills the nine fields of the invoice proposal and
@@ -10,6 +10,11 @@ for each request: a run stops before the next request when the organization with
 endpoint, key or a model the run started with) and its monthly limit, and settled
 with the usage it consumed (``invoice_model_call``, migration 0197), in short transactions of its own. The
 requests run outside any transaction. The calls of one extraction attempt are bounded by the constants below.
+
+``InvoiceModelPipeline`` is the one core of both callers. The inbox path (``declarations/intake_pipeline.py``) differs
+in a few small hooks only: how the live claim is renewed, which attempt a ledger row belongs to, how a page is rendered,
+the document's identity inside the requests, the confirmation a destination needs and the shape of the outcome it
+returns.
 """
 
 from __future__ import annotations
@@ -75,9 +80,15 @@ logger = logging.getLogger(__name__)
 INVOICE_MAX_INPUT_TOKENS = 300_000
 INVOICE_MAX_OUTPUT_TOKENS = 64_000
 INVOICE_MAX_COST_USD = Decimal("0.25")
-# One request's output allowance per stage.
+# One request's output allowance per stage. The extraction answer is ten fields, each a value, a certainty, a page and a
+# passage of at most 300 characters: about 1,250 tokens in the worst case (ten German passages of 250 to 300 characters, or
+# of digits, measured 1,200 to 1,240 with a current tokenizer, plus the values), where the ten values and certainties alone
+# were about 350 tokens. A model that reasons spends its allowance on reasoning first: 3,000 left it about 2,650 before the
+# passages and 1,750 after them, 4,000 leaves about 2,750. A repair request reserves the same again, so the worst reservation
+# of the extraction is 8,000 output tokens, and with the readings of a 10-page invoice (about 30,000 consumed) it stays far
+# below ``INVOICE_MAX_OUTPUT_TOKENS``; at the priced models' output rates (up to 5 USD per million) it is a few cents.
 INVOICE_READING_MAX_OUTPUT_TOKENS = 6_000
-INVOICE_EXTRACTION_MAX_OUTPUT_TOKENS = 3_000
+INVOICE_EXTRACTION_MAX_OUTPUT_TOKENS = 4_000
 # A page whose text layer has fewer non-whitespace characters than this is read by the reading model.
 INVOICE_TEXT_MIN_CHARS = 40
 # Rendering a page for the reading model: poppler at this resolution, at most this many pixels per page (an A4 page
@@ -174,6 +185,9 @@ def _render_failure(code: str) -> InvoiceModelFailure:
 class InvoiceModelPipeline:
     """Read the pages of one claimed invoice attempt, extract its fields and meter every request."""
 
+    # Whether the confirmation must name inbox documents (the inbox path); an invoice needs the text that names invoices.
+    _inbox = False
+
     def __init__(
         self,
         *,
@@ -185,6 +199,7 @@ class InvoiceModelPipeline:
         providers: InvoiceProviders,
         categories: Sequence[InvoiceCategory],
         preflight: PdfPreflight | None = None,
+        document_key: str = DOCUMENT_KEY,
     ) -> None:
         self._factory = session_factory
         self._org_id = org_id
@@ -193,6 +208,9 @@ class InvoiceModelPipeline:
         self._effective = effective
         self._providers = providers
         self._categories = tuple(categories)
+        self._document_key = document_key
+        # How each page's text was obtained, in the order of the pages: "text_layer" or "reading_model".
+        self._methods: list[str] = []
         # Until the pages are known the stricter answer holds; ``run`` sets it from them.
         self._needs_reading = True
         self._preflight = preflight or PdfPreflight(
@@ -223,18 +241,44 @@ class InvoiceModelPipeline:
             texts = await self._read_pages(ledger, pages)
             return await self._extract(ledger, pages, texts)
         except InvoiceModelFailure as failure:
-            return outcome(failure.status, failure.code, processor_version=MODEL_PROCESSOR_VERSION)
+            return self._failure_outcome(failure)
+
+    # ---- what differs between the callers --------------------------------------------------------------------
+
+    def _failure_outcome(self, failure: InvoiceModelFailure) -> dict:
+        return outcome(failure.status, failure.code, processor_version=MODEL_PROCESSOR_VERSION)
+
+    def _proposal_outcome(self, extracted: InvoiceExtractionOutput, pages: Sequence[InvoicePage], texts: Sequence[str]) -> dict:
+        return _proposal(extracted, {category.code for category in self._categories}, "\n".join(texts),
+                         [page.number for page in pages])
+
+    def _render(self, page: InvoicePage, budget) -> bytes:
+        """The PNG of one page for the reading model; runs in a thread, bounded by the local deadline of ``budget``."""
+        artifact = PageArtifact(page_number=page.number, text="", source=IMAGE_PAGE_SOURCE, rotation=0, dpi=INVOICE_RENDER_DPI)
+        return self._preflight.render_page_for_reading(self._data, artifact, budget=budget)
+
+    async def _renew(self, session) -> bool:
+        """Extend the live lease of the claim and re-check its principal, in the transaction of a reservation."""
+        return await InvoiceProcessingService(session, self._org_id).renew(self._claim, self._lease_seconds)
+
+    async def _record_reservation(self, session, stage: str, pdf_page: int | None, model: str, reservation: _Reservation) -> uuid.UUID:
+        return await InvoiceModelCallRepository(session, self._org_id).reserve(
+            attempt_id=self._claim["attempt_id"], stage=stage, pdf_page=pdf_page, model_name=model,
+            input_tokens=reservation.input_tokens, output_tokens=reservation.output_tokens, cost_usd=reservation.cost_usd)
 
     # ---- stage 1: reading ----------------------------------------------------------------------------------
 
     async def _read_pages(self, ledger: _Ledger, pages: Sequence[InvoicePage]) -> list[str]:
         budget = self._preflight.new_import_budget()
         texts: list[str] = []
+        self._methods = []
         for page in pages:
             if non_whitespace_length(page.text) >= INVOICE_TEXT_MIN_CHARS:
                 texts.append(page.text)
+                self._methods.append("text_layer")
             else:
                 texts.append(await self._read_page(ledger, budget, page))
+                self._methods.append("reading_model")
             # After every page, so that no page is read (and paid for) once the text has passed the bound.
             if len("\n".join(texts)) > INVOICE_MAX_TEXT_CHARS:
                 raise InvoiceModelFailure("needs_review", INVOICE_TEXT_LIMIT)
@@ -247,13 +291,11 @@ class InvoiceModelPipeline:
         pixels = math.ceil(page.width * INVOICE_RENDER_DPI / 72) * math.ceil(page.height * INVOICE_RENDER_DPI / 72)
         if pixels > INVOICE_RENDER_MAX_PIXELS:
             raise InvoiceModelFailure("unsupported", "image_pixel_limit")
-        artifact = PageArtifact(page_number=page.number, text="", source=IMAGE_PAGE_SOURCE, rotation=0, dpi=INVOICE_RENDER_DPI)
         try:
-            png = await run_bounded_processor(
-                partial(self._preflight.render_page_for_reading, self._data, artifact, budget=budget))
+            png = await run_bounded_processor(partial(self._render, page, budget))
         except DocumentIntegrityError as error:
             raise _render_failure(error.code) from None
-        image = PageImage(document_key=DOCUMENT_KEY, pdf_page=page.number, media_type=READING_IMAGE_MEDIA_TYPE, data=png)
+        image = PageImage(document_key=self._document_key, pdf_page=page.number, media_type=READING_IMAGE_MEDIA_TYPE, data=png)
         ledger.configured = _allowance(INVOICE_READING_MAX_OUTPUT_TOKENS)
 
         def call(max_output_tokens: int):
@@ -264,7 +306,7 @@ class InvoiceModelPipeline:
             method="read_page", request={"page": image}, call=call, expected=PageTranscript,
             failure_code=MODEL_READING_FAILED,
         )
-        if (transcript.document_key, transcript.pdf_page) != (DOCUMENT_KEY, page.number):
+        if (transcript.document_key, transcript.pdf_page) != (self._document_key, page.number):
             raise InvoiceModelFailure("failed", MODEL_RESULT_INVALID)
         return transcript_text(transcript.blocks)
 
@@ -272,8 +314,8 @@ class InvoiceModelPipeline:
 
     async def _extract(self, ledger: _Ledger, pages: Sequence[InvoicePage], texts: Sequence[str]) -> dict:
         extractor, model = self._providers.extractor, self._effective.model
-        documents = (DocumentInput(DOCUMENT_KEY, tuple(
-            PageInput(document_key=DOCUMENT_KEY, pdf_page=page.number, text=text, quality=1.0)
+        documents = (DocumentInput(self._document_key, tuple(
+            PageInput(document_key=self._document_key, pdf_page=page.number, text=text, quality=1.0)
             for page, text in zip(pages, texts, strict=True))),)
         ledger.configured = _allowance(INVOICE_EXTRACTION_MAX_OUTPUT_TOKENS)
 
@@ -286,8 +328,7 @@ class InvoiceModelPipeline:
             method="extract_invoice", request={"documents": documents, "categories": self._categories}, call=call,
             expected=InvoiceExtractionOutput, failure_code=MODEL_EXTRACTION_FAILED,
         )
-        return _proposal(extracted, {category.code for category in self._categories}, "\n".join(texts),
-                         [page.number for page in pages])
+        return self._proposal_outcome(extracted, pages, texts)
 
     # ---- one metered request -------------------------------------------------------------------------------
 
@@ -363,7 +404,7 @@ class InvoiceModelPipeline:
         call_id = None
         async with self._factory() as session, session.begin():
             await set_tenant_context(session, self._org_id)
-            if not await InvoiceProcessingService(session, self._org_id).renew(self._claim, self._lease_seconds):
+            if not await self._renew(session):
                 # Committed on purpose: an initiator who lost permission has cancelled the attempt in this transaction.
                 refusal = InvoiceModelFailure("failed", LEASE_LOST)
             elif (blocker := await self._opt_in_blocker(session)) is not None:
@@ -375,10 +416,7 @@ class InvoiceModelPipeline:
                 except HTTPException:
                     refusal = InvoiceModelFailure("unavailable", ORGANIZATION_BUDGET_EXCEEDED)
                 else:
-                    call_id = await InvoiceModelCallRepository(session, self._org_id).reserve(
-                        attempt_id=self._claim["attempt_id"], stage=stage, pdf_page=pdf_page, model_name=model,
-                        input_tokens=reservation.input_tokens, output_tokens=reservation.output_tokens,
-                        cost_usd=reservation.cost_usd)
+                    call_id = await self._record_reservation(session, stage, pdf_page, model, reservation)
         if refusal is not None:
             raise refusal
         return call_id
@@ -397,7 +435,7 @@ class InvoiceModelPipeline:
             effective = await effective_ai_settings(session, self._org_id)
         except AiKeyUnreadableError:
             return INVOICE_AI_KEY_UNREADABLE
-        if (blocker := invoice_import_blocker(effective, needs_reading=self._needs_reading)) is not None:
+        if (blocker := invoice_import_blocker(effective, needs_reading=self._needs_reading, inbox=self._inbox)) is not None:
             return blocker
         if _destination(effective) != _destination(self._effective):
             return INVOICE_AI_SETTINGS_CHANGED

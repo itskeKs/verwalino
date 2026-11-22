@@ -12,10 +12,10 @@ untouched. Report cleanup in one line, never in a repository file.
 
 - Python with [uv](https://docs.astral.sh/uv/), Node 22, Docker (for the test database only).
 - Backend dependencies: `cd backend && uv sync --extra dev --extra ops --extra ocr`.
-  The local launcher `scripts/dev-local.sh` requires Poppler (`pdftoppm`) for the invoice worker and, for
-  the inbox worker, also Tesseract with the German language pack (`deu`). The declaration import and the
-  invoice worker render pages with Poppler and read them with a model: no Tesseract. A worker health check
-  aborts its startup if a tool it needs is missing.
+  The local launcher `scripts/dev-local.sh` requires Poppler (`pdftoppm`) for the invoice worker and for the inbox
+  worker, which also needs the ClamAV signatures. The declaration import, the invoice worker and the inbox
+  worker render pages with Poppler and read them with a model: no Tesseract (the image keeps it until #502, no
+  code calls it). A worker health check aborts its startup if a tool it needs is missing.
 - Browser setup (once, and after Playwright lock updates):
   `cd backend && uv run --locked --extra dev playwright install chromium`.
 - Frontend dependencies: `cd frontend && npm ci` (`make frontend-deps` does it when needed).
@@ -36,7 +36,7 @@ untouched. Report cleanup in one line, never in a repository file.
   preserved. Do not run resetting backend tests during a UI acceptance run.
   Worker operation: [invoice worker](DEPLOY.md#invoice-worker-t10)
   and [inbox worker](DEPLOY.md#inbox-worker).
-  Inbox worker skipped: check ClamAV (clamscan and signatures), worker database access, document storage and German OCR; API and UI will continue.
+  Inbox worker skipped: check ClamAV (clamscan and signatures), worker database access, document storage and the PDF renderer (Poppler); API and UI will continue.
 - Declarations of division (Teilungserklärungen): the dependency sets above include the
   operations tooling. Imports require **Human Approval** before creating canonical
   building, unit, or rule data; document content remains untrusted. The import needs two models in

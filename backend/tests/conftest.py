@@ -761,50 +761,50 @@ def _upgrade_test_database(alembic_cfg):
     upgraded_invitation_tables = rehearse_initial_upgrade('0183')
     command.upgrade(alembic_cfg, "head")
     record_schema_origin(alembic_cfg)
-    return {'upgrade_0028_to_0197_tables': upgraded_0028_tables,
-            'upgrade_0122_to_0197_tables': upgraded_tables,
-            'upgrade_0139_to_0197_tables': upgraded_0139_tables,
-            'upgrade_0140_to_0197_tables': upgraded_parent_tables,
-            'upgrade_0141_to_0197_tables': upgraded_setup_tables,
-            'upgrade_0142_to_0197_tables': upgraded_throttle_tables,
-            'upgrade_0143_to_0197_tables': upgraded_lease_tables,
-            'upgrade_0144_to_0197_tables': upgraded_signup_tables,
-            'upgrade_0145_to_0197_tables': upgraded_reset_tables,
-            'upgrade_0146_to_0197_tables': upgraded_quota_tables,
-            'upgrade_0147_to_0197_tables': upgraded_lifecycle_tables,
-            'upgrade_0148_to_0197_tables': upgraded_retention_tables,
-            'upgrade_0149_to_0197_tables': upgraded_reserve_tables,
-            'upgrade_0150_to_0197_tables': upgraded_heating_tables,
-            'upgrade_0151_to_0197_tables': upgraded_draft_tables,
-            'upgrade_0152_to_0197_tables': upgraded_bank_tables,
-            'upgrade_0153_to_0197_tables': upgraded_restoration_tables,
-            'upgrade_0154_to_0197_tables': upgraded_always_guard_tables,
-            'upgrade_0155_to_0197_tables': upgraded_person_retention_tables,
-            'upgrade_0159_to_0197_tables': upgraded_deadline_tables,
-            'upgrade_0160_to_0197_tables': upgraded_reason_erasure_tables,
-            'upgrade_0161_to_0197_tables': upgraded_report_recipient_tables,
-            'upgrade_0162_to_0197_tables': upgraded_successor_dunning_tables,
-            'upgrade_0163_to_0197_tables': upgraded_household_tables,
-            'upgrade_0164_to_0197_tables': upgraded_person_day_bases,
-            'upgrade_0165_to_0197_tables': upgraded_property_state,
-            'upgrade_0166_to_0197_tables': upgraded_register_date,
-            'upgrade_0167_to_0197_tables': upgraded_levy_authority,
-            'upgrade_0168_to_0197_tables': upgraded_commercial_rules,
-            'upgrade_0169_to_0197_tables': upgraded_statement_notes,
-            'upgrade_0170_to_0197_tables': upgraded_bank_cost,
-            'upgrade_0171_to_0197_tables': upgraded_bank_corrections,
-            'upgrade_0172_to_0197_tables': upgraded_bank_evidence,
-            'upgrade_0173_to_0197_tables': upgraded_dunning_policy,
-            'upgrade_0174_to_0197_tables': upgraded_preferences,
-            'upgrade_0175_to_0197_tables': upgraded_advance_mode,
-            'upgrade_0176_to_0197_tables': protected_advance_mode,
-            'upgrade_0177_to_0197_tables': upgraded_ai_settings,
-            'upgrade_0178_to_0197_tables': upgraded_provider_settings,
-            'upgrade_0179_to_0197_tables': upgraded_provider_endpoints,
-            'upgrade_0180_to_0197_tables': upgraded_request_timeout,
-            'upgrade_0181_to_0197_tables': upgraded_weg_reserve_soll,
-            'upgrade_0182_to_0197_tables': upgraded_overlap_guard,
-            'upgrade_0183_to_0197_tables': upgraded_invitation_tables}
+    return {'upgrade_0028_to_0198_tables': upgraded_0028_tables,
+            'upgrade_0122_to_0198_tables': upgraded_tables,
+            'upgrade_0139_to_0198_tables': upgraded_0139_tables,
+            'upgrade_0140_to_0198_tables': upgraded_parent_tables,
+            'upgrade_0141_to_0198_tables': upgraded_setup_tables,
+            'upgrade_0142_to_0198_tables': upgraded_throttle_tables,
+            'upgrade_0143_to_0198_tables': upgraded_lease_tables,
+            'upgrade_0144_to_0198_tables': upgraded_signup_tables,
+            'upgrade_0145_to_0198_tables': upgraded_reset_tables,
+            'upgrade_0146_to_0198_tables': upgraded_quota_tables,
+            'upgrade_0147_to_0198_tables': upgraded_lifecycle_tables,
+            'upgrade_0148_to_0198_tables': upgraded_retention_tables,
+            'upgrade_0149_to_0198_tables': upgraded_reserve_tables,
+            'upgrade_0150_to_0198_tables': upgraded_heating_tables,
+            'upgrade_0151_to_0198_tables': upgraded_draft_tables,
+            'upgrade_0152_to_0198_tables': upgraded_bank_tables,
+            'upgrade_0153_to_0198_tables': upgraded_restoration_tables,
+            'upgrade_0154_to_0198_tables': upgraded_always_guard_tables,
+            'upgrade_0155_to_0198_tables': upgraded_person_retention_tables,
+            'upgrade_0159_to_0198_tables': upgraded_deadline_tables,
+            'upgrade_0160_to_0198_tables': upgraded_reason_erasure_tables,
+            'upgrade_0161_to_0198_tables': upgraded_report_recipient_tables,
+            'upgrade_0162_to_0198_tables': upgraded_successor_dunning_tables,
+            'upgrade_0163_to_0198_tables': upgraded_household_tables,
+            'upgrade_0164_to_0198_tables': upgraded_person_day_bases,
+            'upgrade_0165_to_0198_tables': upgraded_property_state,
+            'upgrade_0166_to_0198_tables': upgraded_register_date,
+            'upgrade_0167_to_0198_tables': upgraded_levy_authority,
+            'upgrade_0168_to_0198_tables': upgraded_commercial_rules,
+            'upgrade_0169_to_0198_tables': upgraded_statement_notes,
+            'upgrade_0170_to_0198_tables': upgraded_bank_cost,
+            'upgrade_0171_to_0198_tables': upgraded_bank_corrections,
+            'upgrade_0172_to_0198_tables': upgraded_bank_evidence,
+            'upgrade_0173_to_0198_tables': upgraded_dunning_policy,
+            'upgrade_0174_to_0198_tables': upgraded_preferences,
+            'upgrade_0175_to_0198_tables': upgraded_advance_mode,
+            'upgrade_0176_to_0198_tables': protected_advance_mode,
+            'upgrade_0177_to_0198_tables': upgraded_ai_settings,
+            'upgrade_0178_to_0198_tables': upgraded_provider_settings,
+            'upgrade_0179_to_0198_tables': upgraded_provider_endpoints,
+            'upgrade_0180_to_0198_tables': upgraded_request_timeout,
+            'upgrade_0181_to_0198_tables': upgraded_weg_reserve_soll,
+            'upgrade_0182_to_0198_tables': upgraded_overlap_guard,
+            'upgrade_0183_to_0198_tables': upgraded_invitation_tables}
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -826,6 +826,19 @@ _test_app_rw_engine = None
 @pytest.fixture(autouse=True)
 def isolate_diagnostics_directory(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, 'diagnostics_dir', str(tmp_path / 'diagnostics'))
+
+
+@pytest.fixture(autouse=True)
+def discard_inbox_model_data():
+    """A test that built the providers of the inbox's model path (``tests/intake_model_support.py``) made metering records
+    and model-read proposals. The 0198 downgrade refuses to discard them and the chain-wide downgrade tests meet them on a
+    database that earlier tests have used, so they are removed (with the owner's rights) after such a test."""
+    yield
+    support = sys.modules.get('tests.intake_model_support')
+    if support is not None and support.dirty:
+        support.dirty = False
+        from tests.invoice_model_support import discard_now
+        discard_now()
 
 
 @pytest.fixture(autouse=True)

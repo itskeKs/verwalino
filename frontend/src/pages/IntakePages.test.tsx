@@ -121,3 +121,83 @@ it('suppresses cached download links when fresh status is unavailable', async ()
   expect(screen.getByText('invoice.pdf')).toBeInTheDocument();
   expect(screen.queryByRole('link', { name: 'Original herunterladen' })).not.toBeInTheDocument();
 });
+
+// ---- how an extraction that ended is explained on the batch page (issue #501) -------------------------------------------
+
+const extracting = (code: string, over = {}) => ({ ...item, stage: 'extraction', document_ref_id: 'ref-1', logical_counts: { total: 1, processing: 0, review: 0, failed: 1 }, error_code: code, can_retry: false, ...over });
+
+it.each([
+  ['ai_import_disabled', /Die automatische Auswertung per KI ist für Ihre Organisation nicht eingerichtet.*Es wird nichts \(mehr\) an einen KI-Anbieter übermittelt/s],
+  ['organization_ai_budget_exceeded', /monatliche KI-Budget Ihrer Organisation ist ausgeschöpft.*nicht gesendet/s],
+  ['model_reading_failed', /Das Modell unter „Dokumente einlesen“ hat eine Seite nicht eingelesen.*Das Original bleibt erhalten; es wurde nichts übernommen/s],
+  ['render_unavailable', /Eine Seite des Belegs konnte nicht zum Einlesen aufbereitet werden/],
+  ['processor_failed', /Die Auswertung ist fehlgeschlagen\. Das Original bleibt erhalten/],
+  ['attempt_limit', /dreimal versucht und nicht abgeschlossen/],
+])('explains the extraction code %s in German from the one map of reasons', async (code, expected) => {
+  vi.stubGlobal('fetch', vi.fn(async () => json({ ...state, items: [extracting(code)] }))); page('/posteingang/batch-1');
+  expect(await screen.findByText(expected)).toBeInTheDocument();
+  expect(screen.getByText(/^Auswertung · 1 Beleg\(e\)/)).toBeInTheDocument();
+  expect(document.body).not.toHaveTextContent(new RegExp(code));
+});
+
+it('names no text recognition any more and keeps the explanation of a result that an earlier release stored', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => json({ ...state, items: [extracting('ocr_unavailable')] }))); page('/posteingang/batch-1');
+  expect(await screen.findByText(/Die frühere Texterkennung konnte diesen Beleg nicht auswerten\. Das Original bleibt erhalten/)).toBeInTheDocument();
+  expect(document.body).not.toHaveTextContent(/derzeit nicht verfügbar|lokale Texterkennung/);
+});
+
+it('keeps the explanations of the inspection of a file, and a general sentence for a code nothing explains', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => json({ ...state, items: [{ ...extracting('scanner_detected'), stage: 'inspection' }, { ...extracting('a_code_nobody_mapped'), id: 'item-2', stage: 'extraction' }] })));
+  page('/posteingang/batch-1');
+  expect(await screen.findByText('Die Sicherheitsprüfung hat die Datei zurückgewiesen. Das Original bleibt gesperrt.')).toBeInTheDocument();
+  expect(screen.getByText(/Die Auswertung konnte nicht abgeschlossen werden\. Das Original bleibt erhalten/)).toBeInTheDocument();
+  expect(document.body).not.toHaveTextContent(/a_code_nobody_mapped/);
+});
+
+// A document that waits for the organization is not counted as blocked or failed (review of PR #832).
+const tile = (label: string) => screen.getAllByText(label).find(element => element.tagName === 'P')!.previousElementSibling!;
+
+it('counts a document that waits for the organizations setup as received and keeps the other failures as failed', async () => {
+  const waiting = ['ai_import_disabled', 'ai_inbox_confirmation_missing', 'ai_document_model_missing', 'ai_key_unreadable'].map((code, index) => extracting(code, { id: `waiting-${index}`, can_retry: true }));
+  const failed = extracting('model_extraction_failed', { id: 'failed-1' });
+  const blocked = { ...item, id: 'blocked-1', stage: 'inspection', error_code: 'scanner_detected', can_retry: false };
+  const received = { ...item, id: 'received-1', status: 'received', error_code: null, can_retry: false };
+  const counts = { waiting: 0, received: 1, processing: 0, review: 0, confirmed: 0, failed: 6 };
+  vi.stubGlobal('fetch', vi.fn(async () => json({ ...state, item_count: 7, counts, items: [received, ...waiting, failed, blocked] })));
+  page('/posteingang/batch-1');
+  await screen.findByRole('heading', { name: 'Dokumentenstapel' });
+  expect(tile('Empfangen')).toHaveTextContent('5');
+  expect(tile('Gesperrt / fehlgeschlagen')).toHaveTextContent('2');
+  expect(screen.getAllByText('Empfangen').filter(element => element.className.includes('badge'))).toHaveLength(5);
+  expect(screen.getAllByText('Gesperrt / fehlgeschlagen').filter(element => element.className.includes('badge'))).toHaveLength(2);
+});
+
+it('does not poll for a document that waits for the setup of the organization', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const fetch = vi.fn(async () => json({ ...state, counts: { waiting: 0, received: 0, processing: 0, review: 0, confirmed: 0, failed: 1 }, items: [extracting('ai_import_disabled', { status: 'failed', can_retry: true })] }));
+  vi.stubGlobal('fetch', fetch);
+  try {
+    page('/posteingang/batch-1');
+    await screen.findByRole('heading', { name: 'Dokumentenstapel' });
+    expect(tile('Empfangen')).toHaveTextContent('1');
+    const loads = fetch.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetch.mock.calls.length).toBe(loads);
+  } finally { vi.useRealTimers(); }
+});
+
+// A multipage upload waits for the division (owner decision of 2026-11-22 on #501): it is the reviewer's turn, nothing failed.
+it('says that a multipage upload waits for the division, that nothing was sent and where to act, without a failure count', async () => {
+  const waiting = { ...item, status: 'review', stage: 'split', document_ref_id: 'ref-1', logical_counts: { total: 3, processing: 0, review: 0, failed: 0 },
+    error_code: 'awaiting_split', can_retry: false };
+  const counts = { waiting: 0, received: 0, processing: 0, review: 1, confirmed: 0, failed: 0 };
+  vi.stubGlobal('fetch', vi.fn(async () => json({ ...state, counts, items: [waiting] }))); page('/posteingang/batch-1');
+  expect(await screen.findByText(/^Das Original hat mehr als eine Seite und wird erst ausgewertet, wenn Sie bestätigt haben, wie es aufgeteilt ist/)).toBeInTheDocument();
+  expect(screen.getByText(/Bis dahin wurde nichts an einen KI-Anbieter übermittelt/)).toBeInTheDocument();
+  expect(screen.getByText('Aufteilung ausstehend · 3 Beleg(e), 0 zur Sichtung')).toBeInTheDocument();
+  expect(tile('Zur Sichtung')).toHaveTextContent('1');
+  expect(tile('Gesperrt / fehlgeschlagen')).toHaveTextContent('0');
+  expect(screen.getByRole('link', { name: 'Belege und Vorschläge ansehen' })).toHaveAttribute('href', '/posteingang/belege/ref-1');
+  expect(screen.queryByText(/Grund für die Wiederholung/)).not.toBeInTheDocument();
+  expect(screen.getByText(/ein Original mit mehreren Seiten erst, wenn Sie unter „Belege und Vorschläge“ bestätigt haben, wie es aufgeteilt ist/)).toBeInTheDocument();
+});

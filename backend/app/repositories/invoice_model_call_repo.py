@@ -1,4 +1,4 @@
-"""The metering ledger of the model-assisted invoice path: reserve a call before it leaves, settle it afterwards."""
+"""The metering ledger of the model-assisted invoice and inbox paths: reserve a call before it leaves, settle it afterwards."""
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -11,10 +11,16 @@ from app.repositories.base import TenantRepository
 class InvoiceModelCallRepository(TenantRepository[Call]):
     model = Call
 
-    async def reserve(self, *, attempt_id: uuid.UUID, stage: str, pdf_page: int | None, model_name: str,
-                      input_tokens: int, output_tokens: int, cost_usd: Decimal) -> uuid.UUID:
-        """Durably hold the worst case of one request; the monthly total counts it from this commit on."""
-        call = await self.create(Call(attempt_id=attempt_id, stage=stage, pdf_page=pdf_page, model_name=model_name,
+    async def reserve(self, *, attempt_id: uuid.UUID | None = None, intake_attempt_id: uuid.UUID | None = None, stage: str,
+                      pdf_page: int | None, model_name: str, input_tokens: int, output_tokens: int,
+                      cost_usd: Decimal) -> uuid.UUID:
+        """Durably hold the worst case of one request; the monthly total counts it from this commit on.
+
+        The request belongs to an invoice attempt or to an inbox extraction attempt, exactly one of the two.
+        """
+        if (attempt_id is None) == (intake_attempt_id is None):
+            raise ValueError("a model call belongs to exactly one attempt")
+        call = await self.create(Call(attempt_id=attempt_id, intake_attempt_id=intake_attempt_id, stage=stage, pdf_page=pdf_page, model_name=model_name,
             status="RESERVED", reserved_input_tokens=input_tokens, reserved_output_tokens=output_tokens, reserved_cost_usd=cost_usd))
         return call.id
 

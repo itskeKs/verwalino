@@ -340,6 +340,7 @@ PROBES: dict[str, Probe] = {
     "GET /api/logical-documents": Probe(row("document_ref", document_ref_id="id")),
     "GET /api/logical-documents/{document_id}": Probe(row("logical_document", document_id="id")),
     "GET /api/logical-documents/{document_id}/processing": Probe(row("logical_document", document_id="id")),
+    "GET /api/logical-documents/{document_id}/model-usage": Probe(row("logical_document", document_id="id")),
     "POST /api/logical-documents": Probe(
         row("document_ref", document_ref_id="id"),
         body={"document_ref_id": "{document_ref_id}", "page_start": 1, "page_end": 1, "reason": REASON},

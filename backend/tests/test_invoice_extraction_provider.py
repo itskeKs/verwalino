@@ -109,7 +109,45 @@ def test_the_prompt_names_every_field_the_boundary_and_the_category_list():
         assert name in INVOICE_EXTRACTION_PROMPT, name
     assert 'untrusted' in INVOICE_EXTRACTION_PROMPT and 'allowed_category_codes' in INVOICE_EXTRACTION_PROMPT
     assert 'null' in INVOICE_EXTRACTION_PROMPT and 'Never calculate' in INVOICE_EXTRACTION_PROMPT
-    assert (INVOICE_PROMPT_VERSION, INVOICE_SCHEMA_VERSION, INVOICE_PASS_ID) == ('invoice-v1', 'invoice-1', 'extract_invoice')
+    assert (INVOICE_PROMPT_VERSION, INVOICE_SCHEMA_VERSION, INVOICE_PASS_ID) == ('invoice-v2', 'invoice-2', 'extract_invoice')
+    assert 'source_page' in INVOICE_EXTRACTION_PROMPT and 'source_quote' in INVOICE_EXTRACTION_PROMPT and 'character for character' in INVOICE_EXTRACTION_PROMPT
+
+
+def test_every_field_says_where_it_was_found_and_an_answer_without_a_source_states_none():
+    from openai.lib._pydantic import to_strict_json_schema
+    wire = to_strict_json_schema(InvoiceExtractionOutput)
+    for kind in ('InvoiceTextField', 'InvoiceDateField', 'InvoiceAmountField', 'InvoiceIbanField'):
+        assert wire['$defs'][kind]['required'] == ['value', 'confidence', 'source_page', 'source_quote'], kind
+        assert set(wire['$defs'][kind]['properties']) == {'value', 'confidence', 'source_page', 'source_quote'}
+    stated = {**ANSWER, 'gross_amount': {'value': '312.00', 'confidence': 0.9, 'source_page': 2, 'source_quote': 'Gesamtbetrag 312,00 EUR'}}
+    parsed = InvoiceExtractionOutput.model_validate(stated)
+    assert (parsed.gross_amount.source_page, parsed.gross_amount.source_quote) == (2, 'Gesamtbetrag 312,00 EUR')
+    bare = InvoiceExtractionOutput.model_validate({**ANSWER, 'gross_amount': {'value': '312.00', 'confidence': 0.9}})
+    assert (bare.gross_amount.source_page, bare.gross_amount.source_quote) == (None, None), 'a missing source is no failure'
+
+
+BAD_SOURCES = {'empty-quote': {'source_page': 1, 'source_quote': ''}, 'quote-301-characters': {'source_page': 1, 'source_quote': 'x' * 301},
+               'page-0': {'source_page': 0, 'source_quote': 'Gesamtbetrag 312,00 EUR'}, 'page-201': {'source_page': 201, 'source_quote': 'Gesamtbetrag 312,00 EUR'},
+               'quote-of-the-wrong-type': {'source_page': 1, 'source_quote': 5}, 'page-of-the-wrong-type': {'source_page': 'one', 'source_quote': 'Gesamtbetrag 312,00 EUR'},
+               'page-without-quote': {'source_page': 1, 'source_quote': None}}
+
+
+@pytest.mark.parametrize('source', list(BAD_SOURCES.values()), ids=list(BAD_SOURCES))
+def test_a_source_the_schema_cannot_use_states_no_source_and_never_costs_the_answer(source):
+    answer = {**ANSWER, 'gross_amount': {'value': '312.00', 'confidence': 0.9, **source}}
+    for parsed in (InvoiceExtractionOutput.model_validate(answer), InvoiceExtractionOutput.model_validate_json(json.dumps(answer))):
+        assert (parsed.gross_amount.value, parsed.gross_amount.confidence) == ('312.00', 0.9)
+        assert (parsed.gross_amount.source_page, parsed.gross_amount.source_quote) == (None, None)
+        assert parsed.vendor_name == InvoiceExtractionOutput.model_validate(ANSWER).vendor_name
+
+
+def test_a_source_at_the_limits_is_kept_and_a_bad_value_is_still_refused_beside_a_bad_source():
+    edge = {'source_page': 200, 'source_quote': 'x' * 300}
+    kept = InvoiceExtractionOutput.model_validate({**ANSWER, 'gross_amount': {'value': '312.00', 'confidence': 0.9, **edge}})
+    assert (kept.gross_amount.source_page, kept.gross_amount.source_quote) == (200, 'x' * 300)
+    for field, value in (('gross_amount', '312,00'), ('invoice_date', '15.01.2026'), ('vendor_name', '')):
+        with pytest.raises(ValidationError):
+            InvoiceExtractionOutput.model_validate({**ANSWER, field: {'value': value, 'confidence': 0.5, 'source_page': 0, 'source_quote': ''}})
 
 
 # ---- one transport per provider; the same contract ----------------------------------------------------------
@@ -255,6 +293,19 @@ async def test_no_other_model_is_asked(transport):
         await _extract(provider, model='some-other-model')
     assert failure.value.code == 'MODEL_RATE_NOT_CONFIGURED'
     assert transport.count() == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('source', [BAD_SOURCES[name] for name in ('empty-quote', 'quote-301-characters', 'page-0', 'page-201')],
+                         ids=['empty-quote', 'quote-301-characters', 'page-0', 'page-201'])
+async def test_a_badly_filled_source_costs_no_repair_request_and_no_answer_through_every_transport(transport, source):
+    answer = {**ANSWER, 'gross_amount': {'value': '312.00', 'confidence': 0.9, **source},
+              'vendor_name': {'value': 'Mustermann Versicherungen AG', 'confidence': 0.9, 'source_page': 1, 'source_quote': 'Mustermann Versicherungen AG'}}
+    result = await _extract(transport.build([answer]))
+    assert transport.count() == 1, 'a bad source is not a malformed answer'
+    assert result.usage_complete is True and result.metadata.failure_class is None
+    assert (result.output.gross_amount.value, result.output.gross_amount.source_page, result.output.gross_amount.source_quote) == ('312.00', None, None)
+    assert (result.output.vendor_name.source_page, result.output.vendor_name.source_quote) == (1, 'Mustermann Versicherungen AG'), 'a good source beside it stays'
 
 
 # ---- the reservation ----------------------------------------------------------------------------------------

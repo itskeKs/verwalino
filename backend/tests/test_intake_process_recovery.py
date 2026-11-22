@@ -21,7 +21,10 @@ from pathlib import Path
 sys.path.insert(0,sys.argv[4])
 from app.core.db import get_worker_session_factory
 from app.core.intake_extraction import extract_logical
+from app.declarations.fake_provider import FakeDocumentReadingProvider,FakeInvoiceExtractionProvider
+from app.declarations.invoice_pipeline import InvoiceProviders
 from app.workers.intake_extraction import process_once
+def providers(effective):return InvoiceProviders(reader=FakeDocumentReadingProvider(),extractor=FakeInvoiceExtractionProvider())
 org=uuid.UUID(sys.argv[1]);marker=Path(sys.argv[2]);stage=sys.argv[3]
 async def main():
     if stage=='before':
@@ -29,9 +32,9 @@ async def main():
             marker.write_text('processor_started')
             time.sleep(30)
             return extract_logical(*args)
-        await process_once(get_worker_session_factory(),org,processor=processor)
+        await process_once(get_worker_session_factory(),org,processor=processor,providers=providers)
     else:
-        assert await process_once(get_worker_session_factory(),org,processor=extract_logical)
+        assert await process_once(get_worker_session_factory(),org,processor=extract_logical,providers=providers)
         marker.write_text('committed')
         await asyncio.sleep(30)
 asyncio.run(main())
