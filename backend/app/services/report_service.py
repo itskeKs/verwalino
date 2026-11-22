@@ -81,7 +81,7 @@ class ReportService:
             'SELECT property_has_classified_finance(:org,:property)'
         ), {'org': self._org_id, 'property': property_id}):
             raise HTTPException(409, 'Select an exact accounting scope for this property')
-        sphere = await context.select_read_scope(accounting_scope_id)
+        sphere = await context.select_read_scope(accounting_scope_id, property_id=property_id)
         if sphere is not None:
             if sphere.property_id != property_id:
                 raise HTTPException(422, 'Accounting scope belongs to another property')
