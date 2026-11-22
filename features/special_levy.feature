@@ -45,6 +45,13 @@ Feature: Special levy
     Then the rent account and the open items of that tenant show 700 euros open for January 2026
     And the manager can create a tenant notice over 700 euros for that rent
 
+  Scenario: The annual overview of a property without an accounting scope keeps its figures once the organization holds a levy
+    Given Sonnenweg 5 has no accounting scope and its tenant owes 700 euros rent for January 2026
+    And the tenant paid the 700 euros and a property tax of 250 euros is confirmed for January 2026
+    And the annual overview of Sonnenweg 5 for 2026 shows 700 euros income, 250 euros expenses and 450 euros balance
+    When the manager creates the roof repair levy due on 1 July 2026
+    Then the annual overview of Sonnenweg 5 for 2026 shows 700 euros income, 250 euros expenses and 450 euros balance
+
   @browser
   Scenario Outline: Missing resolution feedback preserves the levy inputs at <width> pixels
     When the manager clicks create without a resolution in the browser at <width> pixels

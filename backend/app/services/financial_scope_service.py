@@ -74,11 +74,12 @@ class FinancialScopeService:
         await self.session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
             {'key': f'financial-inputs:{self.org_id}'})
 
-    async def select_read_scope(self, scope_id=None, *, lease_id=None, owner_id=None):
+    async def select_read_scope(self, scope_id=None, *, lease_id=None, owner_id=None, property_id=None):
         """Install one live, complete read context; omitted means legacy only.
 
-        An unscoped read that concerns exactly one lease or one owner names it (`lease_id`, `owner_id`):
-        a special levy of the organization then refuses it only where classified data refuses it.
+        An unscoped read that concerns exactly one lease, one owner or one property names it (`lease_id`,
+        `owner_id`, `property_id`): a special levy of the organization then refuses it only where classified
+        data refuses it, and a property only where it has an accounting scope that could be selected.
         """
         await self.lock_inputs()
         selected = await self.session.scalar(text("SELECT NULLIF(current_setting('app.current_scope_id',true),'')::uuid"))
@@ -86,7 +87,7 @@ class FinancialScopeService:
             raise HTTPException(409, 'Report scope differs from its financial source')
         scope_id = scope_id or selected
         if scope_id is None:
-            await self.require_report_sources(None, lease_id=lease_id, owner_id=owner_id)
+            await self.require_report_sources(None, lease_id=lease_id, owner_id=owner_id, property_id=property_id)
             return None
         sphere = await AuthorizationService(self.session,
             AuthContext(self.user_id, self.org_id, 'live database role required')).require(scope_id, ScopeCapability.READ)
@@ -97,9 +98,9 @@ class FinancialScopeService:
         await self.require_report_sources(scope_id)
         return sphere
 
-    async def require_report_sources(self, scope_id, *, lease_id=None, owner_id=None):
-        if await self.session.scalar(text("SELECT report_scope_source_access(:org,:scope,'read',:lease,:owner)"),
-                {'org': self.org_id, 'scope': scope_id, 'lease': lease_id, 'owner': owner_id}):
+    async def require_report_sources(self, scope_id, *, lease_id=None, owner_id=None, property_id=None):
+        if await self.session.scalar(text("SELECT report_scope_source_access(:org,:scope,'read',:lease,:owner,:property)"),
+                {'org': self.org_id, 'scope': scope_id, 'lease': lease_id, 'owner': owner_id, 'property': property_id}):
             return
         if scope_id is None and await self.levy_refuses_unscoped_read():
             raise ScopeRequired()

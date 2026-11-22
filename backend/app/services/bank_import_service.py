@@ -122,7 +122,7 @@ class BankImportService:
             raise HTTPException(404, "Bank account not found")
         context = self._context()
         async with context.using(account, computation=True) as scope_id:
-            sphere = await context.select_read_scope(scope_id)
+            sphere = await context.select_read_scope(scope_id, property_id=account.property_id)
             yield account, context, scope_id, sphere
 
     async def _suggestions(self, transaction, targets_by_period):
