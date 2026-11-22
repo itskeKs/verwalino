@@ -535,6 +535,11 @@ async def test_concurrent_delete_and_upload_follow_one_lock_order(rent_world, re
 
     delete_has_quota, continue_delete, upload_started = (asyncio.Event() for _ in range(3))
     pids = {}
+    # The upload waits for the delete's quota lock from its start until the delete has committed:
+    # through the blocked check and then until both tasks have finished. PostgreSQL's lock_timeout
+    # must not be shorter than the time the test grants those steps, or a stall of the test
+    # process cancels the upload with LockNotAvailableError although the lock order is right.
+    blocked_seconds, finish_seconds = 2, 3
 
     async def pause_delete_before_directory_lock(*args):
         delete_has_quota.set()
@@ -545,7 +550,8 @@ async def test_concurrent_delete_and_upload_follow_one_lock_order(rent_world, re
 
     async def identify(db, name):
         await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {"actor": str(actor)})
-        await db.execute(text("SET LOCAL lock_timeout='1s'"))
+        await db.execute(text("SELECT set_config('lock_timeout',:timeout,true)"),
+                         {"timeout": f"{blocked_seconds + finish_seconds}s"})
         pids[name] = await db.scalar(text("SELECT pg_backend_pid()"))
 
     async def delete():
@@ -573,9 +579,9 @@ async def test_concurrent_delete_and_upload_follow_one_lock_order(rent_world, re
         tasks.append(asyncio.create_task(upload()))
         await asyncio.wait_for(upload_started.wait(), 2)
         assert pids["delete"] != pids["upload"]
-        await asyncio.wait_for(upload_is_blocked_by_delete(), 2)
+        await asyncio.wait_for(upload_is_blocked_by_delete(), blocked_seconds)
         continue_delete.set()
-        await asyncio.wait_for(asyncio.gather(*tasks), 3)
+        await asyncio.wait_for(asyncio.gather(*tasks), finish_seconds)
         assert await rent_db.scalar(text("SELECT count(*) FROM property_document WHERE id=:id"), {"id": ident}) == 0
         assert await rent_db.scalar(text("SELECT count(*) FROM attachment WHERE organization_id=:org AND storage_uri=:key"),
             {"org": org, "key": key}) == 1
