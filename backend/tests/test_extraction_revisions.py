@@ -156,8 +156,9 @@ async def test_extraction_migration_retains_revisions_and_restores_empty_schema(
             point=db.begin_nested()
             try:
                 db.execute(text('TRUNCATE logical_document,field_evidence,extraction_revision,outbox_event CASCADE'))
-                # The metering ledger of 0197 references the attempts' key that 0096 drops; newer migrations go first.
+                # The metering ledger of 0197 references the attempts' key that 0096 drops, and 0198 extends it; newer migrations go first.
                 db.execute(text('TRUNCATE invoice_model_call'))
+                importlib.import_module('migrations.versions.0198_intake_model_extraction').downgrade()
                 importlib.import_module('migrations.versions.0197_invoice_model_calls').downgrade()
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))
                 db.execute(text('TRUNCATE source_partition_revision CASCADE'))

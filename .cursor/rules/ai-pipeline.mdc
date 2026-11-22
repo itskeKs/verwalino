@@ -40,8 +40,8 @@ alwaysApply: false
   `backend/tests/fixtures/declaration_eval_cases.json` for extraction changes. Evidence, review
   and approval records stay reproducible from stored inputs.
 - Local text recognition is Tesseract (`deu`) with poppler and qpdf, run as bounded subprocesses (DPI,
-  pixels, pages, temp bytes, timeout) in `core/invoice_ocr.py`, `core/pdf_extraction.py`,
-  `core/visual_extract.py` and `core/intake_extraction.py`. A path that reads with a model renders its
+  pixels, pages, temp bytes, timeout) in `core/invoice_ocr.py`, `core/pdf_extraction.py` and
+  `core/visual_extract.py`. A path that reads with a model renders its
   pages with poppler the same bounded way (`declarations/preflight.py`) and has no Tesseract step. Keep
   every new path bounded the same way.
 - The invoice worker sends an unstructured PDF to the organization's models only when its AI import switch, key
@@ -51,6 +51,13 @@ alwaysApply: false
   Tesseract step. The confirmation text that names invoices governs transmission, so an organization that
   confirmed an older text keeps its invoices on the host until it confirms again. A retry reads and pays
   again: page transcripts of an invoice are not stored.
+- The inbox worker (`workers/intake_extraction.py`) does the same for the selected pages of one logical
+  document of an unstructured PDF, PNG or JPEG: `declarations/intake_pipeline.py` is `InvoiceModelPipeline`
+  with five hooks (renewing the claim's fence, the ledger row's attempt, rendering, the document key, the
+  outcome shape), so reading, extraction, bounds, opt-in re-check and metering exist once. Only the pages of that
+  logical document reach a provider, with the original's page numbers; ledger rows carry `intake_attempt_id`;
+  proposals are `intake-model-v1` with unlocated evidence. XML and a PDF with valid embedded ZUGFeRD data are parsed
+  by the local stage (`core/intake_extraction.py`) and never reach a model; the inbox has no Tesseract step either.
 - A stage that calls a model meters it in the shared ledger by the model that made the call (reserve
   before, settle after, keep the usage of failed calls) and records it in the pass ledger with its
   `pass_id`; a view of per-stage usage reads that ledger and the run row in one aggregation

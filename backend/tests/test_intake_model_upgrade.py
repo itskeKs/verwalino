@@ -1,0 +1,174 @@
+"""0198 lets the inbox read and extract through the organization's two models (issue #501, ADR 0017).
+
+The ledger of 0197 serves the inbox attempts, the claim's lease is renewed before every paid request and the proposal
+function of the inbox accepts the model version and the tenth field. Real inbox attempts of the test database make the
+rows these tests look at.
+"""
+import importlib
+import json
+import uuid
+
+import pytest
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from alembic.script import ScriptDirectory
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import DBAPIError
+
+from app import deployment
+from app.core.intake_extraction import extract_logical
+from tests.conftest import MIGRATOR_SYNC_URL
+from tests.intake_model_support import Harness, enable_models, extract_all
+from tests.invoice_model_support import discard_invoice_model_data
+from tests.test_financial_scope_boundary import scope_seed as scope_seed, worker_tenant as worker_tenant
+from tests.test_intake_batches import work_sql
+from tests.test_intake_extraction import model_result
+from tests.test_intake_extraction_worker import source
+from tests.test_invoice_source_custody import fixture, store as store
+from tests.test_scope_payment_reconciliation import read_value
+from tests.test_scoped_account_statements import client, mutate
+
+pytestmark = pytest.mark.asyncio
+
+LEDGER_ROW = """INSERT INTO invoice_model_call(organization_id,attempt_id,intake_attempt_id,stage,pdf_page,model_name,reserved_input_tokens,
+    reserved_output_tokens,reserved_cost_usd) VALUES (:org,:attempt,:intake,'read_page',1,'m',100,50,0.5)"""
+CLAIM = "SELECT claim_intake_extraction(:org)"
+RENEW = "SELECT renew_intake_extraction(:org,:job,:fence,:seconds)"
+
+
+def _migration():
+    return importlib.import_module('migrations.versions.0198_intake_model_extraction')
+
+
+async def test_the_inbox_model_path_is_the_release_target_after_0197():
+    revision = ScriptDirectory('migrations').get_revision('0198')
+    assert revision.down_revision == '0197'
+    assert deployment.TARGET == '0198'
+    assert ScriptDirectory('migrations').get_heads() == ['0198']
+
+
+async def test_a_ledger_row_belongs_to_exactly_one_attempt_of_its_own_organization(migrator_session, scope_seed, store):
+    ids = await fixture(migrator_session, scope_seed)
+    async with client(ids) as api:
+        await source(api, ids)
+    claim = await work_sql(ids, CLAIM)
+    intake = uuid.UUID(claim['attempt_id'])
+    for params, violated in (({'attempt': None, 'intake': None}, 'ck_invoice_model_call_one_attempt'),
+                             ({'attempt': uuid.uuid4(), 'intake': intake}, 'ck_invoice_model_call_one_attempt'),
+                             ({'attempt': None, 'intake': uuid.uuid4()}, 'fk_invoice_model_call_intake_attempt')):
+        with pytest.raises(DBAPIError, match=violated):
+            await mutate(text(LEDGER_ROW), {**ids, **params})
+    await mutate(text(LEDGER_ROW), {**ids, 'attempt': None, 'intake': intake})
+    assert await read_value("SELECT count(*) FROM invoice_model_call WHERE organization_id=:org AND intake_attempt_id IS NOT NULL", ids) == 1
+    # Inbox attempts are private tables, so the ledger row is an exact reference: no other organization names it.
+    other = uuid.uuid4()
+    await mutate(text("INSERT INTO organization(id,name) VALUES (:other,'Foreign ledger fixture')"), {**ids, 'other': other})
+    with pytest.raises(DBAPIError, match='fk_invoice_model_call_intake_attempt'):
+        await mutate(text(LEDGER_ROW), {**ids, 'org': other, 'attempt': None, 'intake': intake})
+    assert await read_value("SELECT count(*) FROM invoice_model_call WHERE organization_id=:other", {**ids, 'other': other}) == 0
+
+
+async def test_the_lease_is_renewed_only_for_the_live_fence_and_an_authorized_initiator(migrator_session, scope_seed, store):
+    ids = await fixture(migrator_session, scope_seed)
+    async with client(ids) as api:
+        await source(api, ids, scoped=True)
+    claim = await work_sql(ids, CLAIM)
+    params = {'job': uuid.UUID(claim['job_id']), 'fence': uuid.UUID(claim['fence'])}
+    lease = lambda: read_value("SELECT lease_expires_at FROM intake_extraction_job WHERE organization_id=:org", ids)
+    first = await lease()
+    assert await work_sql(ids, RENEW, seconds=900, **params) is True
+    extended = await lease()
+    assert (extended - first).total_seconds() > 600, "the three-minute claim now covers a request of fifteen minutes"
+    assert await work_sql(ids, RENEW, seconds=1, **params) is True
+    assert await lease() == extended, "a renewal never shortens the lease"
+    for seconds in (0, 3601, None):
+        with pytest.raises(DBAPIError, match='Invalid lease extension'):
+            await work_sql(ids, RENEW, seconds=seconds, **params)
+    # The interactive role cannot renew.
+    with pytest.raises(DBAPIError, match='permission denied|runtime required'):
+        await read_value("SELECT renew_intake_extraction(:org,:job,:fence,60)", {**ids, **params}, actor_key='clerk')
+    # A fence that is not the live one renews nothing, a revoked initiator cancels the job and renews nothing.
+    assert await work_sql(ids, RENEW, seconds=60, job=params['job'], fence=uuid.uuid4()) is False
+    await mutate(text('UPDATE scope_grant SET revoked_at=clock_timestamp(),revoked_by=:actor WHERE organization_id=:org AND scope_id=:scope AND revoked_at IS NULL'), ids)
+    assert await work_sql(ids, RENEW, seconds=60, **params) is False
+    assert await read_value('SELECT status FROM intake_extraction_job WHERE organization_id=:org', ids) == 'canceled'
+    assert await work_sql(ids, RENEW, seconds=60, **params) is False
+
+
+async def test_the_usage_of_a_document_is_readable_only_for_those_who_may_read_the_document(migrator_session, scope_seed, store):
+    ids = await fixture(migrator_session, scope_seed)
+    enable_models(ids['org'])
+    async with client(ids) as api:
+        ref, child = await source(api, ids, scoped=True)
+    assert await extract_all(ids['org'], Harness(), processor=extract_logical) == 1
+    document = {**ids, 'document': uuid.UUID(child['id'])}
+    rows = await read_value("SELECT intake_model_usage(:org,:document)", document, actor_key='clerk')
+    assert [(row['attempt_number'], row['stage'], row['status']) for row in rows] == [(1, 'extract_invoice', 'SETTLED')]
+    assert set(rows[0]) == {'attempt_number', 'stage', 'pdf_page', 'model_name', 'status', 'reserved_input_tokens', 'reserved_output_tokens',
+                            'reserved_cost_usd', 'input_tokens', 'output_tokens', 'cost_usd', 'usage_complete', 'error_code', 'created_at'}
+    assert await read_value("SELECT intake_model_usage(:org,:document)", document, actor_key='actor') is None, "no read access to the original"
+    assert await read_value("SELECT intake_model_usage(:org,:other)", {**ids, 'other': uuid.uuid4()}, actor_key='clerk') is None
+    # The worker role acts for no person: it reads no usage either.
+    assert await work_sql(ids, "SELECT intake_model_usage(:org,:document)", document=document['document']) is None
+
+
+async def test_the_downgrade_refuses_to_discard_inbox_usage_or_a_model_read_proposal_and_restores_the_older_function(migrator_session, scope_seed, store):
+    ids = await fixture(migrator_session, scope_seed)
+    enable_models(ids['org'])
+    async with client(ids) as api:
+        await source(api, ids)
+    assert await extract_all(ids['org'], Harness(), processor=extract_logical) == 1
+    migration = _migration()
+    engine = create_engine(MIGRATOR_SYNC_URL)
+    try:
+        with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
+            savepoint = db.begin_nested()
+            try:
+                definition = lambda: db.scalar(text("SELECT pg_get_functiondef('public.complete_intake_extraction(uuid,uuid,uuid,jsonb)'::regprocedure)"))
+                constraint = lambda: db.scalar(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='extraction_revision_typed_attempt'"))
+                assert 'intake-model-v1' in definition() and 'vendor_iban' in definition() and 'reading_model' in definition()
+                assert "'intake-model-v1'" in constraint() and "'invoice-model-v1'" in constraint()
+                with pytest.raises(DBAPIError, match='Inbox model call records require this release'):
+                    with db.begin_nested():
+                        migration.downgrade()
+                db.execute(text('DELETE FROM invoice_model_call'))
+                with pytest.raises(DBAPIError, match='Model-read inbox proposals require this release'):
+                    with db.begin_nested():
+                        migration.downgrade()
+                discard_invoice_model_data(lambda statement: db.execute(text(statement)))
+                migration.downgrade()
+                assert 'intake-model-v1' not in definition() and 'vendor_iban' not in definition() and 'reading_model' not in definition()
+                assert "'intake-local-v1'" in definition() and 'intake-model-v1' not in constraint() and "'invoice-model-v1'" in constraint()
+                assert db.scalar(text("SELECT count(*) FROM information_schema.columns WHERE table_name='invoice_model_call' AND column_name='intake_attempt_id'")) == 0
+                assert db.scalar(text("SELECT is_nullable FROM information_schema.columns WHERE table_name='invoice_model_call' AND column_name='attempt_id'")) == 'NO'
+                assert db.scalar(text("SELECT to_regprocedure('public.renew_intake_extraction(uuid,uuid,uuid,integer)')")) is None
+                assert db.scalar(text("SELECT to_regprocedure('public.intake_model_usage(uuid,uuid)')")) is None
+                migration.upgrade()
+                assert 'intake-model-v1' in definition() and 'vendor_iban' in definition() and "'intake-model-v1'" in constraint()
+                assert db.scalar(text("SELECT to_regprocedure('public.renew_intake_extraction(uuid,uuid,uuid,integer)')")) is not None
+            finally:
+                savepoint.rollback()
+    finally:
+        engine.dispose()
+
+
+async def test_the_ledger_stays_erasable_and_the_inbox_proposal_keeps_the_tenth_field_optional(migrator_session, scope_seed, store):
+    """No DELETE trigger was added (the retention catalog keeps classifying the ledger ``delete``) and an older worker's
+    proposal without the tenth key is still accepted."""
+    ids = await fixture(migrator_session, scope_seed)
+    async with client(ids) as api:
+        await source(api, ids)
+    engine = create_engine(MIGRATOR_SYNC_URL)
+    try:
+        with engine.connect() as db:
+            assert db.scalar(text("SELECT disposition FROM public.organization_retention_catalog() WHERE entity='invoice_model_call'")) == 'delete'
+            assert db.scalar(text("""SELECT count(*) FROM pg_trigger WHERE tgrelid='public.invoice_model_call'::regclass AND NOT tgisinternal
+                AND (tgtype & 8) > 0 AND tgfoid::regproc::text <> 'organization_lifecycle_guard'""")) == 0
+    finally:
+        engine.dispose()
+    claim = await work_sql(ids, CLAIM)
+    from app.core.storage import get_store
+    answer = model_result(get_store().get(claim['storage_uri']), claim['mime_type'], claim['page_start'], claim['page_end'], claim['verified_page_count'])
+    del answer['payload']['vendor_iban']
+    assert await work_sql(ids, 'SELECT complete_intake_extraction(:org,:job,:fence,CAST(:result AS jsonb))',
+                          job=uuid.UUID(claim['job_id']), fence=uuid.UUID(claim['fence']), result=json.dumps(answer))

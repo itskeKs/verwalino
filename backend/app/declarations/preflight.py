@@ -314,6 +314,45 @@ class PdfPreflight:
         self._ensure_deadline(budget)
         return encoded.getvalue()
 
+    def render_image_for_reading(self, image_bytes: bytes, *, budget: ImportPreflightBudget) -> bytes:
+        """The PNG of an uploaded PNG or JPEG original for the reading model.
+
+        The image was inspected in an isolated process already (one frame, at most 20 million pixels, fully decodable);
+        the pixel bound is checked here before the image is decoded, again from its header, and the deadline of the
+        shared budget applies. The rotation of the EXIF header is applied, transparency is flattened on white and a
+        picture above ``READING_MAX_IMAGE_PIXELS`` is scaled down deterministically, as a rendered page is.
+        """
+        if not isinstance(image_bytes, bytes):
+            raise DocumentIntegrityError("PAGE_RENDER_UNAVAILABLE")
+        self._ensure_deadline(budget)
+        try:
+            from PIL import Image, ImageOps
+        except ImportError as error:  # pragma: no cover - depends on deployment image
+            raise DocumentIntegrityError("PAGE_RENDER_UNAVAILABLE") from error
+        try:
+            with Image.open(io.BytesIO(image_bytes)) as image:
+                if image.width * image.height > self._max_pixels_per_page:
+                    raise DocumentIntegrityError("OCR_RENDERED_PIXELS_LIMIT_EXCEEDED")
+                image.load()
+                upright = ImageOps.exif_transpose(image)
+                if upright.mode in ("RGBA", "LA") or (upright.mode == "P" and "transparency" in upright.info):
+                    flattened = upright.convert("RGBA")
+                    page = Image.new("RGB", flattened.size, (255, 255, 255))
+                    page.paste(flattened, mask=flattened.getchannel("A"))
+                elif upright.mode in ("RGB", "L"):
+                    page = upright
+                else:
+                    page = upright.convert("RGB")
+                encoded = io.BytesIO()
+                _fit_pixels(page, READING_MAX_IMAGE_PIXELS).save(encoded, format="PNG")
+        except DocumentIntegrityError:
+            raise
+        except Exception as error:
+            # An image that inspection accepted and that cannot be decoded now: one stable code, no detail.
+            raise DocumentIntegrityError("PAGE_RENDER_UNAVAILABLE") from error
+        self._ensure_deadline(budget)
+        return encoded.getvalue()
+
     def run_bytes(
         self,
         data: bytes,

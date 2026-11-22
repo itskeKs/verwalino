@@ -15,11 +15,10 @@ pytestmark=pytest.mark.asyncio
 
 
 async def prepared(api,ids,scoped=False):
-    from app.core.db import get_worker_session_factory
     from app.core.intake_extraction import extract_logical
-    from app.workers.intake_extraction import process_once
+    from tests.intake_model_support import extract_all
     ref,child=await source(api,ids,scoped=scoped)
-    while await process_once(get_worker_session_factory(),ids['org'],processor=extract_logical):pass
+    await extract_all(ids['org'],processor=extract_logical)
     partition=await api.post('/api/document-refs/'+ref['id']+'/partition',**partition_command([child]))
     assert partition.status_code==201,partition.text
     history=(await api.get('/api/document-refs/'+ref['id']+'/extractions',params={'logical_document_id':child['id']})).json()['items']

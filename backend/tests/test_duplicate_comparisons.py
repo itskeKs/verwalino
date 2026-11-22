@@ -97,7 +97,7 @@ async def source_reviews(api,ids,data,pages,ranges,**changes):
     from app.core.intake_extraction import extract_logical
     from app.workers.workflow import process_once as inspect_once
     from app.workers.outbox import process_once as deliver_once
-    from app.workers.intake_extraction import process_once
+    from tests.intake_model_support import extract_all
     from tests.test_intake_batches import receive
     from tests.test_source_partitions import command as partition_command
     from tests.test_assignment_proposals import command as proposal_command
@@ -123,7 +123,7 @@ async def source_reviews(api,ids,data,pages,ranges,**changes):
             assert reply.status_code==201,reply.text
             children.append(reply.json())
         while await deliver_once(get_worker_session_factory(),ids['org']):pass
-    while await process_once(get_worker_session_factory(),ids['org'],processor=extract_logical):pass
+    await extract_all(ids['org'],processor=extract_logical)
     reply=await api.post('/api/document-refs/'+ref['id']+'/partition',**partition_command(children))
     assert reply.status_code==201,reply.text
     partition=reply.json();reviews=[]

@@ -785,3 +785,53 @@ def test_only_an_image_page_with_a_resolution_can_be_rendered_for_reading() -> N
         preflight.render_page_for_reading(data, result.pages[0], budget=preflight.new_import_budget())
 
     assert error.value.code == "PAGE_RENDER_UNAVAILABLE"
+
+
+def _picture(fmt: str, size: tuple[int, int] = (800, 1_000), mode: str = "RGB", color="white", **options) -> bytes:
+    out = io.BytesIO()
+    Image.new(mode, size, color).save(out, fmt, **options)
+    return out.getvalue()
+
+
+@pytest.mark.parametrize("fmt", ["PNG", "JPEG"])
+def test_an_uploaded_image_is_rendered_to_png_for_the_reading_model(fmt: str) -> None:
+    preflight = PdfPreflight()
+
+    png = preflight.render_image_for_reading(_picture(fmt), budget=preflight.new_import_budget())
+
+    assert png.startswith(b"\x89PNG\r\n\x1a\n") and Image.open(io.BytesIO(png)).size == (800, 1_000)
+
+
+def test_an_oversized_image_is_scaled_down_and_transparency_is_flattened_on_white() -> None:
+    preflight = PdfPreflight()
+
+    big = Image.open(io.BytesIO(preflight.render_image_for_reading(_picture("PNG", (4_000, 3_000)), budget=preflight.new_import_budget())))
+    assert big.size[0] * big.size[1] <= READING_MAX_IMAGE_PIXELS and abs(big.size[0] / big.size[1] - 4 / 3) < 0.01
+
+    clear = _picture("PNG", (100, 100), "RGBA", (0, 0, 0, 0))
+    flat = Image.open(io.BytesIO(preflight.render_image_for_reading(clear, budget=preflight.new_import_budget())))
+    assert flat.mode == "RGB" and flat.getpixel((50, 50)) == (255, 255, 255)
+
+
+def test_the_exif_rotation_of_a_photo_is_applied() -> None:
+    preflight = PdfPreflight()
+    photo = Image.new("RGB", (300, 100), "white")
+    exif = photo.getexif()
+    exif[0x0112] = 6  # orientation: the picture is stored sideways
+    out = io.BytesIO()
+    photo.save(out, "JPEG", exif=exif.tobytes())
+
+    upright = Image.open(io.BytesIO(preflight.render_image_for_reading(out.getvalue(), budget=preflight.new_import_budget())))
+
+    assert upright.size == (100, 300)
+
+
+def test_an_image_beyond_the_pixel_bound_or_that_cannot_be_decoded_is_refused_with_a_stable_code() -> None:
+    small = PdfPreflight(max_pixels_per_page=500_000)
+    with pytest.raises(DocumentIntegrityError) as caught:
+        small.render_image_for_reading(_picture("PNG", (800, 1_000)), budget=small.new_import_budget())
+    assert caught.value.code == "OCR_RENDERED_PIXELS_LIMIT_EXCEEDED"
+    for broken in (b"not an image", b"\x89PNG\r\n\x1a\n" + b"truncated"):
+        with pytest.raises(DocumentIntegrityError) as caught:
+            small.render_image_for_reading(broken, budget=small.new_import_budget())
+        assert caught.value.code == "PAGE_RENDER_UNAVAILABLE"

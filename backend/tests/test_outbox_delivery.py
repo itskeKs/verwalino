@@ -165,6 +165,8 @@ async def test_outbox_migration_backfills_exact_events_and_retains_delivery_hist
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
+                # The ledger rows of the inbox went with the logical documents above; newer migrations go first.
+                importlib.import_module('migrations.versions.0198_intake_model_extraction').downgrade()
                 importlib.import_module('migrations.versions.0160_shared_retention_deadlines').downgrade()
                 importlib.import_module('migrations.versions.0159_person_retention_bindings').downgrade()
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))

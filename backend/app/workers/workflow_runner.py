@@ -64,8 +64,9 @@ class WorkflowRunner:
             return DispatchResult('IDLE')
 
 
-def build_adapters(stages=INBOX_STAGES,*,session_factory=None,declaration_worker=None):
-    """Construction performs no database or provider request."""
+def build_adapters(stages=INBOX_STAGES,*,session_factory=None,declaration_worker=None,intake_providers=None):
+    """Construction performs no database or provider request. ``intake_providers`` builds the transports of the models
+    that read an unstructured inbox document (default: those of the organization's provider)."""
     from app.core.db import get_worker_session_factory
     from app.workers.workflow import process_once as inspect_once
     from app.workers.invoice_extraction import process_once as invoice_once
@@ -77,7 +78,8 @@ def build_adapters(stages=INBOX_STAGES,*,session_factory=None,declaration_worker
     async def inspection(org):return 'PROCESSED' if await inspect_once(factory,org) else 'IDLE'
     async def invoice(org):return 'PROCESSED' if await invoice_once(factory,org) else 'IDLE'
     async def outbox(org):return 'PROCESSED' if await outbox_once(factory,org) else 'IDLE'
-    async def intake_extraction(org):return 'PROCESSED' if await intake_extract_once(factory,org) else 'IDLE'
+    async def intake_extraction(org):
+        return 'PROCESSED' if await intake_extract_once(factory,org,**({'providers':intake_providers} if intake_providers else {})) else 'IDLE'
     async def declaration(org):
         nonlocal declaration_worker
         if declaration_worker is None:
@@ -104,8 +106,8 @@ async def check_readiness(stages):
         from app.workers.invoice_extraction import check_readiness as check_extractor
         await check_extractor()
     if 'intake_extraction' in stages:
-        from app.workers.intake_extraction import check_ocr_readiness
-        await asyncio.to_thread(check_ocr_readiness)
+        from app.workers.intake_extraction import check_readiness as check_intake_extractor
+        await asyncio.to_thread(check_intake_extractor)
     claims={'intake_inspection':'claim_intake_inspection(uuid)',
             'outbox':'claim_outbox_delivery(uuid)','intake_extraction':'claim_intake_extraction(uuid)'}
     async with get_worker_unscoped_session() as session:
@@ -131,7 +133,7 @@ async def main(argv=None):
         parser.error('one of --organization or --all-organizations is required')
     try:await check_readiness(stages)
     except Exception:
-        logger.error('workflow result=readiness_failed (check worker DB role, storage, ClamAV signatures and German OCR)')
+        logger.error('workflow result=readiness_failed (check worker DB role, storage, ClamAV signatures and the PDF renderer)')
         return 1
     if args.healthcheck:return 0
     configure_worker_error_tracking()

@@ -12,12 +12,14 @@ from tests.test_invoice_source_custody import store as store,fixture
 from tests.test_scoped_account_statements import client
 from tests.test_invoice_extraction_worker import pdf_bytes
 from tests.test_intake_batches import receive
+from tests.intake_model_support import Harness,enable_models
 
 pytestmark=pytest.mark.asyncio
 
 
 async def test_inbox_counts_follow_preparation_extraction_retry_and_review(migrator_session,scope_seed,store):
     ids=await fixture(migrator_session,scope_seed)
+    enable_models(ids['org'])
     async with client(ids) as api:
         batch,_=await receive(api,pdf_bytes())
         url='/api/intake-batches/'+batch['id']
@@ -31,16 +33,16 @@ async def test_inbox_counts_follow_preparation_extraction_retry_and_review(migra
         assert extracting['counts']['processing']==1 and extracting['items'][0]['stage']=='extraction'
         assert extracting['items'][0]['logical_counts']=={'total':1,'processing':1,'review':0,'failed':0}
         assert prepared['revision']!=extracting['revision']
-        def unavailable(data,mime,start,end,count):return outcome(data,mime,start,end,count,'unavailable','ocr_unavailable')
+        def unavailable(data,mime,start,end,count):return outcome(data,mime,start,end,count,'unavailable','ai_import_disabled')
         assert await extract_once(get_worker_session_factory(),ids['org'],processor=unavailable)
         failed=(await api.get(url)).json()
-        assert failed['counts']['failed']==1 and failed['items'][0]['error_code']=='ocr_unavailable'
+        assert failed['counts']['failed']==1 and failed['items'][0]['error_code']=='ai_import_disabled'
         ref=failed['items'][0]['document_ref_id']
         child=(await api.get('/api/logical-documents',params={'document_ref_id':ref})).json()['items'][0]
         status=(await api.get('/api/logical-documents/'+child['id']+'/processing')).json()
-        assert (await api.post('/api/logical-documents/'+child['id']+'/retry-extraction',json={'expected_fence':status['fence'],'reason':'Local OCR restored'},headers={'Idempotency-Key':str(uuid.uuid4())})).status_code==202
+        assert (await api.post('/api/logical-documents/'+child['id']+'/retry-extraction',json={'expected_fence':status['fence'],'reason':'Organization models switched on'},headers={'Idempotency-Key':str(uuid.uuid4())})).status_code==202
         assert (await api.get(url)).json()['counts']['processing']==1
-        assert await extract_once(get_worker_session_factory(),ids['org'],processor=extract_logical)
+        assert await extract_once(get_worker_session_factory(),ids['org'],processor=extract_logical,providers=Harness())
         complete=(await api.get(url)).json()
         assert complete['counts']['review']==1 and complete['counts']['confirmed']==0
         assert complete['items'][0]['stage']=='review'

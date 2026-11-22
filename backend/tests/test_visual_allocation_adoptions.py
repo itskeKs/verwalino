@@ -19,13 +19,13 @@ async def visual_review(api, ids, monkeypatch):
     from app.core.db import get_worker_session_factory
     from app.core.intake_extraction import extract_logical
     from app.workers.outbox import process_once as deliver
-    from app.workers.intake_extraction import process_once as extract
+    from tests.intake_model_support import extract_all
     import tests.test_assignment_proposals as assignments
     ref, original, logical, _, artifact_body = await basis(api,ids)
     await mutate(text('UPDATE scope_grant SET revoked_at=clock_timestamp(),revoked_by=:actor WHERE organization_id=:org AND scope_id=:scope AND user_id=:clerk AND revoked_at IS NULL'),ids)
     await mutate(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES(:org,:scope,:clerk,ARRAY['read','prepare','confirm','approve','export'],:actor,'Explicit visual financial review')"),ids)
     while await deliver(get_worker_session_factory(),ids['org']): pass
-    while await extract(get_worker_session_factory(),ids['org'],processor=extract_logical): pass
+    await extract_all(ids['org'],processor=extract_logical)
     partition = (await api.get('/api/document-refs/'+ref['id']+'/partition')).json()['current']
     extraction = (await api.get('/api/document-refs/'+ref['id']+'/extractions',params={'logical_document_id':logical['id']})).json()['items'][0]
     async def selected(*args, **kwargs): return ref,logical,partition,extraction
