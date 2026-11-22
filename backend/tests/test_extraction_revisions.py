@@ -2,10 +2,9 @@
 import uuid
 import pytest
 from app.core.db import get_worker_session_factory
-from app.core.invoice_ocr import extract_invoice
 from app.workers.invoice_extraction import process_once
 from tests.migration_rehearsal import rewind_bank_allocation_functions
-from tests.test_invoice_extraction_worker import worker_tenant as worker_tenant,pdf_bytes
+from tests.test_invoice_extraction_worker import local_outcome,worker_tenant as worker_tenant,pdf_bytes
 from tests.test_invoice_source_custody import store as store
 from tests.test_financial_scope_boundary import scope_seed as scope_seed
 
@@ -20,7 +19,7 @@ async def test_invoice_retries_append_private_revisions_and_unlocated_field_evid
     ref=(await api.get('/api/document-refs/page',params={'source_id':document['id']})).json()['items'][0]
     for value in ['119.00','238.00']:
         def processor(data,mime):
-            result=extract_invoice(data,mime);result['payload']['gross_amount']=value
+            result=local_outcome(data,mime);result['payload']['gross_amount']=value
             return result
         assert await process_once(get_worker_session_factory(),ids['org_a_id'],processor=processor)
         revisions=await api.get('/api/document-refs/'+ref['id']+'/extractions')
@@ -52,7 +51,7 @@ async def test_malformed_processor_output_is_recorded_as_failure_without_proposa
     api,ids=worker_tenant
     document=(await api.post('/api/invoice-documents/upload',files={'file':('invoice.pdf',pdf_bytes(),'application/pdf')})).json()
     def processor(data,mime):
-        result=extract_invoice(data,mime)
+        result=local_outcome(data,mime)
         if malformation=='status':result['status']=[]
         if malformation=='amount':result['payload']['gross_amount']='NaN'
         if malformation=='pages':result['payload']['source_pages']=[0,201]
@@ -85,7 +84,7 @@ async def test_finish_rollback_loses_no_history_and_retry_commits_one_effect(wor
     async with factory() as db,db.begin():
         await set_tenant_context(db,org)
         claim=await InvoiceProcessingService(db,org).claim()
-    result=extract_invoice(pdf_bytes(),'application/pdf')
+    result=local_outcome(pdf_bytes(),'application/pdf')
     with pytest.raises(RuntimeError,match='synthetic rollback'):
         async with factory() as db,db.begin():
             await set_tenant_context(db,org)
@@ -118,7 +117,7 @@ async def test_reprocessing_preserves_manual_cost_values_and_revoked_source_hide
     category=await read_value("SELECT id FROM cost_category WHERE code='GRUNDSTEUER' AND plan_version=1",ids)
     async with client(ids) as api:
         document=(await api.post('/api/invoice-documents/upload',files={'file':('invoice.pdf',pdf_bytes(),'application/pdf')})).json()
-        assert await process_once(get_worker_session_factory(),ids['org'],processor=extract_invoice)
+        assert await process_once(get_worker_session_factory(),ids['org'],processor=local_outcome)
         ref=(await api.get('/api/document-refs/page',params={'source_id':document['id']})).json()['items'][0]
         revision=(await api.get('/api/document-refs/'+ref['id']+'/extractions')).json()['items'][0]
         body={'accounting_scope_id':str(ids['scope']),'source_document_id':document['id'],'property_id':str(ids['property']),
@@ -129,7 +128,7 @@ async def test_reprocessing_preserves_manual_cost_values_and_revoked_source_hide
         edited=await api.patch('/api/cost-entries/'+cost.json()['id'],json={'gross_amount':'123.45'})
         assert edited.status_code==200,edited.text
         assert (await api.post('/api/invoice-documents/'+document['id']+'/retry')).status_code==200
-        assert await process_once(get_worker_session_factory(),ids['org'],processor=extract_invoice)
+        assert await process_once(get_worker_session_factory(),ids['org'],processor=local_outcome)
         assert (await api.get('/api/cost-entries/'+cost.json()['id'])).json()['gross_amount']=='123.45'
         assert len((await api.get('/api/document-refs/'+ref['id']+'/extractions')).json()['items'])==2
         await mutate(text('UPDATE scope_grant SET revoked_at=clock_timestamp(),revoked_by=:actor WHERE organization_id=:org AND scope_id=:scope AND revoked_at IS NULL'),ids)
@@ -146,7 +145,7 @@ async def test_extraction_migration_retains_revisions_and_restores_empty_schema(
     from tests.conftest import MIGRATOR_SYNC_URL
     api,ids=worker_tenant
     document=(await api.post('/api/invoice-documents/upload',files={'file':('invoice.pdf',pdf_bytes(),'application/pdf')})).json()
-    assert await process_once(get_worker_session_factory(),ids['org_a_id'],processor=extract_invoice)
+    assert await process_once(get_worker_session_factory(),ids['org_a_id'],processor=local_outcome)
     ref=(await api.get('/api/document-refs/page',params={'source_id':document['id']})).json()['items'][0]
     before=(await api.get('/api/document-refs/'+ref['id']+'/extractions')).json()
     migration=importlib.import_module('migrations.versions.0096_extraction_evidence');engine=create_engine(MIGRATOR_SYNC_URL)

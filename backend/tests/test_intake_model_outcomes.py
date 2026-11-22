@@ -38,7 +38,6 @@ from tests.intake_model_support import (
     enable_models,
     extract_all,
     ledger,
-    tesseract_unusable as tesseract_unusable,
 )
 from tests.test_financial_scope_boundary import scope_seed as scope_seed, worker_tenant as worker_tenant
 from tests.test_intake_batches import work_sql
@@ -47,7 +46,7 @@ from tests.test_invoice_source_custody import fixture, foreign_fixture, store as
 from tests.test_scope_payment_reconciliation import read_value
 from tests.test_scoped_account_statements import client, mutate
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("tesseract_unusable")]
+pytestmark = pytest.mark.asyncio
 
 OUTAGE = ProviderFailure(PROVIDER_CONNECTION_ERROR, True, "synthetic outage", usage=ProviderUsage(40, 0, Decimal("0.00001"), 1))
 UNREPORTED = ProviderFailure(PROVIDER_CONNECTION_ERROR, True, "synthetic outage without a usage report", usage_complete=False)

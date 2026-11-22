@@ -1,14 +1,11 @@
 """The invoice worker routes an unstructured PDF through the organization's two models (issue #500, ADR 0017).
 
 Everything here runs the real queue-fenced worker against the test database with the in-process fake providers: no
-provider call is made, and Tesseract is made unusable, because this path has none.
+provider call is made.
 """
 import asyncio
 import io
 import json
-import subprocess
-import sys
-import types
 import uuid
 from decimal import Decimal
 
@@ -80,28 +77,6 @@ def store(tmp_path):
     set_store(LocalFsDocumentStore(str(tmp_path)))
     yield
     set_store(None)
-
-
-@pytest.fixture(autouse=True)
-def tesseract_unusable(monkeypatch):
-    """Any pytesseract use or tesseract process raises: the invoice path must not need either."""
-    blocked = types.ModuleType("pytesseract")
-
-    def refuse(name):
-        raise AssertionError(f"pytesseract.{name} was used")
-
-    blocked.__getattr__ = refuse
-    monkeypatch.setitem(sys.modules, "pytesseract", blocked)
-    real_popen = subprocess.Popen
-
-    class GuardedPopen(real_popen):
-        def __init__(self, args, *rest, **options):
-            argv = args if isinstance(args, (list, tuple)) else [args]
-            if any("tesseract" in str(part).lower() for part in argv):
-                raise AssertionError("a tesseract process was started")
-            super().__init__(args, *rest, **options)
-
-    monkeypatch.setattr(subprocess, "Popen", GuardedPopen)
 
 
 def ai(org, **updates):

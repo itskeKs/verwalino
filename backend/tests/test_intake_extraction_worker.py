@@ -16,10 +16,10 @@ from tests.test_scope_payment_reconciliation import read_value
 from tests.test_invoice_extraction_worker import pdf_bytes
 from tests.test_intake_batches import receive,work_sql
 from tests.test_error_tracking import offline_tracker as offline_tracker
-from tests.intake_model_support import Harness,enable_models,inbox_adapters,tesseract_unusable as tesseract_unusable
+from tests.intake_model_support import Harness,enable_models,inbox_adapters
 from tests.test_intake_extraction import model_result
 
-pytestmark=[pytest.mark.asyncio,pytest.mark.usefixtures('tesseract_unusable')]
+pytestmark=pytest.mark.asyncio
 
 
 async def source(api,ids,*,scoped=False):

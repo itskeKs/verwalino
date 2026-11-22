@@ -6,12 +6,8 @@ and the chain-wide downgrade tests meet on a database that earlier tests have us
 ``conftest.py`` to remove them after the test.
 """
 import io
-import subprocess
-import sys
-import types
 import uuid
 
-import pytest
 from PIL import Image
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
@@ -43,28 +39,6 @@ class Harness:
         dirty = True
         self.built.append(effective)
         return InvoiceProviders(reader=self.reader if effective.document_model else None, extractor=self.extractor)
-
-
-@pytest.fixture
-def tesseract_unusable(monkeypatch):
-    """Any pytesseract use or tesseract process raises: the inbox path must not need either."""
-    blocked = types.ModuleType("pytesseract")
-
-    def refuse(name):
-        raise AssertionError(f"pytesseract.{name} was used")
-
-    blocked.__getattr__ = refuse
-    monkeypatch.setitem(sys.modules, "pytesseract", blocked)
-    real_popen = subprocess.Popen
-
-    class GuardedPopen(real_popen):
-        def __init__(self, args, *rest, **options):
-            argv = args if isinstance(args, (list, tuple)) else [args]
-            if any("tesseract" in str(part).lower() for part in argv):
-                raise AssertionError("a tesseract process was started")
-            super().__init__(args, *rest, **options)
-
-    monkeypatch.setattr(subprocess, "Popen", GuardedPopen)
 
 
 def enable_models(org, **updates):

@@ -1,7 +1,7 @@
 """M5: E-Rechnung (XRechnung / ZUGFeRD) parsing -- second DocumentExtractor.
 
 Empfangspflicht seit 01.01.2025 (B2B). This module parses structured EN-16931
-invoices into the SAME ExtractionResult as the OCR path, so the existing
+invoices into the SAME ExtractionResult as the model reading path, so the existing
 belegfluss (upload -> draft_extracted -> confirm) and the review UI work
 unchanged. Structured data => high confidence; NEVER auto-confirmed (SDD §9).
 
@@ -15,7 +15,7 @@ Two carriers, one EN-16931 semantic model:
 Dependencies: stdlib xml.etree.ElementTree (namespace-wildcard `{*}` paths,
 robust to prefix variation) + pdfminer.six (already a dependency) to walk the
 PDF EmbeddedFiles name tree. No new dependencies; ZUGFeRD extraction degrades
-gracefully (returns None -> caller falls back to the OCR/text extractor).
+gracefully (returns None -> the caller reads the document with the organization's models).
 """
 
 from __future__ import annotations
@@ -276,7 +276,7 @@ class EInvoiceExtractor:
 
     Returns an ExtractionResult with is_einvoice=True on success. For a PDF
     without an embedded e-invoice XML it returns a low-confidence,
-    is_einvoice=False result so the router can fall back to OCR.
+    is_einvoice=False result so the router can use its fallback extractor.
     """
 
     def extract(self, file_bytes: bytes, mime_type: str) -> ExtractionResult:
@@ -309,7 +309,7 @@ class RoutingExtractor:
     """Routes each upload to the right extractor (M5).
 
     XML or PDF-with-embedded-XML -> EInvoiceExtractor (structured, high confidence).
-    Everything else -> the fallback (OCR/text) extractor. One active extractor
+    Everything else -> the fallback extractor. One active extractor
     keeps the single-extractor architecture (extraction.get_extractor) intact.
     """
 

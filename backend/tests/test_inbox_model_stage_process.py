@@ -21,7 +21,7 @@ from app.declarations.fake_provider import FakeDocumentReadingProvider
 from app.workers import declaration_import, intake_extraction
 from app.workers.declaration_import import DeclarationImportWorker, WorkerResult
 from app.workers.workflow_runner import INBOX_STAGES, STAGES, WorkflowRunner, build_adapters
-from tests.intake_model_support import Harness, document_pdf, enable_models, ledger, tesseract_unusable as tesseract_unusable
+from tests.intake_model_support import Harness, document_pdf, enable_models, ledger
 from tests.test_financial_scope_boundary import scope_seed as scope_seed, worker_tenant as worker_tenant
 from tests.test_intake_model_extraction import FIRST, documents, job_state, processing, receive_original, revision
 from tests.test_invoice_source_custody import fixture, store as store
@@ -77,7 +77,6 @@ def loop_worker(org, harness=None, *, rounds=1):
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("tesseract_unusable")
 async def test_the_inbox_worker_leaves_an_unstructured_document_alone_and_the_declaration_worker_reads_it(migrator_session, scope_seed, store, monkeypatch):
     ids = await fixture(migrator_session, scope_seed)
     enable_models(ids["org"])
@@ -117,7 +116,6 @@ async def test_the_inbox_worker_leaves_an_unstructured_document_alone_and_the_de
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("tesseract_unusable")
 async def test_the_declaration_worker_parses_a_structured_document_locally_and_sends_nothing(migrator_session, scope_seed, store):
     ids = await fixture(migrator_session, scope_seed)
     enable_models(ids["org"])
@@ -144,7 +142,6 @@ class HangingReader(FakeDocumentReadingProvider):
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("tesseract_unusable")
 async def test_a_shutdown_during_an_inbox_request_ends_the_loop_settles_the_request_and_leaves_the_claim_to_its_lease(migrator_session, scope_seed, store):
     ids = await fixture(migrator_session, scope_seed)
     enable_models(ids["org"])

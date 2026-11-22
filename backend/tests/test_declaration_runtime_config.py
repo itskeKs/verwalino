@@ -96,7 +96,8 @@ _IMAGE_SMOKE_CLEANUP_TIMEOUT_SECONDS = 10
 def test_readme_declaration_setup_includes_all_required_extras() -> None:
     readme = README_PATH.read_text(encoding="utf-8")
 
-    assert "uv sync --extra dev --extra ocr --extra ops" in readme
+    assert "uv sync --extra dev --extra ops" in readme
+    assert "--extra ocr" not in readme
     assert "docs/operations/declaration-imports.md" in readme
 
 
@@ -511,9 +512,9 @@ def _run_built_image_smoke(
                 "-c",
                 "set -eu; test \"$(id -u)\" = 10001; "
                 "command -v qpdf >/dev/null; command -v pdftoppm >/dev/null; "
-                "command -v tesseract >/dev/null; "
-                "tesseract --list-langs | grep -Fx deu >/dev/null; "
-                "python -c 'import pikepdf, pdf2image, pytesseract'",
+                "if command -v tesseract >/dev/null; then exit 1; fi; "
+                "python -c 'import pikepdf, pdf2image'; "
+                "if python -c 'import pytesseract' 2>/dev/null; then exit 1; fi",
             ],
             check=False,
             capture_output=True,
@@ -539,7 +540,7 @@ def _run_built_image_smoke(
     not os.environ.get("HV_DECLARATION_RUNTIME_IMAGE"),
     reason="set HV_DECLARATION_RUNTIME_IMAGE after building the local runtime image",
 )
-def test_built_runtime_image_has_ocr_capabilities_and_nonroot_user() -> None:
+def test_built_runtime_image_has_pdf_tools_no_tesseract_and_nonroot_user() -> None:
     image = os.environ["HV_DECLARATION_RUNTIME_IMAGE"]
     result = _run_built_image_smoke(image)
     assert result.returncode == 0, result.stderr

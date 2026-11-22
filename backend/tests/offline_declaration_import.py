@@ -13,7 +13,7 @@ called), so the saved key only has to exist, as for the real worker.
 By hand, against the database and the document directory of the running acceptance instance (the models come
 from what the administrator saved under Einstellungen; the instance has the queued import to process):
 
-    cd <repository>/backend && . ../scripts/test-env.sh && uv run --locked --extra dev --extra ops --extra ocr \\
+    cd <repository>/backend && . ../scripts/test-env.sh && uv run --locked --extra dev --extra ops \\
       python -m tests.offline_declaration_import --organization "<name or id>" \\
       --documents "$(sed -n 's/^scratch=//p' /tmp/hausverwaltung-acceptance.lock/instance)/documents"
 """

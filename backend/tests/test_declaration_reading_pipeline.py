@@ -1,15 +1,12 @@
 """The declaration import reads pages without a text layer with the reading model (issue #499, ADR 0017).
 
 Everything here runs the real queue-fenced pipeline against the test database with the in-process fake readers:
-no provider call is made, and Tesseract is made unusable for the cases that prove it is no longer in the path.
+no provider call is made.
 """
 from __future__ import annotations
 
 import hashlib
 import io
-import subprocess
-import sys
-import types
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -86,28 +83,6 @@ def leave_no_cost_behind():
         cursor.execute("UPDATE declaration_extraction_run SET estimated_cost_usd=0 WHERE estimated_cost_usd<>0")
 
 
-@pytest.fixture
-def tesseract_unusable(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Any pytesseract use or tesseract process raises: the declaration path must not need either."""
-    blocked = types.ModuleType("pytesseract")
-
-    def refuse(name: str):
-        raise AssertionError(f"pytesseract.{name} was used")
-
-    blocked.__getattr__ = refuse  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "pytesseract", blocked)
-    real_popen = subprocess.Popen
-
-    class GuardedPopen(real_popen):
-        def __init__(self, args, *rest, **options):
-            argv = args if isinstance(args, (list, tuple)) else [args]
-            if any("tesseract" in str(part).lower() for part in argv):
-                raise AssertionError("a tesseract process was started")
-            super().__init__(args, *rest, **options)
-
-    monkeypatch.setattr(subprocess, "Popen", GuardedPopen)
-
-
 def _pipeline(extraction, reader, store, *, configured=settings, preflight=None, reading_model=READING_MODEL):
     return DeclarationPipeline(
         extraction,
@@ -146,11 +121,11 @@ async def _rearm(lease: WorkerLease) -> WorkerLease:
     return WorkerLease(lease.organization_id, lease.import_id, lease.lease_generation + 1, token, expires, lease.queue_request_id)
 
 
-# ---- the journey: a scanned declaration reaches review without Tesseract -------------------------------------------
+# ---- the journey: a scanned declaration reaches review through the reading model -------------------------------------------
 
 
-async def test_a_scanned_declaration_reaches_review_through_the_reading_model_without_tesseract(
-    seed_data, migrator_session, tesseract_unusable
+async def test_a_scanned_declaration_reaches_review_through_the_reading_model(
+    seed_data, migrator_session
 ) -> None:
     pdf = (ROOT / "docs/acceptance/data/teilungserklaerung-lindenallee-12.pdf").read_bytes()
     lease, key, store = await _seed_pipeline_import(seed_data, pdf)
@@ -177,7 +152,7 @@ async def test_a_scanned_declaration_reaches_review_through_the_reading_model_wi
 
 
 async def test_the_page_transcript_is_the_extraction_input_with_its_table_unreadable_marker_and_page(
-    seed_data, tesseract_unusable
+    seed_data
 ) -> None:
     lease, key, store = await _seed_pipeline_import(seed_data, _scan(2))
     extraction = ModelRecording(_RecordingProvider(key), EXTRACTION_MODEL)
@@ -212,7 +187,7 @@ async def test_a_page_with_a_text_layer_keeps_the_deterministic_text_path_and_is
 
 @pytest.mark.parametrize("code", ["PROVIDER_IMAGE_INPUT_UNSUPPORTED", "PROVIDER_REFUSAL", "PROVIDER_SCHEMA_FAILURE"])
 async def test_a_failed_reading_ends_the_job_keeps_the_original_and_the_consumed_usage(
-    seed_data, migrator_session, tesseract_unusable, code
+    seed_data, migrator_session, code
 ) -> None:
     lease, key, store = await _seed_pipeline_import(seed_data, _scan())
     extraction = ModelRecording(_RecordingProvider(key), EXTRACTION_MODEL)
@@ -238,7 +213,7 @@ async def test_a_failed_reading_ends_the_job_keeps_the_original_and_the_consumed
         DeclarationPageReading.import_id == lease.import_id))) == 0
 
 
-async def test_a_missing_reading_model_ends_the_job_before_any_call(seed_data, tesseract_unusable) -> None:
+async def test_a_missing_reading_model_ends_the_job_before_any_call(seed_data) -> None:
     lease, key, store = await _seed_pipeline_import(seed_data, _scan())
     extraction = ModelRecording(_RecordingProvider(key), EXTRACTION_MODEL)
 
@@ -666,7 +641,7 @@ async def _stage_rows(client, lease) -> tuple[dict, list[tuple]]:
 
 
 async def test_a_finished_scan_reports_reading_and_extraction_apart_and_they_add_up_to_the_run(
-    seed_data, client_a_admin, tesseract_unusable
+    seed_data, client_a_admin
 ) -> None:
     pdf = (ROOT / "docs/acceptance/data/teilungserklaerung-lindenallee-12.pdf").read_bytes()
     lease, key, store = await _seed_pipeline_import(seed_data, pdf)
@@ -682,7 +657,7 @@ async def test_a_finished_scan_reports_reading_and_extraction_apart_and_they_add
 
 
 async def test_a_job_that_failed_in_reading_still_shows_the_usage_the_failed_call_consumed(
-    seed_data, client_a_admin, tesseract_unusable
+    seed_data, client_a_admin
 ) -> None:
     lease, key, store = await _seed_pipeline_import(seed_data, _scan())
     usage = ProviderUsage(40, 3, Decimal("0.000002"), 1)
@@ -695,7 +670,7 @@ async def test_a_job_that_failed_in_reading_still_shows_the_usage_the_failed_cal
 
 
 async def test_a_job_that_failed_in_extraction_shows_the_finished_reading_and_the_failed_extraction_call(
-    seed_data, client_a_admin, tesseract_unusable
+    seed_data, client_a_admin
 ) -> None:
     lease, key, store = await _seed_pipeline_import(seed_data, _scan())
     reader = FakeDocumentReadingProvider(transcripts={(key, 1): _text()})
@@ -716,7 +691,7 @@ class _CrashingExtraction(_RecordingProvider):
 
 
 async def test_the_reservation_of_a_cancelled_extraction_call_is_not_shown_under_reading(
-    seed_data, client_a_admin, tesseract_unusable
+    seed_data, client_a_admin
 ) -> None:
     lease, key, store = await _seed_pipeline_import(seed_data, _scan())
     reader = FakeDocumentReadingProvider(transcripts={(key, 1): _text()})
@@ -744,7 +719,7 @@ async def test_a_text_layer_document_has_no_reading_block(seed_data, client_a_ad
 
 
 async def test_the_stage_figures_are_part_of_the_organization_isolated_import_response(
-    seed_data, client_a_admin, client_b_admin, tesseract_unusable
+    seed_data, client_a_admin, client_b_admin
 ) -> None:
     lease, key, store = await _seed_pipeline_import(seed_data, _scan())
     await DeclarationImportWorker(_pipeline(ModelRecording(_RecordingProvider(key), EXTRACTION_MODEL),

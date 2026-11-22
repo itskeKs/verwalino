@@ -168,19 +168,6 @@ def test_real_image_original_is_inspected_in_the_child_and_handed_over():
     assert result['pages']==[{'number':1,'text':'','width':pytest.approx(1654*72/180),'height':pytest.approx(2339*72/180)}]
 
 
-def test_the_stage_never_runs_a_text_recognition_tool(monkeypatch):
-    import sys
-    import types
-    blocked=types.ModuleType('pytesseract')
-    def refuse(name):raise AssertionError('pytesseract.'+name+' was used')
-    blocked.__getattr__=refuse
-    monkeypatch.setitem(sys.modules,'pytesseract',blocked)
-    for data,mime in ((document(['']),'application/pdf'),(picture('PNG'),'image/png')):
-        assert extract_logical(data,mime,1,1,1)['status']==UNSTRUCTURED
-    source=open(extract_logical.__code__.co_filename,encoding='utf-8').read().lower()
-    assert 'tesseract' not in source
-
-
 def test_child_environment_does_not_inherit_credentials(monkeypatch):
     import subprocess
     original=subprocess.Popen;captured=[]

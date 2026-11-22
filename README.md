@@ -187,7 +187,7 @@ Administrators can download a redacted diagnostics bundle via **Problem melden**
 Install both dependency sets:
 
 ```bash
-cd backend && uv sync --extra dev --extra ocr --extra ops
+cd backend && uv sync --extra dev --extra ops
 cd ../frontend && npm ci
 ```
 
@@ -206,7 +206,7 @@ make test
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md#development-environment) for prerequisites,
-ports, OCR tools, test environment, and contribution checks.
+ports, PDF tools, test environment, and contribution checks.
 
 Request IDs correlate error displays, response headers and logs; optional scrubbed
 error tracking is [off by default](DEPLOY.md#request-ids-and-optional-error-tracking).

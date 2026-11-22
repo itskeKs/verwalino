@@ -202,7 +202,7 @@ class AgentRuleTests(unittest.TestCase):
             "backend/app/services/settlement_service.py": "domain",
             "frontend/src/pages/DashboardPage.tsx": "domain",
             "backend/app/declarations/pipeline.py": "ai-pipeline",
-            "backend/app/core/invoice_ocr.py": "ai-pipeline",
+            "backend/app/core/invoice_pdf.py": "ai-pipeline",
         }
         for path, topic in cases.items():
             with self.subTest(path=path):

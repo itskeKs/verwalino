@@ -2117,7 +2117,7 @@ scanner/storage or worker-role/queue access is unavailable. Healthchecks use
 engine alongside a job; startup additionally scans a synthetic XML probe through
 the bounded inspector. Neither claims work. See the [flow and review commands](docs/operations/inbox-review-chain.md).
 
-The image includes ClamAV, Poppler and, until [#502](https://github.com/itskeKs/verwalino/issues/502) removes it, German Tesseract (no code of the inbox calls it). **Before enabling the
+The image includes ClamAV and Poppler. **Before enabling the
 worker**, provision a host directory of official, current ClamAV signatures
 (using the host's `freshclam` installation), readable by uid 10001. Maintain
 updates on the host; the worker has no network updater. Set
@@ -2198,8 +2198,8 @@ page („Seiten zu Belegen zusammenstellen“, the existing source partition); t
 with only its own pages, and the unsplit whole is never sent after the split. A single page is processed at once; a structured
 e-invoice needs no such decision. The wait uses none of the three attempts of the document (an attempt counts only when it made a
 provider request). Migration 0198 (the one revision of
-this change) holds the new status and its functions; downgrading it queues a waiting document again. The image keeps
-Tesseract until [#502](https://github.com/itskeKs/verwalino/issues/502) removes it; no code of the inbox path calls it, and no
+this change) holds the new status and its functions; downgrading it queues a waiting document again. The image
+no longer contains Tesseract ([#502](https://github.com/itskeKs/verwalino/issues/502), [below](#tesseract-is-removed-issue-502)), and no
 new configuration key exists.
 
 ## Invoice worker (T10)
@@ -2771,8 +2771,8 @@ and the same memory and CPU limits: no new service, port or volume. The worker r
 a time with Poppler (`pdftoppm`) and checks PDFs with qpdf; **it no longer needs Tesseract or the
 German language pack**, and its healthcheck (`python -m app.workers.declaration_import
 --healthcheck`) no longer asks for them (it checks qpdf, `pdftoppm`, the database role and the
-document storage). The invoice worker no longer needs it either (#500). The inbox worker reads with a model too since 0198 (#501); the image keeps
-Tesseract only until #502 removes it, and no code calls it. The reading model must accept image input: otherwise
+document storage). The invoice worker no longer needs it either (#500). The inbox worker reads with a model too since 0198 (#501), and the image no longer contains
+Tesseract ([#502](#tesseract-is-removed-issue-502)). The reading model must accept image input: otherwise
 the job ends with `PROVIDER_IMAGE_INPUT_UNSUPPORTED` and the import screen says so in German;
 the original is kept and nothing is applied. Reading and extraction are both metered and count
 together against the per-import limits (`HV_DECLARATION_MAX_*`; they default to 2,500,000 input tokens,
@@ -2791,3 +2791,21 @@ A protected env file that still pins `HV_DECLARATION_PROMPT_VERSION=declaration-
 `HV_DECLARATION_HARNESS_VERSION=3` keeps recording the old labels on new runs: remove the pins
 when upgrading.
 
+### Tesseract is removed (issue #502)
+
+**Nothing to install, nothing to configure, no migration.** The runtime image no longer contains Tesseract, its German
+language data or the Python binding (`pytesseract`), and no worker, import path or installer asks for them: the declaration
+import (#499), the invoice worker (#500) and the inbox (#501) read a document through the organization's two models, so no path
+needs a local text recognition any more. A host that ran Tesseract only for this application can drop it. Upgrading
+changes no `.env` key (the `HV_DECLARATION_OCR_*` keys keep their names and bound the page rendering) and no data.
+
+- **Scans, PNG and JPEG** are read only by the organization's models, and only after its AI import switch, key, both models and the
+  provider confirmation that names the kind of document (see the sections above). Without that opt-in the original is kept and the
+  document or attempt shows the structured reason; there is no local fallback and nothing leaves the host.
+- **Structured e-invoices** (XRechnung, ZUGFeRD/Factur-X) are still parsed locally without a provider call.
+- **PDF tools stay.** The image keeps Poppler (`pdftoppm`) and qpdf; pages are rendered and PDFs checked with them in bounded child
+  processes, and the worker health checks require `pdftoppm` (and qpdf for the declaration worker), not Tesseract. The backend
+  dependencies `pdf2image` and `pikepdf` that the rendering and the structural checks import are ordinary dependencies now: the
+  `ocr` extra no longer exists, and a developer installs `uv sync --extra dev --extra ops`.
+- **History is not rewritten.** A result stored by an earlier release may say that Tesseract read the text (processor versions
+  `invoice-local-v1` and `intake-local-v1`, reasons such as `ocr_unavailable`); it keeps its record and its German explanation.

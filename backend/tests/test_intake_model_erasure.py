@@ -13,7 +13,7 @@ from app.core.intake_extraction import extract_logical
 from app.declarations.fake_provider import FakeInvoiceExtractionProvider, synthetic_invoice_output
 from app.declarations.schemas import ReadingBlock
 from app.services.organization_deletion_service import run_deletion
-from tests.intake_model_support import Harness, confirm_partition, document_pdf, enable_models, extract_all, ledger, tesseract_unusable as tesseract_unusable
+from tests.intake_model_support import Harness, confirm_partition, document_pdf, enable_models, extract_all, ledger
 from tests.test_financial_scope_boundary import scope_seed as scope_seed, worker_tenant as worker_tenant
 from tests.test_intake_model_extraction import FIRST, SECOND, Reader, receive_original, split
 from tests.test_invoice_source_custody import fixture, store as store
@@ -21,7 +21,7 @@ from tests.test_rent_changes import rent_db as rent_db
 from tests.test_scope_payment_reconciliation import read_value
 from tests.test_scoped_account_statements import client
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("tesseract_unusable")]
+pytestmark = pytest.mark.asyncio
 
 ORGANIZATION = "Isolated invoice queue"
 
