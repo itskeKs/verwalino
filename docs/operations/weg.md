@@ -80,17 +80,26 @@ access is not output as a complete empty list. A levy is read only in its own sc
 organization holds one, a read without an accounting scope is refused with the German 409
 of classified data („Wählen Sie einen eindeutigen Abrechnungskreis …“) wherever it could
 include a levy: the organization-wide overviews (the Fristen and their context, the Mahnlauf,
-the open items of all leases) and every account or new notice of one tenant lease or one owner
-that touches a property with classified finance, the levy's own property included.
+the open items of all leases), every account or new notice of one tenant lease or one owner
+that touches a property with classified finance, the levy's own property included, and the
+annual overview or the bank matching of a property that has classified finance or an accounting
+scope of its own.
 `GET /api/fristen/context` answers `requires_accounting_scope: true`, so the Mahnlauf offers the
 scope selector. The account or a new notice of one tenant lease or one owner whose properties
 have no classified finance (no scope-bound inputs, no levy), such as a property without an
 accounting scope, is answered as before the levy (#739). A lease belongs to the property of its
 unit; an owner is judged by every property of its uncorrected ownership entries, payments, plan
-lines and levy allocations. The decision is one database function,
-`report_scope_source_access(org, sphere, capability, lease, owner)` (migration 0193), next to the
-three-argument function that exports, SEPA and the source policies keep calling. Reads with the
-levy's scope are unchanged. The existing
+lines and levy allocations. The read of one property is answered the same way when the property
+has no classified finance and no accounting scope, so there is nothing to select: the annual
+overview of such a property (`GET /api/reports/property-year` and the readers that share it) and
+the matching of the bank transactions of its unscoped bank accounts show what they showed before
+the levy (#816); a property with a scope of its own is still read through that scope. The
+decision is one database function,
+`report_scope_source_access(org, sphere, capability, lease, owner, property)` (migrations 0193 and
+0199, the sixth argument is optional), next to the three-argument function that exports, SEPA and
+the source policies keep calling; the two CSV exports of the annual overview are among those callers
+and stay refused (404 „Complete report sources not exportable“) for a property without a scope
+while a levy exists. Reads with the levy's scope are unchanged. The existing
 owner account counts the share once as `SONDERZAHLUNG` in the
 due month, even without an economic plan; regularly booked special payments
 reduce the open amount. Under `/sonderumlagen`, property and read scope are
