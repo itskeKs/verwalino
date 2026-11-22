@@ -260,21 +260,33 @@ async def test_a_partition_that_leaves_the_document_out_during_a_run_stops_furth
         ref = await receive_original(api, ids, document_pdf([None, None]), pages=2)
         (whole,) = (await documents(api, ref)).values()
         await confirm_partition(api, ref, whole)
+        parts = []
 
         async def divided(count):
             # While the first page is being read, the user divides the original into two documents: the whole is left out.
-            a, b = await split(api, ref, 1, 1), await split(api, ref, 2, 2)
-            await confirm_partition(api, ref, a, b)
+            if parts:
+                return
+            parts.extend([await split(api, ref, 1, 1), await split(api, ref, 2, 2)])
+            await confirm_partition(api, ref, *parts)
 
         reader = Reader(after=divided)
         harness = Harness(reader=reader)
-        process = await extract_all(ids["org"], harness, processor=extract_logical)
-        assert process >= 1
-        assert len([read for read in reader.reads if read.document_key == whole]) == 1, "the second page of the whole is not read"
-        assert harness.extractor.calls == [] or all(call.document_key != whole for call in harness.extractor.calls)
-        assert [row.pdf_page for row in await ledger(ids["org"]) if row.stage == "read_page"][:1] == [1]
-        assert await processing(api, whole) == ("failed", "lease_lost", True)
+        await extract_all(ids["org"], harness, processor=extract_logical)
+        first, second = parts
+        assert [read.pdf_page for read in reader.reads if read.document_key == whole] == [1], "the second page of the whole is never read"
+        assert {call.document_key for call in harness.extractor.calls} == {first, second}, "the whole is never extracted"
+        assert await processing(api, whole) == ("failed", "lease_lost", True), "the run stopped like a lost claim"
         assert (await revision(ids, whole))[1] is None
+        assert [await processing(api, part) for part in parts] == [("succeeded", None, False)] * 2, "the two documents of the division are read"
+        # The next claim of the whole finds it outside the division and parks it instead of reading it.
+        fence = (await api.get("/api/logical-documents/" + whole + "/processing")).json()["fence"]
+        again = await api.post("/api/logical-documents/" + whole + "/retry-extraction", json={"expected_fence": fence, "reason": "Again"},
+                               headers={"Idempotency-Key": str(uuid.uuid4())})
+        assert again.status_code == 202, again.text
+        sent = len(reader.reads) + len(harness.extractor.calls)
+        assert await extract_all(ids["org"], harness, processor=extract_logical) == 1
+        assert len(reader.reads) + len(harness.extractor.calls) == sent
+        assert await processing(api, whole) == ("awaiting_split", "not_in_split", False)
 
 
 async def test_the_decision_of_one_organization_changes_nothing_for_the_waiting_document_of_another(migrator_session, scope_seed, store):
