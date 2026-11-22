@@ -128,7 +128,7 @@ what Verwalino does not assign by itself.
     provider before invoices were covered is asked once more, and until then nothing is sent.
   - An equivalent XRechnung or ZUGFeRD is read directly: „Als E-Rechnung erkannt“ with the same values, no usage and no
     provider call, with or without any AI configuration.
-  - Where no invoice worker runs (the portable install does not start one), the page says „Die automatische
+  - Where the operator switched invoice processing off (`HV_INVOICE_EXTRACTION_ENABLED=false`), the page says „Die automatische
     Verarbeitung ist auf diesem Server abgeschaltet.“, keeps the original and Sabine enters the cost by hand.
 
 **Checked by:** agent

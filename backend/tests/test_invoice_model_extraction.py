@@ -17,6 +17,7 @@ import pytest
 from PIL import Image
 from sqlalchemy import select, text
 
+from app.core.config import settings
 from app.core.db import get_worker_session_factory, get_worker_tenant_session
 from app.core.invoice_pdf import inspect_invoice
 from app.core.storage import LocalFsDocumentStore, set_store
@@ -30,6 +31,7 @@ from app.declarations.provider import ProviderFailure, ProviderUsage
 from app.declarations.schemas import ReadingBlock
 from app.models.invoice_model_call import InvoiceModelCall
 from app.repositories.organization_ai_settings_repo import OrganizationAiSettingsRepository
+from app.workers.declaration_import import DeclarationImportWorker
 from app.workers.invoice_extraction import process_once
 from tests.ai_settings_support import configure_ai
 from tests.conftest import MIGRATOR_SYNC_URL
@@ -977,3 +979,52 @@ async def test_a_shutdown_during_a_request_settles_it_at_its_reservation_and_lea
     await process(org, Harness(reader=FakeDocumentReadingProvider(usage=READING_USAGE), extractor=FakeInvoiceExtractionProvider(usage=EXTRACTION_USAGE)))
     document, attempts = await state(api, doc)
     assert document["processing_status"] == "succeeded" and [a["attempt_no"] for a in attempts] == [2, 1]
+
+
+# ---- the declaration worker claims invoices where the stack starts no invoice worker (issue #814) --------------
+
+def declaration_worker(org, harness, *, enabled=True):
+    """The declaration worker of the portable stack for one round of its loop over this organization; ``enabled`` is
+    the worker process's own HV_INVOICE_EXTRACTION_ENABLED and ``harness`` the fake providers of the invoice stages."""
+    async def stop(_seconds):
+        raise asyncio.CancelledError()
+
+    async def only_this_organization():
+        return (org,)
+
+    worker = DeclarationImportWorker(configured=settings.model_copy(update={"invoice_extraction_enabled": enabled}),
+                                     sleep=stop, invoice_providers=harness)
+    worker._organization_ids = only_this_organization
+    return worker
+
+
+@pytest.mark.asyncio
+async def test_the_declaration_worker_processes_a_waiting_scan_in_its_loop(worker_tenant):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org)
+    harness = Harness(reader=FakeDocumentReadingProvider(usage=READING_USAGE), extractor=FakeInvoiceExtractionProvider(usage=EXTRACTION_USAGE))
+    doc = await upload(api, scan_pdf(2))
+    with pytest.raises(asyncio.CancelledError):
+        await declaration_worker(org, harness).run_forever()
+    document, attempts = await state(api, doc)
+    assert document["processing_status"] == "succeeded" and [a["status"] for a in attempts] == ["succeeded"]
+    assert document["extraction_payload"]["processor_version"] == "invoice-model-v1"
+    assert [row.stage for row in await ledger(org)] == ["read_page", "read_page", "extract_invoice"]
+    assert [read.pdf_page for read in harness.reader.reads] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_a_declaration_worker_whose_own_switch_is_off_leaves_the_invoice_waiting(worker_tenant):
+    """Production's declaration worker (its stack has an invoice worker) and any worker of an installation whose
+    operator switched invoice processing off: nothing is claimed and no provider is built."""
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org)
+    harness = Harness()
+    doc = await upload(api, scan_pdf(1))
+    with pytest.raises(asyncio.CancelledError):
+        await declaration_worker(org, harness, enabled=False).run_forever()
+    document, attempts = await state(api, doc)
+    assert [a["status"] for a in attempts] == ["queued"] and document["processing_status"] == "queued"
+    assert harness.built == [] and await ledger(org) == []
