@@ -30,6 +30,7 @@ from openai import (
     APIStatusError,
     APITimeoutError,
     AsyncOpenAI,
+    BadRequestError,
     ContentFilterFinishReasonError,
     LengthFinishReasonError,
     RateLimitError,
@@ -150,8 +151,9 @@ def png_dimensions(data_url: str) -> tuple[int, int]:
 _PNG_DATA_URL = re.compile(r"^data:image/png;base64,([A-Za-z0-9+/]*={0,2})$")
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _STATIC_HARNESS = (
-    "declaration-responses-v5|structured-output-kind-anyof|store=false|"
-    "no-previous-response-id|fixed-pass-manager|usage-before-output-parse"
+    "declaration-responses-v6|structured-output-kind-anyof|store=false|"
+    "no-previous-response-id|fixed-pass-manager|usage-before-output-parse|"
+    "reasoning-effort-low-for-unknown-models|reasoning-rejection-one-fallback"
 )
 _SAFE_RESPONSE_IDENTIFIER = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _OPENAI_API_BASE_URL = "https://api.openai.com/v1"
@@ -174,6 +176,29 @@ def _rejects_the_image_input(error: Exception) -> bool:
     param, code = getattr(error, "param", None), getattr(error, "code", None)
     return (isinstance(param, str) and _IMAGE_PARAMETER.search(param) is not None) or (
         isinstance(code, str) and code in _IMAGE_REJECTION_CODES)
+
+
+# The reasoning effort of a request. The two models whose effort is known keep it; every other model gets the low one,
+# because a model that reasons spends its reasoning tokens on the same output allowance as its answer and the name of
+# a model does not say how many it will use (a fixed effort, not a setting: owner decision of issue #846).
+_KNOWN_MODEL_REASONING_EFFORTS = {"gpt-5.6-luna": "medium", "gpt-5.4-mini": "none"}
+_UNKNOWN_MODEL_REASONING_EFFORT = "low"
+# A model that does not take that parameter or value says so with a 400 whose structured error object names the request
+# field at fault (``param``) and that it is unsupported, unknown or invalid (``code``). The request is then sent once more
+# without the parameter. Message text never decides; any other rejection, of any other field, keeps its handling.
+_REASONING_PARAMETERS = frozenset({"reasoning", "reasoning.effort"})
+_REASONING_REJECTION_CODES = frozenset({"unsupported_parameter", "unsupported_value", "invalid_value", "unknown_parameter"})
+
+
+def _default_reasoning_effort(model: str) -> str:
+    return _KNOWN_MODEL_REASONING_EFFORTS.get(model, _UNKNOWN_MODEL_REASONING_EFFORT)
+
+
+def _rejects_the_reasoning_effort(error: Exception) -> bool:
+    if not isinstance(error, BadRequestError):
+        return False
+    param, code = error.param, error.code
+    return isinstance(param, str) and param in _REASONING_PARAMETERS and isinstance(code, str) and code in _REASONING_REJECTION_CODES
 
 # Only these disjoint tagged unions have an equivalent anyOf wire form.
 _WIRE_KIND_UNIONS = {
@@ -392,8 +417,8 @@ class OpenAiDeclarationProvider:
         # tokenizer download. Production uses the official tokenizer package.
         self._token_encoder = token_encoder
         self._monotonic_clock = monotonic_clock
-        self._primary_reasoning_effort = reasoning_effort or ("medium" if self._primary_model == "gpt-5.6-luna" else "none" if self._primary_model == "gpt-5.4-mini" else None)
-        self._escalation_reasoning_effort = (self._primary_reasoning_effort if self._escalation_model == self._primary_model else "none" if self._escalation_model == "gpt-5.4-mini" else None)
+        self._primary_reasoning_effort = reasoning_effort or _default_reasoning_effort(self._primary_model)
+        self._escalation_reasoning_effort = (self._primary_reasoning_effort if self._escalation_model == self._primary_model else _default_reasoning_effort(self._escalation_model))
         self._prompt_version = configured.declaration_prompt_version
         self._schema_version = configured.declaration_schema_version
         self._harness_version = configured.declaration_harness_version
@@ -953,6 +978,9 @@ class OpenAiDeclarationProvider:
                     max_output_tokens=repair_allowance,
                     attempt_no=2,
                     stage="schema_repair",
+                    # A first leg that sent no effort was rejected for it (or never sent one): the repair does not
+                    # send the rejected parameter again, which would cost a further rejected request.
+                    reasoning_rejected=first_metadata is not None and first_metadata.reasoning_effort == "default",
                 )
             except _SchemaFailure as second_failure:
                 aggregate = self._aggregate_usage(
@@ -1326,6 +1354,7 @@ class OpenAiDeclarationProvider:
         max_output_tokens: int,
         attempt_no: int,
         stage: str,
+        reasoning_rejected: bool = False,
     ) -> _AttemptSuccess:
         started = self._monotonic_clock()
         fingerprints = self._fingerprints(developer_prompt, output_type)
@@ -1337,32 +1366,37 @@ class OpenAiDeclarationProvider:
             output_type=output_type,
             max_output_tokens=max_output_tokens,
         )
+        if reasoning_rejected:
+            # An earlier request of this logical call was rejected for this parameter: do not send it again.
+            request_kwargs.pop("reasoning", None)
+        # The effort that the request being answered carries; the pass ledger states it.
+        sent_effort = (request_kwargs.get("reasoning") or {}).get("effort")
+        reasoning_dropped = False
+
+        def pass_metadata(**fields: Any) -> ProviderPassMetadata:
+            return self._metadata(reasoning_effort=sent_effort, **fields)
+
         # The native SDK's ``parse`` validates the output text before it returns, so an answer the provider cut off
         # raises there and its status and usage are lost. ``create`` sends the same request and hands the response back
         # as it came; usage, refusal and completion are checked below, and only then is the output parsed strictly.
         native_sdk = isinstance(self._client, AsyncOpenAI)
         try:
-            if native_sdk:
-                response = await self._client.responses.create(**request_kwargs, timeout=self._timeout_seconds)
-            else:
-                response = await self._client.responses.parse(
-                    model=request_kwargs["model"],
-                    input=request_kwargs["input"],
-                    text_format=_sdk_output_type(output_type),
-                    store=request_kwargs["store"],
-                    service_tier=request_kwargs["service_tier"],
-                    timeout=self._timeout_seconds,
-                    max_output_tokens=request_kwargs["max_output_tokens"],
-                    **{
-                        key: value
-                        for key, value in request_kwargs.items()
-                        if key in {"prompt_cache_key", "prompt_cache_options", "reasoning"}
-                    },
-                )
+            try:
+                response = await self._send_request(request_kwargs, output_type, native_sdk)
+            except Exception as error:
+                if "reasoning" not in request_kwargs or not _rejects_the_reasoning_effort(error):
+                    raise
+                # The provider rejected exactly the reasoning parameter, and a rejected request is not processed: the
+                # same request goes once more without it, inside this attempt (no second reservation, no schema repair,
+                # and the retry rules of every other failure are untouched). A failure of this second request is
+                # classified as any other.
+                del request_kwargs["reasoning"]
+                sent_effort, reasoning_dropped = None, True
+                response = await self._send_request(request_kwargs, output_type, native_sdk)
         except Exception as error:
             elapsed = self._latency_ms(started)
             if isinstance(error, ContentFilterFinishReasonError):
-                metadata = self._metadata(
+                metadata = pass_metadata(
                     pass_id=pass_id,
                     attempt_no=attempt_no,
                     stage=stage,
@@ -1379,7 +1413,7 @@ class OpenAiDeclarationProvider:
                     attempt_metadata=(metadata,),
                 ) from None
             if isinstance(error, LengthFinishReasonError):
-                metadata = self._metadata(
+                metadata = pass_metadata(
                     pass_id=pass_id,
                     attempt_no=attempt_no,
                     stage=stage,
@@ -1396,7 +1430,7 @@ class OpenAiDeclarationProvider:
                     attempt_metadata=(metadata,),
                 ) from None
             if isinstance(error, APITimeoutError):
-                metadata = self._metadata(
+                metadata = pass_metadata(
                     pass_id=pass_id,
                     attempt_no=attempt_no,
                     stage=stage,
@@ -1413,7 +1447,7 @@ class OpenAiDeclarationProvider:
                     attempt_metadata=(metadata,),
                 ) from None
             if isinstance(error, APIConnectionError):
-                metadata = self._metadata(
+                metadata = pass_metadata(
                     pass_id=pass_id,
                     attempt_no=attempt_no,
                     stage=stage,
@@ -1428,11 +1462,12 @@ class OpenAiDeclarationProvider:
                     True,
                     "OpenAI connection failed.",
                     attempt_metadata=(metadata,),
-                    not_sent=_request_never_left(error),
+                    # The rejected first request reached the provider, so the logical call was sent.
+                    not_sent=_request_never_left(error) and not reasoning_dropped,
                 ) from None
             if isinstance(error, RateLimitError):
                 code = "PROVIDER_RATE_LIMIT"
-                metadata = self._metadata(
+                metadata = pass_metadata(
                     pass_id=pass_id,
                     attempt_no=attempt_no,
                     stage=stage,
@@ -1450,7 +1485,7 @@ class OpenAiDeclarationProvider:
                 and 500 <= status_code <= 599
             ):
                 code = "PROVIDER_SERVER_ERROR"
-                metadata = self._metadata(
+                metadata = pass_metadata(
                     pass_id=pass_id,
                     attempt_no=attempt_no,
                     stage=stage,
@@ -1463,7 +1498,7 @@ class OpenAiDeclarationProvider:
                 raise ProviderFailure(code, True, "OpenAI server request failed.", attempt_metadata=(metadata,)) from None
             if self._is_schema_exception(error):
                 _log_schema_exception(error, output_type, pass_id, stage)
-                metadata = self._metadata(
+                metadata = pass_metadata(
                     pass_id=pass_id,
                     attempt_no=attempt_no,
                     stage=stage,
@@ -1481,7 +1516,7 @@ class OpenAiDeclarationProvider:
                 code, retryable, message = (
                     PROVIDER_IMAGE_INPUT_UNSUPPORTED, False, "The model cannot take the image input."
                 )
-            metadata = self._metadata(
+            metadata = pass_metadata(
                 pass_id=pass_id,
                 attempt_no=attempt_no,
                 stage=stage,
@@ -1509,7 +1544,7 @@ class OpenAiDeclarationProvider:
             if error.code == "OPENAI_USAGE_MISSING":
                 usage = None
             else:
-                metadata = self._metadata(
+                metadata = pass_metadata(
                     pass_id=pass_id,
                     attempt_no=attempt_no,
                     stage=stage,
@@ -1526,7 +1561,7 @@ class OpenAiDeclarationProvider:
                 error.attempt_count = attempt_no
                 raise
         if getattr(response, "refusal", None) is not None or _response_has_refusal(response):
-            metadata = self._metadata(
+            metadata = pass_metadata(
                 pass_id=pass_id,
                 attempt_no=attempt_no,
                 stage=stage,
@@ -1552,7 +1587,7 @@ class OpenAiDeclarationProvider:
             cut_at_output_limit = (
                 getattr(getattr(response, "incomplete_details", None), "reason", None) == "max_output_tokens"
             )
-            metadata = self._metadata(
+            metadata = pass_metadata(
                 pass_id=pass_id,
                 attempt_no=attempt_no,
                 stage=stage,
@@ -1581,7 +1616,7 @@ class OpenAiDeclarationProvider:
         except Exception as error:
             if self._is_schema_exception(error):
                 _log_schema_exception(error, output_type, pass_id, stage)
-            metadata = self._metadata(
+            metadata = pass_metadata(
                 pass_id=pass_id,
                 attempt_no=attempt_no,
                 stage=stage,
@@ -1602,7 +1637,7 @@ class OpenAiDeclarationProvider:
                         schema=output_type.model_json_schema(), pass_id=pass_id, stage=stage)
                 except Exception:
                     pass
-            metadata = self._metadata(
+            metadata = pass_metadata(
                 pass_id=pass_id,
                 attempt_no=attempt_no,
                 stage=stage,
@@ -1616,7 +1651,7 @@ class OpenAiDeclarationProvider:
             )
             raise _SchemaFailure(usage, metadata)
         if usage is None:
-            metadata = self._metadata(
+            metadata = pass_metadata(
                 pass_id=pass_id,
                 attempt_no=attempt_no,
                 stage=stage,
@@ -1636,7 +1671,7 @@ class OpenAiDeclarationProvider:
                 usage_complete=False,
                 attempt_count=attempt_no,
             )
-        metadata = self._metadata(
+        metadata = pass_metadata(
             pass_id=pass_id,
             attempt_no=attempt_no,
             stage=stage,
@@ -1649,6 +1684,26 @@ class OpenAiDeclarationProvider:
             request_id=request_id,
         )
         return _AttemptSuccess(output=parsed, usage=usage, metadata=metadata)
+
+    async def _send_request(
+        self, request_kwargs: dict[str, Any], output_type: type[StrictModel], native_sdk: bool
+    ) -> Any:
+        if native_sdk:
+            return await self._client.responses.create(**request_kwargs, timeout=self._timeout_seconds)
+        return await self._client.responses.parse(
+            model=request_kwargs["model"],
+            input=request_kwargs["input"],
+            text_format=_sdk_output_type(output_type),
+            store=request_kwargs["store"],
+            service_tier=request_kwargs["service_tier"],
+            timeout=self._timeout_seconds,
+            max_output_tokens=request_kwargs["max_output_tokens"],
+            **{
+                key: value
+                for key, value in request_kwargs.items()
+                if key in {"prompt_cache_key", "prompt_cache_options", "reasoning"}
+            },
+        )
 
     def _latency_ms(self, started: float) -> int:
         return max(0, int((self._monotonic_clock() - started) * 1000))
@@ -1664,6 +1719,7 @@ class OpenAiDeclarationProvider:
         usage: ProviderUsage | None,
         latency_ms: int,
         failure_class: str | None,
+        reasoning_effort: str | None,
         returned_model_id: str | None = None,
         request_id: str | None = None,
     ) -> ProviderPassMetadata:
@@ -1692,7 +1748,7 @@ class OpenAiDeclarationProvider:
             stage=stage,
             configured_model=model,
             returned_model_id=returned_model_id,
-            reasoning_effort=self._reasoning_effort(model) or "default",
+            reasoning_effort=reasoning_effort or "default",
             request_id=request_id,
             prompt_version=prompt_version,
             prompt_sha256=fingerprints.prompt_sha256,

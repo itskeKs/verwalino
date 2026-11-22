@@ -326,6 +326,32 @@ async def test_an_answer_the_sdk_cut_off_keeps_its_usage_costs_no_repair_and_is_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('model,effort', [('gpt-6.2-sol', 'low'), ('gpt-5.6-luna', 'medium'), ('gpt-5.4-mini', 'none')],
+                         ids=['unknown-model', 'luna', 'mini'])
+async def test_the_real_sdk_extraction_request_carries_a_low_effort_for_an_unknown_model_and_the_known_efforts_otherwise(model, effort):
+    bodies = []
+
+    def respond(request):
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(200, json={
+            'id': 'resp_invoice', 'object': 'response', 'created_at': 0, 'model': model, 'status': 'completed',
+            'output': [{'id': 'msg_invoice', 'type': 'message', 'role': 'assistant', 'status': 'completed',
+                        'content': [{'type': 'output_text', 'text': json.dumps(ANSWER), 'annotations': []}]}],
+            'usage': {'input_tokens': 1200, 'output_tokens': 90, 'total_tokens': 1290,
+                      'input_tokens_details': {'cached_tokens': 0, 'cache_write_tokens': 0},
+                      'output_tokens_details': {'reasoning_tokens': 0}}})
+
+    async with AsyncOpenAI(api_key='synthetic-sdk-key', base_url='https://api.openai.com/v1', max_retries=0,
+                           http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond))) as client:
+        provider = OpenAiDeclarationProvider(client=client, primary_model=model, escalation_model=model, token_encoder=_Encoder())
+        result = await provider.extract_invoice([DOCUMENT], categories=CATEGORIES, model=model, max_output_tokens=2000)
+
+    body, = bodies
+    assert body['reasoning'] == {'effort': effort}
+    assert result.metadata.reasoning_effort == effort
+
+
+@pytest.mark.asyncio
 async def test_no_other_model_is_asked(transport):
     provider = transport.build([ANSWER])
     with pytest.raises(ProviderFailure) as failure:
