@@ -2429,13 +2429,28 @@ keep their own sentences): what happened, that the original is kept and nothing 
 wurde nichts übernommen.”), what the organization or the administration can do and that the established retry stays open. A file whose evaluation waits for
 the organization (AI import off, confirmation, reading model or key missing) is counted and badged „Empfangen“ and not
 „Gesperrt / fehlgeschlagen“: nothing failed, the original is kept and the evaluation can be requested again. The
-source page (`/posteingang/belege/:documentRefId`) calls the states „Wartet auf Auswertung“, „Auswertung läuft“ and „Auswertung
-nicht möglich“, and its retry „Auswertung erneut anfordern“ with the reason field „Grund für die erneute Auswertung“. Each
+source page (`/posteingang/belege/:documentRefId`) calls the states „Wartet auf Auswertung“, „Auswertung läuft“, „Auswertung
+nicht möglich“ and „Wartet auf die Aufteilung“, and its retry „Auswertung erneut anfordern“ with the reason field „Grund für die erneute Auswertung“. Each
 document of an original shows, below its status line, the card „Verbrauch der KI-Verarbeitung“
 (`components/intake/IntakeModelUsage.tsx`, from `GET /api/logical-documents/{id}/model-usage`), built from the blocks of the
 invoice card (`components/InvoiceModelUsage.tsx`: one block per stage and model, „Gesamt“, usage the provider did not report as
 „Reservierte Eingabetoken“, a model without a price as „kein Preis bekannt“) over all attempts of that document; it is absent
 while no request was made.
+
+A multipage upload is not sent as a whole (owner decision of 2026-11-22 on #501): it waits until a reviewer has divided it into documents
+or confirmed it as one document under „Seiten zu Belegen zusammenstellen“ (the existing division panel, whose intro now says so and
+that choosing only the document with all pages confirms the original as one document; a new range „bleibt ein ungeprüfter Vorschlag;
+ausgewertet wird er erst, wenn Sie eine Aufteilung mit ihm gespeichert haben“). While it waits it is the reviewer's turn and nothing
+failed: the batch page counts the original under „Zur Sichtung“, names the stage „Aufteilung ausstehend“ (stage `split`) and explains
+under it, from the same map (`awaiting_split`), that the original has more than one page and is evaluated only after the division is
+confirmed, where to confirm it („Seiten zu Belegen zusammenstellen“: the documents it falls into, or the whole original as one document),
+that nothing was sent to an AI provider until then, that each document is then evaluated with only its own pages and that the original
+is kept. The source page shows „Wartet auf die Aufteilung · Versuch N von höchstens 3“ with the same sentence and offers no retry (there
+is nothing to retry). A document the confirmed division leaves out (the unsplit whole after the split) says (`not_in_split`) that it
+does not belong to the confirmed division, is not evaluated and was not sent, and how to include it; it does not hold the original back
+from „Zur Sichtung“. A single page and a structured e-invoice are processed at once and show none of this. A request that never left the host
+(`provider_unreachable`) is explained in the inbox words (the Anfrage wurde nicht gesendet, no cost, the usage already incurred under
+„Verbrauch der KI-Verarbeitung“) and is not listed on that card.
 
 Every proposed value is a card with its label, the value in the display formats of the invoice page (a date as TT.MM.JJJJ, an amount
 as `1.234,56 €`, the VAT rate as `19 %`, the category as the name of the cost category; a value a format cannot read as it is
@@ -2451,11 +2466,14 @@ model and that nothing scrolls horizontally.
 Screenshots come from the real-browser twin of the inbox (`features/journeys/inbox_model_processing.feature`) on the test database
 with synthetic data: a four-page scan with an insurance invoice on pages 1 and 2 and a water bill on pages 3 and 4, read by fake
 providers. `VERWALINO_CAPTURE_DESIGN=1` writes the "after" files, the same run with `VERWALINO_CAPTURE_STATE=before` against the
-frontend of `main` the "before" files; a card that did not exist before is captured as far as the previous frontend has it:
+frontend of `main` the "before" files; a card that did not exist before is captured as far as the previous frontend has it (the waiting
+state has no before: `main` evaluates the whole upload at once):
 
 | Inbox screen (#501) | Before, 1280 px | Before, 360 px | After, 1280 px | After, 360 px |
 |---|---|---|---|---|
-| Batch page: a file held back because the organization has not confirmed the inbox text, counted as „Empfangen“, explained in German with the original kept | [view](docs/assets/design/inbox-processing/batch-explained-before-1280.png) | [view](docs/assets/design/inbox-processing/batch-explained-before-360.png) | [view](docs/assets/design/inbox-processing/batch-explained-after-1280.png) | [view](docs/assets/design/inbox-processing/batch-explained-after-360.png) |
+| Batch page: a file held back because the organization has not confirmed the inbox text, counted as „Empfangen“, explained in German with the original kept (the after pictures also show the sentence about the division of a multipage original) | [view](docs/assets/design/inbox-processing/batch-explained-before-1280.png) | [view](docs/assets/design/inbox-processing/batch-explained-before-360.png) | [view](docs/assets/design/inbox-processing/batch-explained-after-1280.png) | [view](docs/assets/design/inbox-processing/batch-explained-after-360.png) |
+| Batch page: a four-page upload that waits for the division („Zur Sichtung“, „Aufteilung ausstehend“, what to do, nothing was sent) | none | none | [view](docs/assets/design/inbox-processing/batch-waits-after-1280.png) | [view](docs/assets/design/inbox-processing/batch-waits-after-360.png) |
+| Source page of the same upload: the division panel with its intro and „Wartet auf die Aufteilung“ with the same sentence, no retry | none | none | [view](docs/assets/design/inbox-processing/source-waits-after-1280.png) | [view](docs/assets/design/inbox-processing/source-waits-after-360.png) |
 | Source page, pages 1 to 2: proposal with the page and passage of every value (the after pictures show the display formats) | [view](docs/assets/design/inbox-processing/source-proposal-before-1280.png) | [view](docs/assets/design/inbox-processing/source-proposal-before-360.png) | [view](docs/assets/design/inbox-processing/source-proposal-after-1280.png) | [view](docs/assets/design/inbox-processing/source-proposal-after-360.png) |
 | Source page, pages 3 to 4 (scan): reading-model passages and the card „Verbrauch der KI-Verarbeitung“ (no such card before) | [view](docs/assets/design/inbox-processing/source-scan-before-1280.png) | [view](docs/assets/design/inbox-processing/source-scan-before-360.png) | [view](docs/assets/design/inbox-processing/source-scan-after-1280.png) | [view](docs/assets/design/inbox-processing/source-scan-after-360.png) |
 | AI settings card of the local stack (no invoices) holding a confirmation of the first text: asks once for the inbox, without the key | [view](docs/assets/design/inbox-processing/settings-card-confirmation-before-1280.png) | [view](docs/assets/design/inbox-processing/settings-card-confirmation-before-360.png) | [view](docs/assets/design/inbox-processing/settings-card-confirmation-after-1280.png) | [view](docs/assets/design/inbox-processing/settings-card-confirmation-after-360.png) |

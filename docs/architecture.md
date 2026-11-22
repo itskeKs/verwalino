@@ -49,9 +49,13 @@ reading model in a killable child with an address-space limit (`core/image_readi
 original is retained with a structured reason in the state the established manual and retry workflow expects; Tesseract is not
 used (the image keeps it until #502). Which confirmation text versions name which kinds of document is one table
 (`CONFIRMATION_TEXTS` in `services/ai_settings_service.py`: 1 declarations, 2 declarations and invoices, 3 all three, 4
-declarations and the inbox), which the settings card, a new confirmation and every path read. **Not wired:** which process runs
-this stage in each stack and how it reaches a provider is an open owner decision, so the inbox worker has no route to a
-provider yet and such a document waits for manual completion. See the [inbox flow](operations/inbox-review-chain.md).
+declarations and the inbox), which the settings card, a new confirmation and every path read. In every stack the declaration
+worker runs this stage in its loop and no other process does (`core/invoice_claimant.py` is the one place that says which worker
+kind runs which model work; the inbox worker keeps inspection and delivery and has neither the session secret nor a route to a
+provider). A document of an original of more than one page is sent only after a person has confirmed how the original divides
+(the source partition, one of its documents or the whole as one document): until then its job waits as `awaiting_split` and
+nothing is requested; a single page is processed at once, a structured original needs no decision. See the
+[inbox flow](operations/inbox-review-chain.md).
 
 The dedicated healthcheck verifies storage, the worker role, queue access and the PDF renderer
 (`pdftoppm`; no Tesseract) without queue consumption

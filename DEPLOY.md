@@ -2102,8 +2102,9 @@ Both Compose files define `inbox-worker`, using the same app image, isolated
 `app_worker` connection (`HV_DATABASE_URL_WORKER`), `restart: unless-stopped`
 and worker entrypoint pattern as `invoice-worker`. `HV_WORKER_KIND=workflow_runner`
 selects the existing runner; `--all-organizations` schedules only its default
-intake inspection, internal delivery and logical extraction stages. It has no
-provider key/egress, exposed port, web/review role or migrator credential.
+intake inspection (with the malware gate) and internal delivery stages: it has no extraction stage and never reads a
+document with a model (the declaration worker runs that, [below](#inbox-documents-and-the-organizations-models)). It has no
+provider key/egress, session secret, exposed port, web/review role or migrator credential.
 Documents and ClamAV signatures are read-only; the root filesystem is read-only,
 capabilities are dropped and processing uses bounded temporary storage. The
 130-second stop grace period allows bounded processing to drain. The inbox
@@ -2157,16 +2158,19 @@ Compose/config selection and `--profile inbox stop inbox-worker`.
 The production definition is not profiled; provision its signatures and start
 the service only as part of a separately reviewed deployment. Adding the service
 to a file does not start it on an existing deployment. The local launcher starts
-the invoice worker and, when its healthcheck passes, the inbox worker on the test
+the invoice worker, the declaration worker (which runs the inbox's extraction stage, with its invoice switch off like
+production's) and, when its healthcheck passes, the inbox worker on the test
 DB; the inbox worker uses the host ClamAV installation.
 No new configuration switch or provider setting is introduced.
+
+### Inbox documents and the organization's models
 
 **Unstructured inbox documents are no longer read locally (0198, issue #501).** Earlier releases read a scanned PDF, a PNG or a
 JPEG of the inbox with Tesseract and a local pattern matcher. Now such an original is read by the organization's own two models
 („Dokumente einlesen“ and „Informationen extrahieren“), page by page of each logical document, exactly as an invoice is
 ([Invoice worker](#invoice-worker-t10)): only after the organization's AI import switch, key, both models and a provider
-confirmation that **names inbox documents** (text version 3; on an installation with `HV_INVOICE_EXTRACTION_ENABLED=false`, the
-portable stack, version 4, which names declarations and the inbox but no invoices). Nothing is turned on by the upgrade. An
+confirmation that **names inbox documents** (text version 3; on an installation whose operator set `HV_INVOICE_EXTRACTION_ENABLED=false`, version 4, which names
+declarations and the inbox but no invoices). Nothing is turned on by the upgrade. An
 organization that confirmed an earlier text keeps what that text named (its declaration import, and its invoices if the text
 named them) and is asked **once more, without entering its key again**, in Einstellungen; until then its inbox documents are
 retained with the reason `ai_inbox_confirmation_missing`, nothing is sent, and the established retry (**Auswertung erneut
@@ -2176,10 +2180,24 @@ originals are still read locally and never sent. Requests are metered in `invoic
 column) and count towards the organization's monthly limit; what a document consumed is on its source page („Verbrauch der
 KI-Verarbeitung“).
 
-**What an operator must know before relying on it.** Which process runs the inbox model stage in each stack and how it reaches
-a provider is an open owner decision (#65): the `inbox-worker` of both Compose files has no provider egress and no session
-secret that decrypts the organization's key, and this release does not change a Compose file or a worker loop. Until that is
-decided and built, an unstructured inbox document is retained for manual completion on every installation. The image keeps
+**Which process runs it.** In every stack the **declaration worker** runs the inbox's extraction stage and no other process does
+(`core/invoice_claimant.py`, the same place that decides which worker claims invoices): `worker` in `docker-compose.prod.yml`
+(whose invoice switch is fixed to `false` because that stack has a dedicated invoice worker; the inbox stage does not depend on
+the switch), `declaration-worker` in `infra/docker-compose.yml` (self-hosted installations and the hosted server) and in
+`infra/docker-compose.staging.yml`. It already had everything the stage needs, so **no Compose file, network, key or limit
+changed**: the documents volume it reads, the worker database role, the session secret the organization's key is stored under,
+the route to the provider and the PDF renderer. The `inbox-worker` keeps its privileges: no session secret, no egress, documents
+read-only; its runner has no extraction stage. Operationally this means: while no declaration worker runs, an inbox document
+stays queued (nothing fails and nothing is sent), and the inbox worker alone never ends a document with `ai_key_unreadable`.
+The local launcher (`scripts/dev-local.sh`) now also starts a declaration worker for this stage.
+
+**A multipage original waits for the division.** An upload of more than one page is not sent as a whole: after the file
+inspection and, for an unstructured original, the local parse, its documents wait (status `awaiting_split`, no provider is
+built, nothing is sent) until a reviewer has divided the original into documents or confirmed it as one document on the source
+page („Seiten zu Belegen zusammenstellen“, the existing source partition); then each document is read and extracted on its own,
+with only its own pages, and the unsplit whole is never sent after the split. A single page is processed at once; a structured
+e-invoice needs no such decision. The wait uses one of the three attempts of the document. Migration 0198 (the one revision of
+this change) holds the new status and its functions; downgrading it queues a waiting document again. The image keeps
 Tesseract until [#502](https://github.com/itskeKs/verwalino/issues/502) removes it; no code of the inbox path calls it, and no
 new configuration key exists.
 
@@ -2252,7 +2270,8 @@ The portable stack (`infra/docker-compose.yml`: self-hosted installations and th
 each step of the declaration import it claims and processes at most one waiting invoice, with the code, leases, bounds
 and metering of the [invoice worker](#invoice-worker-t10). No new service, network or key: the worker already had the
 worker database role, the documents volume, the session secret, the PDF renderer and the provider route, and keeps its
-limits (768 MiB, one CPU). Which process processes invoices is decided once, in `core/invoice_claimant.py`
+limits (768 MiB, one CPU), and the same loop gives the inbox's extraction stage its turn
+([inbox documents](#inbox-documents-and-the-organizations-models)). Which process processes invoices is decided once, in `core/invoice_claimant.py`
 ([invoice extraction](docs/operations/invoice-extraction.md#worker-and-deployment)).
 
 The one switch is `HV_INVOICE_EXTRACTION_ENABLED`, **on** by default; the app and the declaration worker read the same
@@ -2264,8 +2283,9 @@ says the automatic processing is switched off, and the settings card names no in
 What an operator who upgrades needs to know:
 
 - Nothing is sent because of the upgrade. An unstructured PDF reaches an organization's provider only after that
-  organization's own opt-in: its AI import switch („Teilungserklärungen importieren und Rechnungen auswerten“), key,
-  models and the provider confirmation with the text that names invoices (text version 2).
+  organization's own opt-in: its AI import switch („Teilungserklärungen importieren sowie Rechnungen und Dokumente im
+  Posteingang auswerten“), key, models and the provider confirmation with the text that names invoices (text version 3, which
+  names the inbox as well).
 - An organization that confirmed the earlier text (version 1, declarations only) keeps its declaration import; its
   invoices stay on the host (`ai_invoice_confirmation_missing`) until an administrator confirms once more in
   Einstellungen. Structured invoices (XRechnung, ZUGFeRD) are read locally and never sent, and now also get a proposal

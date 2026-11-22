@@ -219,6 +219,13 @@ request that is out is settled at its reservation (`WORKER_CANCELLED`), and the 
 lease and is read again once it has expired. The worker keeps its 768 MiB: it runs one task at a time, and an invoice
 is bounded to 10 pages rendered one at a time.
 
+**The inbox's model stage runs in the same loop** (issue #501, owner decision of 2026-11-22). After the invoice step the
+declaration worker gives the extraction stage of the inbox (`workers/intake_extraction.py`, `_process_one_inbox_extraction`)
+its turn, one document per round with the organizations in rotation, in every stack and whatever the invoice switch says: the
+rule is `runs_inbox_extraction` in `core/invoice_claimant.py`, next to `claims_invoices`, and the inbox worker (the workflow
+runner) is not a worker kind it names. Failures are logged as `INBOX_ERROR` / `INBOX_DISCOVERY_FAILED` by type and place only.
+See the [inbox flow](inbox-review-chain.md#which-process-runs-which-stage).
+
 The authenticated retry endpoint rechecks org/write access and document state;
 it reuses an active attempt and cannot exceed the attempt budget. Failure never
 removes the original or creates a cost. Details expose status and processing

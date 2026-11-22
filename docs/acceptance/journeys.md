@@ -132,16 +132,25 @@ what Verwalino does not assign by itself.
     Verarbeitung ist auf diesem Server abgeschaltet.“, keeps the original and Sabine enters the cost by hand.
 - **The same kind of document through „Posteingang“.** Sabine puts a scan with two documents into the inbox: a four-page
   original with the building-insurance invoice on pages 1 and 2 (312,00 €, number RE-2026-0042, „Mustermann Versicherungen AG“)
-  and a water bill on pages 3 and 4 (99,00 €, „Stadtwerke Test GmbH“, the two pages scanned), and marks pages 1–2 and 3–4 as the
-  two documents under „Belege und Vorschläge“. Unstructured originals are no longer read locally: they go to the organization's
-  models, never to a text-recognition program on the server.
+  and a water bill on pages 3 and 4 (99,00 €, „Stadtwerke Test GmbH“, the two pages scanned). Unstructured originals are no
+  longer read locally: they go to the organization's models, never to a text-recognition program on the server, and an upload
+  of more than one page is **not sent as a whole**.
+  - A multipage upload waits. The batch page counts it under „Zur Sichtung“, names the stage „Aufteilung ausstehend“ and says in
+    German what Sabine has to do (confirm how the original divides under „Seiten zu Belegen zusammenstellen“, either the
+    documents it falls into or the whole original as one document) and that nothing was sent to a provider; the source page
+    says „Wartet auf die Aufteilung“ with the same sentence and offers nothing to retry. Sabine marks pages 1–2 and 3–4 as the
+    two documents („Weiteren Seitenbereich anlegen“), ticks both and saves the division („Aufteilung speichern“). A single-page
+    upload needs none of this and is processed at once.
   - Where an administrator has switched on the AI import (key, a model under „Dokumente einlesen“ and one under „Informationen
-    extrahieren“) and confirmed the text that names the inbox, each document is read **from its own pages only**: pages 1–2
+    extrahieren“) and confirmed the text that names the inbox, each document is, once the division is saved, read **from its own
+    pages only**, each page once: pages 1–2
     propose 312,00 € and „Mustermann Versicherungen AG“, pages 3–4 propose 99,00 € and „Stadtwerke Test GmbH“, and neither
     proposal mentions the other document. Every value shows its page and its passage („Fundstelle auf Seite 4 · vom
     Lesemodell gelesen“ with „Gesamtbetrag 99,00 EUR“ for a scanned page, „… · PDF-Text“ for a page with text); a value the
     document does not support says „Keine Fundstelle bestätigt“. The card „Verbrauch der KI-Verarbeitung“ lists the reading
-    and the extraction model with their usage. Nothing is posted; the original can be downloaded.
+    and the extraction model with their usage. The whole original (pages 1–4), which is no part of the saved division, is never
+    sent and says so („gehört nicht zur bestätigten Aufteilung“). Had Sabine confirmed the whole original as one document
+    instead, it would be read once with its four pages. Nothing is posted; the original can be downloaded.
   - A structured e-invoice in the inbox (XRechnung or ZUGFeRD) shows „Fundstelle im XML“ with its values, no usage card, and
     nothing is sent to a provider, with or without any AI configuration.
   - Without the AI import, with a failing provider or an exhausted monthly budget, the batch page and the source page say in German
@@ -150,9 +159,10 @@ what Verwalino does not assign by itself.
   - An organization that confirmed the provider before the inbox was covered keeps its declaration import (and its invoices where
     its text named them). Its inbox documents wait with the sentence that the organization has to confirm again, until an
     administrator ticks the confirmation once more under „KI für Ihre Organisation“ without entering the key; the card names the
-    inbox and, on the portable install, no invoices. Then „Auswertung erneut anfordern“ reads the document.
-  - Where the inbox worker has no route to a provider (as shipped it has none; wiring one is an open owner decision, see
-    DEPLOY.md), the document stays retained and Sabine enters the values by hand.
+    inbox and, where the operator switched invoice processing off, no invoices. Then „Auswertung erneut anfordern“ reads the document.
+  - In every stack the declaration worker, which has the session secret and the route to the provider, reads the documents; the
+    inbox worker has neither and never reads one. While no declaration worker runs, a document stays queued and Sabine
+    enters the values by hand.
 
 **Checked by:** agent
 **Also at 360 px:** no
@@ -180,13 +190,15 @@ unconfigured organization explained in German with the original kept. The API-le
 [invoice_model_processing.feature](../../features/invoice_model_processing.feature) adds the confirmation that predates
 invoices, a misread IBAN that is not proposed, the exhausted monthly budget and organization isolation. A real provider belongs to no automated run.
 The inbox is automated in [inbox_model_processing.feature](../../features/journeys/inbox_model_processing.feature) with the real
-workers and fake providers in a real browser at 1280 and 360 px: the four-page scan split into its two documents with each
-proposal built from its own pages (amounts, number and vendor from the sample, page and passage of every value, the scanned
+workers and fake providers in a real browser at 1280 and 360 px: the four-page scan that waits (batch page and source page say in
+German what to do and that nothing was sent), is divided and confirmed on the source page, and then has each of its two documents
+proposed from its own pages while the whole is never sent (amounts, number and vendor from the sample, page and passage of every value, the scanned
 pages read by the reading model, the usage of both models), a structured e-invoice with no model call and no usage, the
 organization that confirmed the first text asked once for the inbox without its key and then read, the AI import off and a
 provider failure explained in German with the original kept and the usage visible. The API-level
-[inbox_model_processing.feature](../../features/inbox_model_processing.feature) adds the monthly limit and organization isolation.
-The portable card of the twin names the inbox and no invoices. A real provider belongs to no automated run.
+[inbox_model_processing.feature](../../features/inbox_model_processing.feature) adds the upload confirmed as one document and read whole,
+the single page processed at once, the monthly limit and organization isolation.
+The stack of the twin runs with the operator's switch for invoice processing off, so its card names the inbox and no invoices. A real provider belongs to no automated run.
 The remaining assignment checks still require blind acceptance.
 
 ## Journey 3: Dunning letter to Anna

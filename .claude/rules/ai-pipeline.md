@@ -54,8 +54,11 @@ paths:
   again: page transcripts of an invoice are not stored. The extraction answer states for each value the page and
   a passage it was found on (`source_page`, `source_quote` of the fields in `declarations/schemas.py`); the invoice
   path ignores them, and a source filled badly is no source and never costs the answer.
-- The inbox worker (`workers/intake_extraction.py`) does the same for the selected pages of one logical
-  document of an unstructured PDF, PNG or JPEG: `declarations/intake_pipeline.py` is `InvoiceModelPipeline`
+- The inbox's extraction stage (`workers/intake_extraction.py`) does the same for the selected pages of one logical
+  document of an unstructured PDF, PNG or JPEG. The declaration worker runs it in its loop and no other process does:
+  the inbox worker has neither the session secret nor a route to a provider and has no such stage. An original of more
+  than one page is sent only after a person has confirmed how it divides (its documents wait until then, nothing is
+  requested); a single page is sent at once. `declarations/intake_pipeline.py` is `InvoiceModelPipeline`
   with a few hooks (renewing the claim's fence, the ledger row's attempt, rendering, the document key, the
   confirmation the destination needs, the outcome shape), so reading, extraction, bounds, opt-in re-check and
   metering exist once. Only the pages of that logical document reach a provider, with the original's page numbers;
@@ -75,9 +78,9 @@ paths:
   (`api/declaration_imports.py`), never a second counter.
 - Documents and extracted text leave the host only to the configured provider from a worker that
   has the provider network (the declaration worker, which also claims invoices where a stack has no invoice
-  worker; the invoice worker where Compose gives it the same `backend` and `egress` networks, never wider;
-  `DEPLOY.md`). An installation has exactly one invoice claimant, decided in `core/invoice_claimant.py` and
-  stated per Compose service; respect `HV_DATA_REGION`. Observability
+  worker and runs the inbox's extraction stage in every stack; the invoice worker where Compose gives it the same
+  `backend` and `egress` networks, never wider; `DEPLOY.md`). An installation has exactly one invoice claimant and
+  one runner of the inbox's model stage, decided in `core/invoice_claimant.py` and stated per Compose service; respect `HV_DATA_REGION`. Observability
   records (`declarations/observability.py`) and logs carry identifiers, versions, hashes and
   usage, never document text.
 - The provider-neutral runtime (#66) uses the existing typed interfaces and deterministic
