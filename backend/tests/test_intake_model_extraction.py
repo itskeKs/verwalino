@@ -1,7 +1,7 @@
 """The inbox reads and extracts an unstructured original through the organization's two models (issue #501, ADR 0017).
 
 Everything here runs the real queue-fenced worker against the test database with the in-process fake providers: no provider
-call is made, and Tesseract is made unusable, because this path has none. Each logical document of an original is read
+call is made. Each logical document of an original is read
 from its own selected pages only, every request is reserved and settled in the shared ledger, and the opt-in is the
 organization's own. An original of more than one page is sent only after a person has decided how it divides (a
 confirmed source partition lists the document); until then nothing is requested from a provider.
@@ -37,7 +37,6 @@ from tests.intake_model_support import (
     extract_all,
     ledger,
     picture,
-    tesseract_unusable as tesseract_unusable,
 )
 from tests.test_financial_scope_boundary import scope_seed as scope_seed, worker_tenant as worker_tenant
 from tests.test_intake_batches import create, manifest, work_sql
@@ -47,7 +46,7 @@ from tests.test_m5_einvoice import PAYEE_IBAN, UBL_WITH_IBAN
 from tests.test_scope_payment_reconciliation import read_value
 from tests.test_scoped_account_statements import client, mutate
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("tesseract_unusable")]
+pytestmark = pytest.mark.asyncio
 
 # A page with a text layer of its own (more than 40 non-whitespace characters) and the page of a scan.
 FIRST = ["Mustermann Versicherungen AG", "Rechnungsnummer RE-2026-0042", "Gebaeudeversicherung 2026, Gesamtbetrag 312,00 EUR"]

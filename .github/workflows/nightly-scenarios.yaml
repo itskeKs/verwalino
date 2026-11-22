@@ -121,7 +121,7 @@ jobs:
       - name: Install scenario dependencies and Chromium
         working-directory: backend
         run: |
-          uv sync --locked --extra dev --extra ops --extra ocr
+          uv sync --locked --extra dev --extra ops
           uv run --locked --extra dev playwright install --with-deps chromium
           sudo apt-get install -y --no-install-recommends libpangoft2-1.0-0 fonts-dejavu-core poppler-utils
           pdftotext -v
@@ -142,7 +142,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y --no-install-recommends
           libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 libcairo2
           libgdk-pixbuf-2.0-0 libffi8 fonts-dejavu-core shared-mime-info
-          poppler-utils qpdf tesseract-ocr tesseract-ocr-deu
+          poppler-utils qpdf
 
       - name: Start test database
         if: ${{ matrix.mode == 'hosted' }}
@@ -152,7 +152,7 @@ jobs:
         if: ${{ matrix.mode == 'selfhost' }}
         working-directory: backend
         run: |
-          uv run --locked --extra dev --extra ops --extra ocr pytest tests/bdd --run-browser -q --scenario-report ../report
+          uv run --locked --extra dev --extra ops pytest tests/bdd --run-browser -q --scenario-report ../report
 
       # The target owns the database lock, installs the frontend dependencies and unsets the external
       # target URL and admin login set above; the job's HV_DEPLOYMENT_MODE selects hosted policy.

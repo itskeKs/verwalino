@@ -57,7 +57,7 @@ async def test_shared_invoice_adapter_preserves_live_lease_then_reconciles_expir
     from datetime import datetime,timedelta,timezone
     from sqlalchemy import text
     from app.core.db import get_worker_session_factory,set_tenant_context
-    from app.core.invoice_ocr import extract_invoice
+    from app.core.invoice_pdf import inspect_invoice
     from app.services.invoice_processing_service import InvoiceProcessingService
     from app.workers.workflow_runner import WorkflowRunner,build_adapters
     from tests.test_m5_einvoice import UBL
@@ -78,7 +78,7 @@ async def test_shared_invoice_adapter_preserves_live_lease_then_reconciles_expir
     assert [item['status'] for item in attempts]==['succeeded','timeout']
     async with factory() as db,db.begin():
         await set_tenant_context(db,org)
-        assert not await InvoiceProcessingService(db,org).finish(old_claim,extract_invoice(UBL,'application/xml'))
+        assert not await InvoiceProcessingService(db,org).finish(old_claim,inspect_invoice(UBL,'application/xml'))
     ref=(await api.get('/api/document-refs/page',params={'source_id':document['id']})).json()['items'][0]
     assert len((await api.get('/api/document-refs/'+ref['id']+'/extractions')).json()['items'])==1
 

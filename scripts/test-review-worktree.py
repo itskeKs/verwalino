@@ -19,7 +19,7 @@ SCRIPT = ROOT / "scripts/review-worktree.sh"
 BASH = shutil.which("bash")
 REPO = "itskeKs/verwalino"
 BRANCH = "feat/thing"
-UV_ARGS = ["sync", "--locked", "--extra", "dev", "--extra", "ops", "--extra", "ocr"]
+UV_ARGS = ["sync", "--locked", "--extra", "dev", "--extra", "ops"]
 
 # One source for every fake binary; the file name selects the tool. Each call is logged with its arguments and
 # working directory, so the tests can say exactly what the script asked for.

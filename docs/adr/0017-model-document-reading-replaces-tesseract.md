@@ -52,3 +52,14 @@ the text layer go to the model, the others keep the deterministic text path.
   settings and runs offline providers; no live provider run belongs to this ADR.
 - Consequences: organizations with import enabled choose a reading model before their next import;
   reading costs a model call per page; unknown prices stay visibly unpriced and unenforced.
+
+## State as implemented (#502)
+
+- Tesseract is gone from the product: the image installs neither the `tesseract-ocr` packages nor the Python binding, the
+  invoice OCR and PDF text-extraction modules that called it are removed, and no worker readiness check, installer or CI step asks
+  for it. One test over the application, its image, its installers and their CI (`backend/tests/test_no_tesseract.py`) fails when
+  a source names it again.
+- What rendering and structural validation need stays: Poppler, qpdf, pdf2image and pikepdf. The backend's `ocr` extra no longer
+  exists; those two libraries are ordinary dependencies.
+- Stored results of earlier releases keep their processor versions (`invoice-local-v1`, `intake-local-v1`) and their reasons; they
+  may say that a local text recognition read the text, and are not rewritten.

@@ -313,9 +313,8 @@ async def test_current_uploader_role_controls_source_effects_and_worker(migrator
 
 async def test_strict_upload_extract_and_idempotent_link_preserves_custody(migrator_session, scope_seed, store, monkeypatch):
     from app.core.db import get_worker_session_factory
-    from app.core.invoice_ocr import extract_invoice
     from app.workers.invoice_extraction import process_once
-    from tests.test_invoice_extraction_worker import pdf_bytes
+    from tests.test_invoice_extraction_worker import local_outcome, pdf_bytes
     ids = await fixture(migrator_session, scope_seed)
     category = await read_value("SELECT id FROM cost_category WHERE code='GRUNDSTEUER' AND plan_version=1", ids)
     async with client(ids, 'actor') as admin:
@@ -329,7 +328,7 @@ async def test_strict_upload_extract_and_idempotent_link_preserves_custody(migra
         uploaded = await api.post('/api/invoice-documents/upload', files={'file':('invoice.pdf',pdf_bytes(),'application/pdf')})
         assert uploaded.status_code == 201, uploaded.text
         ids['document'] = uuid.UUID(uploaded.json()['id'])
-        assert await process_once(get_worker_session_factory(), ids['org'], processor=extract_invoice)
+        assert await process_once(get_worker_session_factory(), ids['org'], processor=local_outcome)
         ready = await api.get(f"/api/invoice-documents/{ids['document']}")
         assert ready.json()['extraction_payload']['gross_amount'] == '119.00'
         reference = (await api.get('/api/document-refs/page', params={'source_id': str(ids['document'])})).json()['items'][0]

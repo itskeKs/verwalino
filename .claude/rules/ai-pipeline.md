@@ -1,20 +1,18 @@
 ---
-description: Provider boundary, usage accounting and bounded rendering/OCR for AI-assisted imports
+description: Provider boundary, usage accounting and bounded rendering and reading for AI-assisted imports
 paths:
   - "backend/app/declarations/**"
   - "backend/app/workers/**"
   - "backend/app/evals/**"
   - "backend/app/core/runtime_budget.py"
-  - "backend/app/core/invoice_ocr.py"
   - "backend/app/core/invoice_pdf.py"
-  - "backend/app/core/pdf_extraction.py"
   - "backend/app/core/visual_extract.py"
   - "backend/app/core/intake_extraction.py"
   - "backend/app/core/image_reading.py"
   - "backend/app/core/extraction.py"
 ---
 
-# AI pipeline, reading and OCR
+# AI pipeline and reading
 
 - Every model call goes through a provider protocol: `DeclarationExtractionProvider` in
   `backend/app/declarations/provider.py` for imports, `KnowledgeAnswerProvider` in
@@ -39,10 +37,10 @@ paths:
   invoice proposal carries `MODEL_PROCESSOR_VERSION` (`core/invoice_pdf.py`); extend
   `backend/tests/fixtures/declaration_eval_cases.json` for extraction changes. Evidence, review
   and approval records stay reproducible from stored inputs.
-- Local text recognition is Tesseract (`deu`) with poppler and qpdf, run as bounded subprocesses (DPI,
-  pixels, pages, temp bytes, timeout) in `core/invoice_ocr.py`, `core/pdf_extraction.py` and
-  `core/visual_extract.py`. A path that reads with a model renders its
-  pages with poppler the same bounded way (`declarations/preflight.py`) and has no Tesseract step; an uploaded
+- There is no local text recognition: no Tesseract in the image, the dependencies or any path
+  (`backend/tests/test_no_tesseract.py` guards it). A document without a text layer is rendered with poppler and
+  checked with qpdf and pikepdf as bounded subprocesses (DPI, pixels, pages, temp bytes, timeout) in
+  `declarations/preflight.py` and `core/visual_extract.py`, then read by the organization's reading model; an uploaded
   PNG or JPEG is decoded in a killable child of its own with an address-space limit (`core/image_reading.py`), never
   in the worker process. Keep every new path bounded the same way.
 - The invoice worker sends an unstructured PDF to the organization's models only when its AI import switch, key
@@ -84,6 +82,5 @@ paths:
   records (`declarations/observability.py`) and logs carry identifiers, versions, hashes and
   usage, never document text.
 - The provider-neutral runtime (#66) uses the existing typed interfaces and deterministic
-  manager; see ADR 0014. Model-based reading with two model roles replaces Tesseract path by path
-  (#65, ADR 0017): a path that reads with a model has no Tesseract step or fallback, and there is no
-  separate OCR service.
+  manager; see ADR 0014. Model-based reading with two model roles replaced Tesseract
+  (#65, ADR 0017): no path has a Tesseract step or fallback, and there is no separate OCR service.

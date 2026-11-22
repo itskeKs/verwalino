@@ -14,7 +14,7 @@ from app.core.einvoice import (
     extract_zugferd_xml,
     parse_en16931_xml,
 )
-from app.core.extraction import ExtractionResult
+from app.core.extraction import ExtractionResult, StubExtractor
 from app.core.invoice_pdf import inspect_invoice
 
 UBL = b"""<?xml version="1.0" encoding="UTF-8"?>
@@ -203,3 +203,9 @@ def test_the_invoice_proposal_of_a_structured_invoice_carries_the_iban_and_its_c
 def test_the_invoice_proposal_of_a_structured_invoice_without_an_iban_says_so_and_claims_no_certainty():
     payload = inspect_invoice(UBL, "application/xml")["payload"]
     assert payload["vendor_iban"] is None and "vendor_iban" not in payload["field_confidences"]
+
+
+def test_the_stub_extractor_returns_an_empty_result():
+    result = StubExtractor().extract(b"anything", "application/pdf")
+    assert result.confidence == 0.0
+    assert result.invoice_date is None

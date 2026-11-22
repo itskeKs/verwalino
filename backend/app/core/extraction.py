@@ -3,7 +3,6 @@
 m2-gobd-belegfluss.md section 3.5, section 8.3:
   - DocumentExtractor protocol (same pattern as PdfRenderer, DocumentStore).
   - StubExtractor: returns empty/minimal ExtractionResult.
-  - Real OCR/parsing implementation is the NEXT M2 step (not this run).
   - E-Invoice (M5) is a second implementation of the same protocol.
 
 The extraction result is stored as JSONB in invoice_document.extraction_payload
@@ -18,7 +17,7 @@ from typing import Protocol, runtime_checkable
 
 @dataclass(frozen=True)
 class ExtractionResult:
-    """Result of document extraction (OCR/parsing/E-Rechnung).
+    """Result of document extraction (reading/parsing/E-Rechnung).
 
     Fields mirror cost_entry columns. None = not detected.
     confidence: 0.0-1.0 overall confidence score.
@@ -39,7 +38,7 @@ class ExtractionResult:
     field_confidences: dict[str, float] = field(default_factory=dict)
     raw_text: str | None = None
     # M5: structured e-invoice marker. is_einvoice=True means the fields were
-    # parsed from a structured EN-16931 document (XRechnung/ZUGFeRD), not OCR;
+    # parsed from a structured EN-16931 document (XRechnung/ZUGFeRD), not read by a model;
     # source_format records the concrete format ("XRECHNUNG_UBL", "XRECHNUNG_CII",
     # "ZUGFERD"). The frontend can set cost_entry.source='E_INVOICE' from this.
     is_einvoice: bool = False
@@ -75,7 +74,6 @@ class DocumentExtractor(Protocol):
 
     Implementations:
       - StubExtractor (M2 default): returns empty result.
-      - OcrExtractor (M2 next step): real PDF OCR/parsing.
       - EInvoiceExtractor (M5): structured XRechnung/ZUGFeRD parsing.
     """
 
@@ -95,8 +93,8 @@ class DocumentExtractor(Protocol):
 class StubExtractor:
     """Stub extractor -- returns empty results.
 
-    Placeholder for the real OCR implementation. Documents uploaded via this
-    extractor will start as needs_review (low confidence forces review).
+    Documents uploaded via this extractor will start as needs_review (low
+    confidence forces review).
     """
 
     def extract(self, file_bytes: bytes, mime_type: str) -> ExtractionResult:

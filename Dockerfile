@@ -19,7 +19,7 @@ WORKDIR /app
 COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --frozen --no-dev --extra ops --no-install-project
 COPY backend/ ./
-RUN uv sync --frozen --no-dev --extra ops --extra ocr --no-editable
+RUN uv sync --frozen --no-dev --extra ops --no-editable
 
 FROM python:3.12-slim-bookworm@sha256:0f5b26b9518d002b6173fd61daad821fa340635ebfec5bba471013f9ca114579 AS runtime
 ENV PYTHONUNBUFFERED=1 \
@@ -35,7 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libcairo2 libgdk-pixbuf-2.0-0 libffi8 \
       libbrotli1 libexpat1 libpcre2-8-0 libssh2-1 perl-base \
       fonts-dejavu-core shared-mime-info \
-      poppler-utils qpdf tesseract-ocr tesseract-ocr-deu clamav \
+      poppler-utils qpdf clamav \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.12 \
     && rm -rf /usr/local/lib/python3.12/site-packages/pip \
@@ -56,7 +56,7 @@ RUN chmod 0555 /usr/local/bin/entrypoint.sh /usr/local/bin/worker-entrypoint.sh 
     && test ! -e /usr/local/lib/python3.12/site-packages/pip \
     && ! python -m pip --version >/dev/null 2>&1 \
     && ! /usr/local/bin/python -m pip --version >/dev/null 2>&1 \
-    && python -c 'import weasyprint; import app.main' \
+    && python -c 'import weasyprint; import pikepdf, pdf2image; import app.main' \
     && alembic --version \
     && python -m app.admin_cli --help >/dev/null \
     && python -m app.workers.declaration_import --help >/dev/null

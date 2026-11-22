@@ -93,7 +93,7 @@ was asked for which page, and both model ids come from the settings the tester s
 checkout of the PR's commit, with the test database settings and the instance's document directory:
 
 ```sh
-cd <repository>/backend && . ../scripts/test-env.sh && uv run --locked --extra dev --extra ops --extra ocr \
+cd <repository>/backend && . ../scripts/test-env.sh && uv run --locked --extra dev --extra ops \
   python -m tests.offline_declaration_import --organization "<organization name>" \
   --documents "$(sed -n 's/^scratch=//p' /tmp/hausverwaltung-acceptance.lock/instance)/documents"
 ```

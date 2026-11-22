@@ -43,7 +43,7 @@ the inbox UI and API require no authentication. The Make targets source this fil
 until mkdir /tmp/verwalino-testdb.lock 2>/dev/null; do sleep 10; done
 trap 'rmdir /tmp/verwalino-testdb.lock' EXIT
 source scripts/test-env.sh
-cd backend && uv run --locked --extra dev --extra ops --extra ocr pytest tests/bdd -q
+cd backend && uv run --locked --extra dev --extra ops pytest tests/bdd -q
 # Add -k "same_statement" to select one API scenario.
 ```
 
@@ -264,7 +264,7 @@ Set `VERWALINO_TARGET_URL` to the installation's origin, for example
 
 ```sh
 cd backend
-uv run --locked --extra dev --extra ops --extra ocr pytest tests/bdd \
+uv run --locked --extra dev --extra ops pytest tests/bdd \
   --run-browser --scenario-report ../report -q
 ```
 
@@ -427,7 +427,7 @@ One-time setup (repeat the browser install when the locked Playwright version ch
 
 ```sh
 cd backend
-uv sync --locked --extra dev --extra ops --extra ocr
+uv sync --locked --extra dev --extra ops
 uv run --locked --extra dev playwright install chromium
 ```
 

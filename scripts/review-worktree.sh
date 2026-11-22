@@ -48,7 +48,7 @@ create() { # PR
   git -C "$MAIN" fetch --quiet origin "+refs/heads/$branch:refs/remotes/origin/$branch" \
     || die "cannot fetch branch $branch of PR #$pr from origin; no review worktree was made"
   git -C "$MAIN" worktree add --quiet --detach "$dir" "origin/$branch"
-  if ! ( cd "$dir/backend" && uv sync --locked --extra dev --extra ops --extra ocr ); then
+  if ! ( cd "$dir/backend" && uv sync --locked --extra dev --extra ops ); then
     if git -C "$MAIN" worktree remove "$dir"; then
       die "installing the backend environment failed; the new worktree $dir was removed again"
     fi

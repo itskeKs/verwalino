@@ -9,9 +9,9 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-# Backend runs through uv. `test` needs dev (pytest), ops (psycopg2 for the
-# Alembic fixtures) and ocr (pikepdf/pytesseract used by the PDF preflight tests).
-UV_TEST := uv run --locked --extra dev --extra ops --extra ocr
+# Backend runs through uv. `test` needs dev (pytest) and ops (psycopg2 for the
+# Alembic fixtures).
+UV_TEST := uv run --locked --extra dev --extra ops
 UV_LINT := uv run --locked --extra dev
 
 # Extra pytest arguments, e.g. make test-backend PYTEST_ARGS="-q tests/test_x.py -k name"

@@ -24,9 +24,10 @@ The software is German; documentation, issues, code comments, tests and commits 
   [domain rule](.claude/rules/domain.md) lists them. Code that still implements an older
   provisional value is debt with its own issue, not licence to keep it.
 - A production instance with real data runs on the owner's machine (Databases and containers below).
-- LLM and OCR work has a provider boundary and cost accounting
-  ([AI pipeline rule](.claude/rules/ai-pipeline.md)); provider-neutral runtime (#66) and an OCR
-  service (#65) are open decisions, not things to pre-empt in passing.
+- LLM and document-reading work has a provider boundary and cost accounting
+  ([AI pipeline rule](.claude/rules/ai-pipeline.md)); the provider-neutral runtime (#66) is an
+  open decision, not something to pre-empt in passing. Documents are read by the organization's
+  models; there is no local OCR (ADR 0017).
 
 ## Agent host integrations
 

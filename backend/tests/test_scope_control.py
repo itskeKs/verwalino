@@ -94,7 +94,7 @@ async def test_pause_fences_scoped_invoice_jobs_but_retains_unclassified_compati
     from app.core.db import get_worker_session_factory, set_tenant_context
     from app.services.invoice_processing_service import InvoiceProcessingService as LiveInvoiceProcessingService
     from app.core.extraction import ExtractionResult
-    from app.core.invoice_ocr import outcome
+    from app.core.invoice_pdf import outcome
 
     class InvoiceProcessingService(LiveInvoiceProcessingService):
         async def finish(self, claim, result):

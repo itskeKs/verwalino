@@ -717,7 +717,7 @@ To compare saved captures without database or provider access, run from `backend
 with absolute report paths:
 
 ```sh
-uv run --locked --extra dev --extra ops --extra ocr python - "$BASELINE_REPORT" "$CANDIDATE_REPORT" <<'PY'
+uv run --locked --extra dev --extra ops python - "$BASELINE_REPORT" "$CANDIDATE_REPORT" <<'PY'
 import json, sys
 from app.evals.recorded_import import load_recorded_report, compare_recorded_reports
 comparison = compare_recorded_reports(load_recorded_report(sys.argv[1]), load_recorded_report(sys.argv[2]))

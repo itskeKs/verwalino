@@ -47,7 +47,7 @@ quotation occurs in the text read from that page and the quotation shows the val
 reading model in a killable child with an address-space limit (`core/image_reading.py`), never in the worker. Requests are reserved and settled in `invoice_model_call` (0198, column
 `intake_attempt_id`) and count towards the monthly limit. Without opt-in, model, key or budget, or on a provider failure, the
 original is retained with a structured reason in the state the established manual and retry workflow expects; Tesseract is not
-used (the image keeps it until #502). Which confirmation text versions name which kinds of document is one table
+used (it is no longer in the image, #502). Which confirmation text versions name which kinds of document is one table
 (`CONFIRMATION_TEXTS` in `services/ai_settings_service.py`: 1 declarations, 2 declarations and invoices, 3 all three, 4
 declarations and the inbox), which the settings card, a new confirmation and every path read. In every stack the declaration
 worker runs this stage in its loop and no other process does (`core/invoice_claimant.py` is the one place that says which worker

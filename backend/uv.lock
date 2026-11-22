@@ -703,7 +703,9 @@ dependencies = [
     { name = "jinja2" },
     { name = "lxml" },
     { name = "openai" },
+    { name = "pdf2image" },
     { name = "pdfplumber" },
+    { name = "pikepdf" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-multipart" },
@@ -726,11 +728,6 @@ dev = [
     { name = "reportlab" },
     { name = "ruff" },
 ]
-ocr = [
-    { name = "pdf2image" },
-    { name = "pikepdf" },
-    { name = "pytesseract" },
-]
 ops = [
     { name = "psycopg2-binary" },
 ]
@@ -748,13 +745,12 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1,<4" },
     { name = "lxml", specifier = ">=5,<7" },
     { name = "openai", specifier = ">=3,<4" },
-    { name = "pdf2image", marker = "extra == 'ocr'", specifier = ">=1.17,<2" },
+    { name = "pdf2image", specifier = ">=1.17,<2" },
     { name = "pdfplumber", specifier = ">=0.11,<1" },
-    { name = "pikepdf", marker = "extra == 'ocr'", specifier = ">=9,<12" },
+    { name = "pikepdf", specifier = ">=9,<12" },
     { name = "psycopg2-binary", marker = "extra == 'ops'", specifier = ">=2.9,<3" },
     { name = "pydantic", specifier = ">=2.0,<3" },
     { name = "pydantic-settings", specifier = ">=2.0,<3" },
-    { name = "pytesseract", marker = "extra == 'ocr'", specifier = ">=0.3,<1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8,<9" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.25,<1" },
     { name = "pytest-bdd", marker = "extra == 'dev'", specifier = ">=8,<9" },
@@ -770,7 +766,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30,<1" },
     { name = "weasyprint", specifier = ">=70,<71" },
 ]
-provides-extras = ["ops", "dev", "ocr"]
+provides-extras = ["ops", "dev"]
 
 [[package]]
 name = "httpcore"
@@ -1691,19 +1687,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/47/8430452269cd28863d73b903d07d329d058cf762527ff211b3864ba61fc7/pyphen-0.18.1.tar.gz", hash = "sha256:dbae6fbbe4f01cb206108b43573d857c67107be9d0e38eb1b08d6fa2210634a7", size = 2116411, upload-time = "2026-08-14T11:30:12.083Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ec/1d/23801cf008f71575f0a4800463f349afa5f04b27fe783178a45cdc4d5edf/pyphen-0.18.1-py3-none-any.whl", hash = "sha256:0aa9051e15928cecadd4c632cea0258ba57215b2a197a39baa46abcdb0f47e84", size = 2116143, upload-time = "2026-08-14T11:30:10.428Z" },
-]
-
-[[package]]
-name = "pytesseract"
-version = "0.3.13"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "packaging" },
-    { name = "pillow" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/9f/a6/7d679b83c285974a7cb94d739b461fa7e7a9b17a3abfd7bf6cbc5c2394b0/pytesseract-0.3.13.tar.gz", hash = "sha256:4bf5f880c99406f52a3cfc2633e42d9dc67615e69d8a509d74867d3baddb5db9", size = 17689, upload-time = "2024-08-16T02:33:56.762Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/7a/33/8312d7ce74670c9d39a532b2c246a853861120486be9443eebf048043637/pytesseract-0.3.13-py3-none-any.whl", hash = "sha256:7a99c6c2ac598360693d83a416e36e0b33a67638bb9d77fdcac094a3589d4b34", size = 14705, upload-time = "2024-08-16T02:36:10.09Z" },
 ]
 
 [[package]]

@@ -90,8 +90,8 @@ path's core ([invoice extraction](invoice-extraction.md)): processor `intake-mod
   card), `invoice_page_limit`, …); the screens explain each in German from one map
   (`frontend/src/lib/invoiceProcessing.ts`) and `POST /api/logical-documents/{logical}/retry-extraction` stays open within
   its three attempts that made a request (below). Usage already incurred stays visible.
-- **No Tesseract.** It stays in the image until [#502](https://github.com/itskeKs/verwalino/issues/502) but no code of this
-  path calls it.
+- **No Tesseract.** Neither this path nor the image has it ([#502](https://github.com/itskeKs/verwalino/issues/502)): an
+  unstructured original is read only by the organization's models, and the stage needs only the PDF renderer.
 
 ### A multipage original waits for the division
 

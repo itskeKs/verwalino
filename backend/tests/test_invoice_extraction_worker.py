@@ -5,7 +5,8 @@ import uuid
 import pytest
 import pytest_asyncio
 from reportlab.pdfgen import canvas
-from app.core.invoice_ocr import extract_invoice, run_isolated_extraction
+from app.core.extraction import ExtractionResult
+from app.core.invoice_pdf import inspect_invoice, outcome, run_isolated_inspection
 from tests.test_error_tracking import offline_tracker as offline_tracker
 
 
@@ -46,40 +47,33 @@ def pdf_bytes(pages=1, *, encrypted=False):
     return out.getvalue()
 
 
-def test_text_and_xml_bypass_ocr(monkeypatch):
+def local_outcome(data, mime_type):
+    """The finished local proposal for the synthetic invoice of ``pdf_bytes()``.
+
+    The tests that use it exercise the durable machinery around a proposal (claims, fencing, history, custody, review),
+    not a reading: reading a page is the organization's models' work and is tested with their fakes.
+    """
+    return outcome("succeeded", payload={**ExtractionResult(
+        vendor_name="Stadtwerke Test GmbH", invoice_date="2025-06-01", gross_amount="119.00", confidence=0.6,
+        field_confidences={"vendor_name": 0.5, "invoice_date": 0.8, "gross_amount": 0.85},
+        raw_text="Stadtwerke Test GmbH\nRechnungsdatum: 01.06.2025\nGesamtbetrag: 119,00 EUR").to_dict(), "source_pages": [1]})
+
+
+def test_xml_is_parsed_directly_and_a_text_pdf_is_left_to_the_models():
     from tests.test_m5_einvoice import UBL
-    def forbidden(*args, **kwargs):
-        raise AssertionError("OCR must not run for text/XML")
-    monkeypatch.setattr("app.core.invoice_ocr.ocr_page", forbidden)
-    for data, mime in [(pdf_bytes(), "application/pdf"), (UBL, "application/xml")]:
-        outcome = extract_invoice(data, mime)
-        assert outcome["status"] == "succeeded"
-        assert outcome["payload"]["gross_amount"] == "119.00"
+    parsed = inspect_invoice(UBL, "application/xml")
+    assert parsed["status"] == "succeeded"
+    assert parsed["payload"]["gross_amount"] == "119.00"
+    unread = inspect_invoice(pdf_bytes(), "application/pdf")
+    assert unread["status"] == "unstructured" and unread["page_count"] == 1
+    assert "Gesamtbetrag: 119,00 EUR" in unread["pages"][0]["text"]
 
 
 @pytest.mark.parametrize("data,error", [(b"broken", "invalid_pdf"), (pdf_bytes(encrypted=True), "encrypted_pdf"), (pdf_bytes(201), "pdf_page_limit")], ids=["corrupt", "encrypted", "page-limit"])
 def test_invalid_documents_keep_explicit_outcome(data, error):
-    result = extract_invoice(data, "application/pdf")
+    result = inspect_invoice(data, "application/pdf")
     assert result["error_code"] == error
     assert result["payload"] is None
-
-
-def test_real_image_only_invoice():
-    from PIL import Image, ImageDraw, ImageFont
-    image = Image.new("RGB", (1654, 2339), "white")
-    draw = ImageDraw.Draw(image)
-    # Use a platform-independent font shipped with reportlab.
-    import reportlab
-    from pathlib import Path
-    font = ImageFont.truetype(str(Path(reportlab.__file__).parent / "fonts" / "Vera.ttf"), 36)
-    for y, line in enumerate(["Stadtwerke Test GmbH", "Rechnungsdatum: 01.06.2025", "Gesamtbetrag: 119,00 EUR"]):
-        draw.text((100, 150+y*90), line, fill="black", font=font)
-    out = io.BytesIO()
-    image.save(out, format="PDF", resolution=200)
-    result = run_isolated_extraction(out.getvalue(), "application/pdf")
-    assert result["status"] == "succeeded", result
-    assert result["payload"]["gross_amount"] == "119.00"
-    assert result["payload"]["source_pages"] == [1]
 
 
 @pytest.mark.asyncio
@@ -90,7 +84,7 @@ async def test_upload_is_durable_before_processing(worker_tenant, tmp_path):
     from app.workers.invoice_extraction import process_once
     set_store(LocalFsDocumentStore(str(tmp_path)))
     try:
-        uploaded = await client_a_admin.post("/api/invoice-documents/upload", files={"file": ("scan.pdf", pdf_bytes(), "application/pdf")})
+        uploaded = await client_a_admin.post("/api/invoice-documents/upload", files={"file": ("zugferd.pdf", zugferd_pdf(), "application/pdf")})
         assert uploaded.status_code == 201
         doc = uploaded.json()
         assert doc["processing_status"] == "queued"
@@ -98,11 +92,11 @@ async def test_upload_is_durable_before_processing(worker_tenant, tmp_path):
         called = []
         def processor(data, mime):
             called.append(data)
-            return extract_invoice(data, mime)
+            return inspect_invoice(data, mime)
         assert await process_once(get_worker_session_factory(), seed_data["org_a_id"], processor=processor)
         ready = (await client_a_admin.get(f"/api/invoice-documents/{doc['id']}")).json()
         assert ready["processing_status"] == "succeeded"
-        assert ready["extraction_payload"]["gross_amount"] == "119.00"
+        assert ready["extraction_payload"]["gross_amount"] == "476.00"
         assert ready["cost_entry_id"] is None
         assert len(called) == 1
         assert not await process_once(get_worker_session_factory(), seed_data["org_a_id"], processor=processor)
@@ -110,33 +104,8 @@ async def test_upload_is_durable_before_processing(worker_tenant, tmp_path):
         set_store(None)
 
 
-def empty_pdf(pages=1):
-    output = io.BytesIO()
-    c = canvas.Canvas(output)
-    for _ in range(pages):
-        c.showPage()
-    c.save()
-    return output.getvalue()
-
-
-@pytest.mark.parametrize("failure,code", [(FileNotFoundError(), "ocr_unavailable"), (__import__('subprocess').TimeoutExpired('ocr', 10), "ocr_timeout")], ids=["dependency", "timeout"])
-def test_ocr_failure_discards_proposals(monkeypatch, failure, code):
-    def fail(*args):
-        raise failure
-    monkeypatch.setattr("app.core.invoice_ocr.ocr_page", fail)
-    result = extract_invoice(empty_pdf(), "application/pdf")
-    assert result["error_code"] == code
-    assert result["payload"] is None
-
-
-def test_page_limit_never_truncates():
-    result = extract_invoice(empty_pdf(21), "application/pdf")
-    assert result["error_code"] == "ocr_page_limit"
-    assert result["payload"] is None
-
-
 def test_process_timeout_is_bounded():
-    result = run_isolated_extraction(pdf_bytes(), "application/pdf", timeout=0.001)
+    result = run_isolated_inspection(pdf_bytes(), "application/pdf", timeout=0.001)
     assert result["error_code"] == "extraction_timeout"
 
 
@@ -164,7 +133,7 @@ async def test_restart_fencing_and_retry_access(worker_tenant, client_b_admin, t
                             {"past": datetime.now(timezone.utc)-timedelta(seconds=1), "id": first["attempt_id"]})
         second = await claim()
         assert second["token"] != first["token"]
-        result = extract_invoice(pdf_bytes(), "application/pdf")
+        result = local_outcome(pdf_bytes(), "application/pdf")
         async with factory() as s, s.begin():
             await set_tenant_context(s, seed_data["org_a_id"])
             svc = InvoiceProcessingService(s, seed_data["org_a_id"])
@@ -246,12 +215,8 @@ def zugferd_pdf(cii=None, pages=1):
     return data
 
 
-def test_embedded_xml_bypasses_ocr(monkeypatch):
-    data = zugferd_pdf()
-    def forbidden(*args):
-        raise AssertionError("Embedded XML must bypass OCR")
-    monkeypatch.setattr("app.core.invoice_ocr.ocr_page", forbidden)
-    result = extract_invoice(data, "application/pdf")
+def test_embedded_xml_is_parsed_directly():
+    result = inspect_invoice(zugferd_pdf(), "application/pdf")
     assert result["status"] == "succeeded"
     assert result["payload"]["is_einvoice"]
     assert result["payload"]["gross_amount"] == "476.00"
@@ -444,7 +409,7 @@ async def test_worker_retries_finished_output_after_lock_timeout_without_extract
         return await original(self, claim, result)
     def processor(data, mime):
         extractions.append(data)
-        return extract_invoice(data, mime)
+        return local_outcome(data, mime)
     monkeypatch.setattr(InvoiceProcessingService, 'finish', contended_finish)
     try:
         uploaded = await api.post('/api/invoice-documents/upload',

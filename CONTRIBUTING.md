@@ -11,11 +11,11 @@ untouched. Report cleanup in one line, never in a repository file.
 ## Development environment
 
 - Python with [uv](https://docs.astral.sh/uv/), Node 22, Docker (for the test database only).
-- Backend dependencies: `cd backend && uv sync --extra dev --extra ops --extra ocr`.
+- Backend dependencies: `cd backend && uv sync --extra dev --extra ops`.
   The local launcher `scripts/dev-local.sh` requires Poppler (`pdftoppm`) for the invoice worker and for the inbox
   worker, which also needs the ClamAV signatures. The declaration import, the invoice worker and the inbox
-  worker render pages with Poppler and read them with a model: no Tesseract (the image keeps it until #502, no
-  code calls it). A worker health check aborts its startup if a tool it needs is missing.
+  worker render pages with Poppler and read them with a model: there is no Tesseract in the image or in the dependencies,
+  and nothing to install for it. A worker health check aborts its startup if a tool it needs is missing.
 - Browser setup (once, and after Playwright lock updates):
   `cd backend && uv run --locked --extra dev playwright install chromium`.
 - Frontend dependencies: `cd frontend && npm ci` (`make frontend-deps` does it when needed).
@@ -104,7 +104,7 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   fake `gh`, `uv` and `lsof`, real git on sandbox repositories, no network or database.
 - **`make review-worktree PR=<n>`** — first step of a fresh review: the detached worktree
   `../verwalino-review-<n>` on the head of open PR `<n>`, the locked backend environment installed
-  (`uv sync --locked --extra dev --extra ops --extra ocr`), then the directory and the line that loads the
+  (`uv sync --locked --extra dev --extra ops`), then the directory and the line that loads the
   test environment. It refuses a directory that already exists (that PR is under review), a PR that is
   not open and a PR from a fork (its head is not a branch of this repository). It takes no
   test-database lock and runs no tests; frontend dependencies stay a review's own business.
@@ -286,7 +286,7 @@ to Postgres. To run the contract locally without a database:
 ```sh
 source scripts/test-env.sh
 cd backend
-uv run --locked --extra dev --extra ops --extra ocr python ../scripts/backend_test_shards.py check 4
+uv run --locked --extra dev --extra ops python ../scripts/backend_test_shards.py check 4
 ```
 
 Every successful CI run, including pushes to `main`, records setup/call/teardown timings

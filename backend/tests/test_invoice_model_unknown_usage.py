@@ -39,7 +39,6 @@ from tests.test_invoice_model_extraction import (
     scan_pdf,
     state,
     store as store,
-    tesseract_unusable as tesseract_unusable,
     transcript,
     upload,
     usage,
