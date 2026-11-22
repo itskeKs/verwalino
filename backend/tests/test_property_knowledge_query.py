@@ -329,6 +329,7 @@ async def test_openai_adapter_uses_data_only_tool_free_strict_request() -> None:
     assert call["store"] is False
     assert call["tools"] == []
     assert call["service_tier"] == 'default'
+    assert 'reasoning' not in call, 'the property questions send no reasoning effort'
     assert call['prompt_cache_options'] == {'mode':'explicit','ttl':'30m'}
     assert 'prompt_cache_breakpoint' not in __import__('json').dumps(call['input'])
     assert call["timeout"] == 31
