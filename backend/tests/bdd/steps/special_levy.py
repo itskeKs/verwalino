@@ -126,7 +126,7 @@ def rental_without_scope(world, seed_data):
     tenant = create(world, '/api/tenant-profiles', {'person_id': person.id})
     lease = create(world, '/api/leases', {'unit_id': unit['id'], 'tenant_profile_id': tenant['id'],
         'valid_from': '2026-01-01', 'base_rent': '700.00', 'advance_payment': '0.00'})
-    world.data.update(plain_tenant=tenant, plain_lease=lease)
+    world.data.update(plain_property=prop, plain_tenant=tenant, plain_lease=lease)
 
 
 JANUARY = {'period_start': '2026-01-01', 'period_end': '2026-01-31'}
@@ -150,6 +150,35 @@ def notice_without_scope(world):
         **JANUARY, 'reference_date': '2026-03-02'})
     assert answer.status_code == 201, world.describe_response()
     assert (answer.json()['principal_amount'], answer.json()['total_amount']) == ('700.00', '700.00')
+
+
+@given('the tenant paid the 700 euros and a property tax of 250 euros is confirmed for January 2026')
+def rent_and_tax_without_scope(world):
+    prop = world.data['plain_property']
+    account = create(world, '/api/bank-accounts', {'property_id': prop['id'], 'account_type': 'LAUFEND',
+        'label': 'Mietkonto Sonnenweg', 'iban': 'DE02120300000000202051'})
+    payment = create(world, '/api/payments', {'bank_account_id': account['id'],
+        'lease_agreement_id': world.data['plain_lease']['id'], 'tenant_profile_id': world.data['plain_tenant']['id'],
+        'payment_type': 'KALTMIETE', 'direction': 'IN', 'amount': '700.00', 'value_date': '2026-01-03',
+        'period_year': 2026, 'period_month': 1})
+    assert world.act('POST', f"/api/payments/{payment['id']}/book").status_code == 200, world.describe_response()
+    categories = world.act('GET', '/api/cost-categories')
+    assert categories.status_code == 200, world.describe_response()
+    category = next(row for row in categories.json() if row['code'] == 'GRUNDSTEUER')
+    cost = create(world, '/api/cost-entries', {'property_id': prop['id'], 'cost_category_id': category['id'],
+        'cost_category_plan_version': category['plan_version'], 'invoice_date': '2026-01-15',
+        'service_period_from': '2026-01-01', 'service_period_to': '2026-12-31', 'gross_amount': '250.00',
+        'tenant_apportionable': 'UMLAGEFAEHIG', 'source': 'MANUAL'})
+    assert world.act('POST', f"/api/cost-entries/{cost['id']}/confirm").status_code == 200, world.describe_response()
+
+
+@given('the annual overview of Sonnenweg 5 for 2026 shows 700 euros income, 250 euros expenses and 450 euros balance')
+@then('the annual overview of Sonnenweg 5 for 2026 shows 700 euros income, 250 euros expenses and 450 euros balance')
+def annual_overview_without_scope(world):
+    answer = world.act('GET', '/api/reports/property-year', params={'property_id': world.data['plain_property']['id'], 'year': 2026})
+    assert answer.status_code == 200, world.describe_response()
+    overview = answer.json()
+    assert (overview['income_total'], overview['expense_total'], overview['balance']) == ('700.00', '250.00', '450.00'), overview
 
 
 @when("Berta's ownership entry is corrected to start on 1 August 2026")

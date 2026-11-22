@@ -1,4 +1,4 @@
-"""An organization with a special levy answers unscoped reads like classified data does (#722, #739)."""
+"""An organization with a special levy answers unscoped reads like classified data does (#722, #739, #816)."""
 import importlib
 import uuid
 
@@ -244,6 +244,187 @@ async def test_caller_without_access_to_the_levy_scope_reads_the_property_withou
         refused_with_a_scope_required(await unscoped_reads(blind, ids))
 
 
+async def add_bank_account_without_scope(db, ids):
+    """The bank account of the property without a scope, bound to no accounting scope."""
+    ids.update(b_bank=uuid.uuid4())
+    await db.execute(text("INSERT INTO bank_account(id,organization_id,property_id,account_type,label,iban) VALUES (:b_bank,:org,:other_property,'LAUFEND','Musterhaus','DE02200505501015871393')"), ids)
+    await db.commit()
+
+
+async def add_year_books_without_scope(db, ids):
+    """Booked for 2025 on the property without a scope: June rent of 500.00 and an advance of 100.00, confirmed property tax of 250.00."""
+    await add_bank_account_without_scope(db, ids)
+    for kind, amount in (('KALTMIETE', 500), ('NK_VORAUSZAHLUNG', 100)):
+        await db.execute(text("""INSERT INTO payment(id,organization_id,property_id,bank_account_id,amount,direction,value_date,payment_type,tenant_profile_id,period_year,period_month,status)
+            VALUES (gen_random_uuid(),:org,:other_property,:b_bank,:amount,'IN','2025-06-03',:kind,:b_tenant,2025,6,'booked')"""), {**ids, 'kind': kind, 'amount': amount})
+    category = await db.scalar(text("SELECT id FROM cost_category WHERE code='GRUNDSTEUER' AND plan_version=1"))
+    await db.execute(text("""INSERT INTO cost_entry(id,organization_id,property_id,cost_category_id,cost_category_plan_version,invoice_date,service_period_from,service_period_to,gross_amount,tenant_apportionable,status,source,confirmed_at,confirmed_by)
+        VALUES (gen_random_uuid(),:org,:other_property,:category,1,'2025-06-01','2025-01-01','2025-12-31',250,'UMLAGEFAEHIG','confirmed','MANUAL',now(),:actor)"""), {**ids, 'category': category})
+    await db.commit()
+
+
+async def add_statement_line_without_scope(db, ids):
+    """A bank statement line of 600.00 on that account: the tenant of the property pays rent and advance for June 2025."""
+    await add_bank_account_without_scope(db, ids)
+    ids.update(b_line=uuid.uuid4())
+    await db.execute(text("UPDATE person SET iban='DE89370400440532013000' WHERE id=:b_person"), ids)
+    await db.execute(text("""INSERT INTO bank_transaction(id,organization_id,bank_account_id,booking_date,value_date,amount,counterparty_name,counterparty_iban,purpose,import_hash,status)
+        VALUES (:b_line,:org,:b_bank,'2025-06-03','2025-06-03',600,'Plain Tenant','DE89370400440532013000','Warmmiete Juni 2025',:hash,'NEU')"""),
+                     {**ids, 'hash': uuid.uuid4().hex})
+    await db.commit()
+
+
+async def annual_overview(api, ids, key='other_property'):
+    answer = await api.get('/api/reports/property-year', params={'property_id': str(ids[key]), 'year': 2025})
+    return answer.status_code, answer.json()
+
+
+async def bank_matching(api, ids):
+    answer = await api.get('/api/bank-transactions', params={'bank_account_id': str(ids['b_bank'])})
+    return answer.status_code, answer.json()
+
+
+def figures_before_the_levy(answer):
+    """The annual overview of the property without a scope: 600.00 income (500.00 rent, 100.00 advance), 250.00 property tax."""
+    status, body = answer
+    assert status == 200, body
+    assert body['accounting_scope_id'] is None
+    assert [(row['payment_type'], row['amount']) for row in body['income']] == [('KALTMIETE', '500.00'), ('NK_VORAUSZAHLUNG', '100.00')]
+    assert [(row['category_code'], row['amount']) for row in body['expenses']] == [('GRUNDSTEUER', '250.00')]
+    assert (body['income_total'], body['expense_total'], body['balance']) == ('600.00', '250.00', '350.00')
+
+
+def suggestion_before_the_levy(ids, answer):
+    """The statement line is suggested as the June rent of the tenant: 500.00 rent and 100.00 advance of the one lease."""
+    status, body = answer
+    assert status == 200, body
+    line, = body['items']
+    suggestion, = line['suggestions']
+    assert suggestion['confidence'] == 'HIGH'
+    assert [(part['payment_type'], part['amount'], part['lease_agreement_id']) for part in suggestion['lines']] == [
+        ('KALTMIETE', '500.00', str(ids['b_lease'])), ('NK_VORAUSZAHLUNG', '100.00', str(ids['b_lease']))]
+
+
+async def test_levy_leaves_the_annual_overview_of_a_property_without_a_scope_as_before(levy_db, levy_fixture):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_year_books_without_scope(levy_db, ids)
+    async with client(ids) as api:
+        before = await annual_overview(api, ids)
+        figures_before_the_levy(before)
+        await create(api, ids)
+        assert await annual_overview(api, ids) == before
+        summary = await api.get('/api/reports/property-year/anlage-v', params={'property_id': str(ids['other_property']), 'year': 2025})
+        assert summary.status_code == 200, summary.text
+
+
+async def test_levy_leaves_the_bank_matching_of_an_account_without_a_scope_as_before(levy_db, levy_fixture):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_statement_line_without_scope(levy_db, ids)
+    async with client(ids) as api:
+        before = await bank_matching(api, ids)
+        suggestion_before_the_levy(ids, before)
+        await create(api, ids)
+        assert await bank_matching(api, ids) == before
+
+
+async def add_scope_only_property(db, ids):
+    """A property with an accounting scope of its own and no classified finance."""
+    ids.update(d_property=uuid.uuid4(), d_scope=uuid.uuid4())
+    await db.execute(text("INSERT INTO property(id,organization_id,name,street,zip_code,city,management_type) VALUES (:d_property,:org,'Scope only','','','','MISCH')"), ids)
+    await db.execute(text("INSERT INTO accounting_scope(id,organization_id,property_id,scope_type,label,valid_from,whole_property,origin,created_by) VALUES (:d_scope,:org,:d_property,'MIET','Scope only','2025-01-01',true,'REVIEWED',:actor)"), ids)
+    await db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:d_scope,:clerk,ARRAY['read'],:actor,'Scope only property')"), ids)
+    await db.commit()
+
+
+async def add_levy_only_property(api, db, ids):
+    """A second WEG property whose only classified finance is its own frozen levy: no bank account, no booking, nothing bound."""
+    ids.update(c_property=uuid.uuid4(), c_scope=uuid.uuid4(), c_unit=uuid.uuid4(), c_person=uuid.uuid4(), c_owner=uuid.uuid4(),
+               c_meeting=uuid.uuid4(), c_resolution=uuid.uuid4())
+    await db.execute(text("INSERT INTO property(id,organization_id,name,street,zip_code,city,management_type) VALUES (:c_property,:org,'Levy only','','','','WEG')"), ids)
+    await db.execute(text("INSERT INTO accounting_scope(id,organization_id,property_id,scope_type,label,valid_from,whole_property,origin,created_by) VALUES (:c_scope,:org,:c_property,'WEG','Levy only','2025-01-01',true,'REVIEWED',:actor)"), ids)
+    await db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:c_scope,:clerk,ARRAY['read','prepare','confirm'],:actor,'Levy only property')"), ids)
+    await db.execute(text("INSERT INTO unit(id,organization_id,property_id,number,usage_type,mea) VALUES (:c_unit,:org,:c_property,'1','WOHNUNG',1000)"), ids)
+    await db.execute(text("INSERT INTO person(id,organization_id,first_name,last_name,street,zip_code,city) VALUES (:c_person,:org,'Levy','Only','','','')"), ids)
+    await db.execute(text("INSERT INTO owner_profile(id,organization_id,person_id,notes) VALUES (:c_owner,:org,:c_person,'')"), ids)
+    await db.execute(text("INSERT INTO ownership_history(id,organization_id,unit_id,owner_profile_id,valid_from) VALUES (gen_random_uuid(),:org,:c_unit,:c_owner,'2024-01-01')"), ids)
+    await db.execute(text("INSERT INTO owners_meeting(id,organization_id,property_id,meeting_date,location,meeting_type,status) VALUES (:c_meeting,:org,:c_property,'2025-05-15','Test','ORDENTLICH','HELD')"), ids)
+    await db.execute(text("INSERT INTO resolution(id,organization_id,meeting_id,wording,votes_yes,votes_no,votes_abstain,result) VALUES (:c_resolution,:org,:c_meeting,'Dachreparatur',2,0,0,'ANGENOMMEN')"), ids)
+    await db.commit()
+    await create(api, ids, property_id=str(ids['c_property']), accounting_scope_id=str(ids['c_scope']),
+                 resolution_id=str(ids['c_resolution']), amount='1200.00')
+
+
+async def test_levy_still_asks_for_a_scope_where_the_property_is_classified_or_has_a_scope(levy_db, levy_fixture):
+    ids = levy_fixture
+    await add_lease_and_plan(levy_db, ids)
+    await add_property_without_scope(levy_db, ids)
+    await add_year_books_without_scope(levy_db, ids)
+    await add_scope_only_property(levy_db, ids)
+    async with client(ids) as api:
+        await add_levy_only_property(api, levy_db, ids)
+        await create(api, ids)
+        # The levy's own properties, one of them with the levy as its only classified finance.
+        for key in ('property', 'c_property'):
+            assert await annual_overview(api, ids, key) == (409, {'detail': 'Select an exact accounting scope for this property'}), key
+        # A property that has a scope of its own is read through it, as before this change.
+        assert await annual_overview(api, ids, 'd_property') == (409, {'detail': SCOPE_REQUIRED})
+        scoped = await api.get('/api/reports/property-year', params={'property_id': str(ids['d_property']), 'year': 2025, 'accounting_scope_id': str(ids['d_scope'])})
+        assert scoped.status_code == 200, scoped.text
+        # The overviews of the whole organization.
+        refused_with_a_scope_required(await unscoped_reads(api, ids))
+        # The property without a scope is read.
+        figures_before_the_levy(await annual_overview(api, ids))
+
+
+async def test_caller_without_access_to_the_levy_scope_reads_the_overview_and_matching_of_the_property_without_a_scope(levy_db, levy_fixture):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_year_books_without_scope(levy_db, ids)
+    await add_statement_line_without_scope(levy_db, ids)
+    async with client(ids) as api:
+        levy = await create(api, ids)
+    await levy_db.execute(text('UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE scope_id=:scope AND user_id=:clerk AND revoked_at IS NULL'), ids)
+    await levy_db.commit()
+    async with client(ids) as blind:
+        overview, matching = await annual_overview(blind, ids), await bank_matching(blind, ids)
+        for answer in (overview, matching):
+            assert levy['id'] not in str(answer) and '3000.00' not in str(answer) and '1200.00' not in str(answer)
+        figures_before_the_levy(overview)
+        # Without the scope nothing of the levy's property is shown either: 404 for the caller, no figures.
+        assert (await blind.get('/api/reports/property-year', params={'property_id': str(ids['property']), 'year': 2025,
+                                                                      'accounting_scope_id': str(ids['scope'])})).status_code == 404
+        assert (await annual_overview(blind, ids, 'property'))[0] == 409
+
+
+async def test_foreign_organization_reads_neither_the_overview_nor_the_matching_of_the_property_without_a_scope(levy_db, levy_fixture, client_b_admin):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_year_books_without_scope(levy_db, ids)
+    await add_statement_line_without_scope(levy_db, ids)
+    async with client(ids) as api:
+        await create(api, ids)
+    overview = await client_b_admin.get('/api/reports/property-year', params={'property_id': str(ids['other_property']), 'year': 2025})
+    assert (overview.status_code, overview.json()) == (404, {'detail': 'Property not found'})
+    matching = await client_b_admin.get('/api/bank-transactions', params={'bank_account_id': str(ids['b_bank'])})
+    assert (matching.status_code, matching.json()) == (404, {'detail': 'Bank account not found'})
+    for answer in (overview, matching):
+        assert '600.00' not in answer.text and '250.00' not in answer.text
+
+
+async def test_enforced_sources_keep_refusing_an_unscoped_read_of_the_property_without_a_scope(levy_db, levy_fixture, scope_seed):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    async with client(ids) as api:
+        await create(api, ids)
+    assert await property_answer(ids, subject=ids['other_property'])
+    # An enforced organization refuses every unscoped read by itself, so the caller answers the plain 404, not the levy's 409.
+    async with synthetic_enforcement(scope_seed):
+        assert not await property_answer(ids, subject=ids['other_property'])
+        assert not await property_answer(ids, capability='prepare', subject=ids['other_property'])
+
+
 async def test_report_scope_source_access_answers_for_one_lease_or_owner(levy_db, levy_fixture, seed_data):
     ids = levy_fixture
     await add_lease_and_plan(levy_db, ids)
@@ -306,6 +487,50 @@ async def uncommitted_answer(db, ids, **arguments):
                                {'org': ids['org'], 'lease': None, 'owner': None, **arguments})
     finally:
         await db.execute(text('RESET ROLE'))
+
+
+async def property_answer(ids, *, sphere=None, capability='read', lease=None, owner=None, subject=None, org=None, actor_key='clerk'):
+    """The six-argument function as the runtime role, for a member of the organization; `subject` is the one property of the read."""
+    params = {**ids, 'org': org or ids['org'], 'sphere': sphere, 'capability': capability, 'lease': lease, 'owner': owner, 'subject': subject}
+    return await read_value("SELECT report_scope_source_access(:org,:sphere,:capability,:lease,:owner,:subject)", params, actor_key=actor_key)
+
+
+async def test_report_scope_source_access_answers_for_one_property(levy_db, levy_fixture, seed_data):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_scope_only_property(levy_db, ids)
+    async with client(ids) as api:
+        await add_levy_only_property(api, levy_db, ids)
+        await create(api, ids)
+    assert not await read_value("SELECT report_scope_source_access(:org,NULL,'read')", ids, actor_key='clerk')
+    # The property without a scope and without classified finance: as before the levy.
+    for capability in ('read', 'prepare'):
+        assert await property_answer(ids, capability=capability, subject=ids['other_property'])
+    # An id that concerns no property of the organization (unknown, or of another organization) concerns no levy either.
+    assert await property_answer(ids, subject=uuid.uuid4())
+    assert await property_answer(ids, subject=seed_data['org_b_id'])
+    # The levy's property, one whose only classified finance is the levy, and one with a scope of its own are refused.
+    for key in ('property', 'c_property', 'd_property'):
+        assert not await property_answer(ids, subject=ids[key]), key
+    # No subject, or the property next to a lease or an owner, is no single subject.
+    assert not await property_answer(ids)
+    assert not await property_answer(ids, subject=ids['other_property'], lease=ids['b_lease'])
+    assert not await property_answer(ids, subject=ids['other_property'], owner=ids['b_owner'])
+    # A scope is answered as before: the subject is not looked at.
+    assert await property_answer(ids, sphere=ids['scope'], subject=ids['other_property']) == await read_value(
+        "SELECT report_scope_source_access(:org,:scope,'read')", ids, actor_key='clerk')
+    # A caller of another organization gets no exemption for the levy organization's property.
+    engine = create_async_engine(APP_RW_URL)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:user,true)"),
+                                     {'org': str(seed_data['org_b_id']), 'user': str(seed_data['user_b_admin_id'])})
+            assert not await connection.scalar(text("SELECT report_scope_source_access(:org,NULL,'read',NULL,NULL,:subject)"),
+                                               {'org': ids['org'], 'subject': ids['other_property']})
+    finally:
+        await engine.dispose()
+    # An unknown capability is refused by the function it delegates to.
+    assert not await property_answer(ids, capability='delete', subject=ids['other_property'])
 
 
 async def test_report_scope_source_access_refuses_an_owner_reached_only_through_a_payment_or_a_plan_line(levy_db, levy_fixture):
@@ -377,8 +602,8 @@ async def test_report_scope_source_access_answers_a_scoped_call_for_an_unclassif
                     assert await function_answer(ids, actor_key='actor', sphere=ids['scope'], capability=capability, **subject) == of_the_scope
 
 
-async def test_the_new_overload_has_the_attributes_and_acl_of_the_function_it_extends(levy_db):
-    old, new = 'report_scope_source_access(uuid,uuid,text)', 'report_scope_source_access(uuid,uuid,text,uuid,uuid)'
+async def test_the_property_overload_has_the_attributes_and_acl_of_the_function_it_extends(levy_db):
+    old, new = 'report_scope_source_access(uuid,uuid,text)', 'report_scope_source_access(uuid,uuid,text,uuid,uuid,uuid)'
     metadata = text("""SELECT p.prosecdef, p.provolatile::text, p.proconfig, l.lanname, p.prorettype::regtype::text,
         pg_get_userbyid(p.proowner), (SELECT array_agg(CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END ORDER BY a.grantee)
           FROM aclexplode(p.proacl) a WHERE a.privilege_type='EXECUTE')
@@ -392,6 +617,7 @@ async def test_the_new_overload_has_the_attributes_and_acl_of_the_function_it_ex
 
 def test_0193_adds_and_drops_only_the_overload():
     migration = importlib.import_module('migrations.versions.0193_levy_scope_reach')
+    successor = importlib.import_module('migrations.versions.0199_levy_property_reach')
     functions = text("""SELECT p.oid::regprocedure::text,pg_get_functiondef(p.oid),p.proacl::text,p.proconfig,p.proowner
         FROM pg_proc p WHERE p.pronamespace='public'::regnamespace ORDER BY 1""")
     new = 'report_scope_source_access(uuid,uuid,text,uuid,uuid)'
@@ -400,12 +626,43 @@ def test_0193_adds_and_drops_only_the_overload():
         with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
             savepoint = db.begin_nested()
             try:
+                # 0199 replaces the overload: 0193 is measured on the schema it left, not on the head.
+                successor.downgrade()
                 head = {row[0]: tuple(row[1:]) for row in db.execute(functions)}
                 assert new in head
                 migration.downgrade()
                 assert {row[0]: tuple(row[1:]) for row in db.execute(functions)} == {key: value for key, value in head.items() if key != new}
                 for kept in ('report_scope_source_access(uuid,uuid,text)', 'report_sources_before_special_levy(uuid,uuid,text)'):
                     assert db.scalar(text('SELECT to_regprocedure(:signature)'), {'signature': kept}) is not None
+                migration.upgrade()
+                assert {row[0]: tuple(row[1:]) for row in db.execute(functions)} == head
+            finally:
+                savepoint.rollback()
+    finally:
+        engine.dispose()
+
+
+def test_0199_replaces_the_overload_and_downgrade_restores_the_function_of_0193():
+    migration = importlib.import_module('migrations.versions.0199_levy_property_reach')
+    earlier = importlib.import_module('migrations.versions.0193_levy_scope_reach')
+    functions = text("""SELECT p.oid::regprocedure::text,pg_get_functiondef(p.oid),p.proacl::text,p.proconfig,p.proowner
+        FROM pg_proc p WHERE p.pronamespace='public'::regnamespace ORDER BY 1""")
+    old, new = 'report_scope_source_access(uuid,uuid,text,uuid,uuid)', 'report_scope_source_access(uuid,uuid,text,uuid,uuid,uuid)'
+    engine = create_engine(MIGRATOR_SYNC_URL)
+    try:
+        with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
+            savepoint = db.begin_nested()
+            try:
+                head = {row[0]: tuple(row[1:]) for row in db.execute(functions)}
+                assert new in head and old not in head
+                migration.downgrade()
+                restored = {row[0]: tuple(row[1:]) for row in db.execute(functions)}
+                assert old in restored and new not in restored
+                assert {key: value for key, value in restored.items() if key != old} == {key: value for key, value in head.items() if key != new}
+                # The restored function is the one 0193 creates, text and ACL included.
+                earlier.downgrade()
+                earlier.upgrade()
+                assert {row[0]: tuple(row[1:]) for row in db.execute(functions)} == restored
                 migration.upgrade()
                 assert {row[0]: tuple(row[1:]) for row in db.execute(functions)} == head
             finally:
