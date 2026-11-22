@@ -21,6 +21,8 @@ from functools import lru_cache
 from json import JSONDecodeError
 from typing import Any, Callable, TypeVar
 
+import httpx
+import httpx2
 import tiktoken
 from openai import (
     APIConnectionError,
@@ -260,6 +262,26 @@ def _response_has_refusal(response: object) -> bool:
             if block_type == "refusal":
                 return True
     return False
+
+
+class RequestNotSent(APIConnectionError):
+    """A transport's statement that the request never left the host: its name did not resolve, the endpoint guard
+    refused the address, or the connection could not be made. Nothing of the request was written."""
+
+
+# The OpenAI SDK reports a failed connection as ``APIConnectionError`` raised from the HTTP library's own error (which
+# is httpx2, not the httpx of ``ProviderClient``). That library raises ``ConnectError`` only while the connection is
+# being set up (name resolution, TCP connect, TLS handshake), before the first byte of the request is written; its
+# timeouts, resets, write and protocol errors all belong to a request that may have been sent. This holds for a client
+# that does not retry (``max_retries=0`` here): a retry could fail to connect after an earlier attempt was written.
+_CONNECTION_PHASE_ERRORS = (httpx.ConnectError, httpx2.ConnectError)
+
+
+def _request_never_left(error: Exception) -> bool:
+    """Whether a failed request provably never left the host; a failure that names no phase is unknown, so False."""
+    return isinstance(error, RequestNotSent) or (
+        isinstance(error, APIConnectionError) and isinstance(error.__cause__, _CONNECTION_PHASE_ERRORS)
+    )
 
 
 @dataclass(frozen=True)
@@ -932,6 +954,8 @@ class OpenAiDeclarationProvider:
                     attempt_count=2,
                 ) from None
             except ProviderFailure as error:
+                # The first leg was answered, so the logical request was sent whatever the second leg did.
+                error.not_sent = False
                 aggregate = self._aggregate_usage(
                     first_usage, error.usage, attempt_count=2
                 )
@@ -1371,6 +1395,7 @@ class OpenAiDeclarationProvider:
                     True,
                     "OpenAI connection failed.",
                     attempt_metadata=(metadata,),
+                    not_sent=_request_never_left(error),
                 ) from None
             if isinstance(error, RateLimitError):
                 code = "PROVIDER_RATE_LIMIT"

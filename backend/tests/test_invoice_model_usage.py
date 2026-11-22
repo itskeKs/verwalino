@@ -8,14 +8,14 @@ from decimal import Decimal
 
 import pytest
 
-from app.models.invoice_model_call import InvoiceModelCall
+from app.models.invoice_model_call import REQUEST_NOT_SENT, InvoiceModelCall
 from app.services.invoice_model_usage import summarize
 
 pytestmark = pytest.mark.no_db
 
 
 def call(stage="extract_invoice", model="gpt-5.6-luna", *, page=None, reserved=(5000, 3000, "0.04"), consumed=None,
-         complete=None):
+         complete=None, error=None):
     """One ledger row: RESERVED when ``consumed`` is None, else SETTLED with those tokens and cost."""
     row = InvoiceModelCall(stage=stage, pdf_page=page if stage == "read_page" else None, model_name=model,
                            reserved_input_tokens=reserved[0], reserved_output_tokens=reserved[1], reserved_cost_usd=Decimal(reserved[2]))
@@ -25,6 +25,7 @@ def call(stage="extract_invoice", model="gpt-5.6-luna", *, page=None, reserved=(
         row.status = "SETTLED"
         row.input_tokens, row.output_tokens, row.cost_usd = consumed[0], consumed[1], Decimal(consumed[2])
         row.usage_complete = complete
+        row.error_code = error
     return row
 
 
@@ -92,3 +93,27 @@ def test_two_models_of_one_stage_are_two_blocks_after_the_stage_before_them_in_t
     ])
     assert [(stage.stage, stage.model) for stage in usage.stages] == [
         ("READING", "gpt-5.4-mini"), ("EXTRACTION", "gpt-5.6-luna"), ("EXTRACTION", "gpt-5.4-mini")]
+
+
+def test_a_request_that_never_left_the_host_is_not_listed_and_has_no_usage():
+    # Three attempts at a provider nobody listens on: three rows settled at zero, none of them a request.
+    refused = [call("read_page", "gpt-5.4-mini", page=1, reserved=(4000, 6000, "0.03"), consumed=(0, 0, "0"), complete=True, error=REQUEST_NOT_SENT)
+               for _ in range(3)]
+    assert summarize(refused).model_dump() == {"stages": [], "total": None}
+
+
+def test_a_request_that_never_left_the_host_leaves_the_usage_of_the_requests_that_did_as_it_is():
+    sent = call("read_page", "gpt-5.4-mini", page=1, reserved=(4000, 6000, "0.03"), consumed=(1000, 200, "0.00165"), complete=True)
+    not_sent = call("read_page", "gpt-5.4-mini", page=2, reserved=(4000, 6000, "0.03"), consumed=(0, 0, "0"), complete=True, error=REQUEST_NOT_SENT)
+    usage = summarize([sent, not_sent])
+    (stage,) = usage.stages
+    assert (stage.calls, stage.usage_status, stage.reported_input_tokens, stage.estimated_cost_usd) == (1, "REPORTED", 1000, Decimal("0.00165"))
+    assert (usage.total.usage_status, usage.total.input_tokens, usage.total.estimated_cost_usd) == ("REPORTED", 1000, Decimal("0.00165"))
+
+
+def test_a_request_that_failed_after_it_was_sent_is_listed_with_its_reservation_whatever_its_error():
+    # The same failure code as a request that could not connect, but a request that may have been sent: it is booked
+    # at its reservation, so it is shown as that.
+    sent = call("read_page", "gpt-5.4-mini", page=1, reserved=(4000, 6000, "0.03"), consumed=(4000, 6000, "0.03"), complete=False, error="PROVIDER_CONNECTION_ERROR")
+    (stage,) = summarize([sent]).stages
+    assert (stage.calls, stage.usage_status, stage.input_tokens, stage.estimated_cost_usd) == (1, "RESERVED", 4000, Decimal("0.03"))
