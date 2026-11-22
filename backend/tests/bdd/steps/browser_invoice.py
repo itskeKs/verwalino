@@ -171,9 +171,10 @@ async def open_settings(browser_world):
 @then("the one switch reads that it imports declarations and evaluates the documents of the inbox and no text of the card names invoices at 1280 and 360 pixels")
 @browser_step
 async def settings_switch(browser_world):
-    """The stack runs with HV_INVOICE_EXTRACTION_ENABLED=false, as the portable stack does: its card is about declarations
-    and the documents of the inbox, which every installation reads with the organization's models, and names no invoice.
-    The wording of an installation that processes invoices is tested in the card's own component test."""
+    """The stack runs with HV_INVOICE_EXTRACTION_ENABLED=false, as an installation whose operator switched invoice processing
+    off: its card is about declarations and the documents of the inbox, which every installation reads with the organization's
+    models, and names no invoice. The wording of an installation that processes invoices is tested in the card's own
+    component test."""
     page = browser_world.page
     for viewport in (DESKTOP, PHONE):
         await page.set_viewport_size(viewport)

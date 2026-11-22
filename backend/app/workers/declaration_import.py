@@ -9,6 +9,7 @@ import math
 import os
 import secrets
 import shutil
+import signal
 import uuid
 
 from app.core.request_id import correlation_context
@@ -24,8 +25,9 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, settings
-from app.core.db import get_worker_tenant_session, get_worker_unscoped_session
+from app.core.db import get_worker_session_factory, get_worker_tenant_session, get_worker_unscoped_session
 from app.core.deployment_policy import get_deployment_policy
+from app.core.invoice_claimant import claims_invoices
 from app.models.declaration_import import DeclarationExtractionRun
 from app.models.organization import Organization
 from app.repositories.declaration_import_repo import (
@@ -83,6 +85,7 @@ class DeclarationImportWorker:
         clock: Callable[[], datetime] | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         heartbeat_seconds: float | None = None,
+        invoice_providers: Callable[[Any], Any] | None = None,
     ) -> None:
         self._settings = configured
         self._pipeline = pipeline
@@ -91,6 +94,8 @@ class DeclarationImportWorker:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._sleep = sleep
         self._last_claimed_organization_id: uuid.UUID | None = None
+        self._last_invoice_organization_id: uuid.UUID | None = None
+        self._invoice_providers = invoice_providers
         self._last_signup_cleanup: datetime | None = None
         self._unreadable_key_logged: set[uuid.UUID] = set()
         self._validate_settings(heartbeat_seconds)
@@ -457,9 +462,52 @@ class DeclarationImportWorker:
             logger.info("declaration worker result=SIGNUP_CLEANUP removed=%s", removed)
         self._last_signup_cleanup = now
 
+    async def _process_one_invoice(self) -> bool:
+        """Claim and process at most one waiting invoice of the organizations this worker serves (issue #814).
+
+        The step is the invoice worker's own (``workers/invoice_extraction.py``; lease, bounds, metering and the
+        organization's opt-in are unchanged). The loop only gives it a turn after the declaration step, and tries the
+        organizations in rotation, so that neither kind of work starves the other and an organization with a backlog
+        does not hold back the rest. A failure is logged by type and place only and ends neither the turn for the
+        other organizations nor the loop; a cancellation is not a failure and passes through.
+        """
+        if not claims_invoices("declaration_import", enabled=self._settings.invoice_extraction_enabled):
+            return False
+        from app.workers import invoice_extraction
+
+        try:
+            organization_ids = await self._organization_ids()
+        except Exception as error:
+            error_type, location = _safe_error_details(error)
+            logger.warning(
+                "declaration worker result=INVOICE_DISCOVERY_FAILED error_type=%s location=%s",
+                error_type, location,
+            )
+            return False
+        if self._last_invoice_organization_id in organization_ids:
+            start = organization_ids.index(self._last_invoice_organization_id) + 1
+            organization_ids = organization_ids[start:] + organization_ids[:start]
+        options = {} if self._invoice_providers is None else {"providers": self._invoice_providers}
+        for organization_id in organization_ids:
+            try:
+                processed = await invoice_extraction.process_once(get_worker_session_factory(), organization_id, **options)
+            except Exception as error:
+                error_type, location = _safe_error_details(error)
+                logger.warning(
+                    "declaration worker result=INVOICE_ERROR organization_id=%s error_type=%s location=%s",
+                    organization_id, error_type, location,
+                )
+                continue
+            if processed:
+                self._last_invoice_organization_id = organization_id
+                logger.info("declaration worker result=INVOICE_PROCESSED organization_id=%s", organization_id)
+                return True
+        return False
+
     async def run_forever(self) -> None:
         delay = float(self._settings.declaration_worker_poll_seconds)
         while True:
+            ready = True
             try:
                 result = await self.run_once()
             except asyncio.CancelledError:
@@ -470,12 +518,15 @@ class DeclarationImportWorker:
                     "declaration worker result=UNEXPECTED error_type=%s location=%s",
                     error_type, location,
                 )
-                await self._sleep(min(max(delay, 0.01), 30.0))
-                continue
-            with correlation_context(result.import_id or "-"):
-                logger.info("declaration worker result=%s import_id=%s", result.code, result.import_id)
-            if result.code != "SCHEMA_NOT_READY":
-                await self._cleanup_signup_requests()
+            else:
+                with correlation_context(result.import_id or "-"):
+                    logger.info("declaration worker result=%s import_id=%s", result.code, result.import_id)
+                ready = result.code != "SCHEMA_NOT_READY"
+                if ready:
+                    await self._cleanup_signup_requests()
+            if ready:
+                # One invoice per round, whatever the declaration step did: a failure there does not hold it back.
+                await self._process_one_invoice()
             # Keep retrying missing migrations/empty queues, but bound any idle
             # wait to avoid an unresponsive process after configuration changes.
             await self._sleep(min(max(delay, 0.01), 30.0))
@@ -520,8 +571,18 @@ async def run_healthcheck(
 
 
 async def _main() -> None:
-    """Production-only construction; import and tests never perform I/O."""
-    await DeclarationImportWorker().run_forever()
+    """Production-only construction; import and tests never perform I/O.
+
+    SIGTERM cancels the loop, as it does for the invoice worker: an invoice request that is out is then settled by the
+    invoice path's own cancellation handling, and a claimed job keeps its lease for the fenced recovery.
+    """
+    loop = asyncio.get_running_loop()
+    loop.add_signal_handler(signal.SIGTERM, asyncio.current_task().cancel)
+    try:
+        with suppress(asyncio.CancelledError):
+            await DeclarationImportWorker().run_forever()
+    finally:
+        loop.remove_signal_handler(signal.SIGTERM)
 
 
 def main(argv: list[str] | None = None) -> int:

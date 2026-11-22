@@ -1599,6 +1599,8 @@ class StagingLayoutTests(unittest.TestCase):
             "HV_DATABASE_URL_WORKER": "postgresql+asyncpg://app_worker:${APP_WORKER_PASSWORD:?missing staging secret}@db:5432/hausverwaltung",
             "HV_SESSION_SECRET": "${SESSION_SECRET:?missing staging secret}",
             "HV_DOCUMENT_STORAGE_ROOT": "/data/documents",
+            # The declaration worker also processes invoices (issue #814), under the same operator switch as the app.
+            "HV_INVOICE_EXTRACTION_ENABLED": "${HV_INVOICE_EXTRACTION_ENABLED:-true}",
         })
         self.assertEqual(worker["volumes"], ["documents_staging:/data/documents"])
         self.assertEqual(worker["depends_on"], {
@@ -1667,6 +1669,7 @@ class StagingLayoutTests(unittest.TestCase):
         self.assertEqual(env["HV_DEPLOYMENT_MODE"], "hosted")
         self.assertEqual(env["HV_PUBLIC_HOST"], "staging.verwalino.de")
         self.assertIn("${CANARY_EMAIL:?", env["HV_MAIL_ALLOWLIST"])
+        self.assertEqual(env["HV_INVOICE_EXTRACTION_ENABLED"], "${HV_INVOICE_EXTRACTION_ENABLED:-true}")
 
     def test_main_push_builds_before_ssh_and_docs_do_not_trigger_it(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-staging.yaml").read_text())

@@ -30,6 +30,14 @@ from app.repositories.declaration_import_repo import (
 from app.workers.declaration_import import DeclarationImportWorker
 
 
+@pytest.fixture(autouse=True)
+def declaration_step_only(monkeypatch):
+    """These tests are about the declaration step of the worker loop. Its invoice step (issue #814, with its own tests
+    in test_declaration_worker_invoices.py and test_invoice_model_extraction.py) must not claim the waiting invoices
+    that other tests left in the shared database."""
+    monkeypatch.setattr(settings, "invoice_extraction_enabled", False)
+
+
 @pytest.fixture
 def seed_data(seed_data, monkeypatch):
     """Keep each worker scenario out of retained imports from other fixtures."""

@@ -74,7 +74,7 @@ with `ai_key_unreadable`. In each case no provider is built, the original is kep
 exists; the manual path (**Kostenposition erstellen**) stays open.
 
 **An installation that does not process invoices says nothing about them.** Where
-`HV_INVOICE_EXTRACTION_ENABLED` is `false` (the portable stack, including the hosted server) the settings card
+`HV_INVOICE_EXTRACTION_ENABLED` is `false` (the operator's choice for an installation that processes no invoices) the settings card
 „KI für Ihre Organisation“ is about the declaration import and the documents of the inbox ([inbox flow](inbox-review-chain.md#reading-with-the-organizations-models)), which every
 installation reads with the organization's models: its switch reads „Teilungserklärungen importieren sowie Dokumente im
 Posteingang auswerten“, and neither the description nor the confirmation text names invoices (the settings answer carries
@@ -195,10 +195,29 @@ status and no new queue entry. Each worker handles one invoice at a time. This i
 infrastructure of M-B or measured professional capacity of M-G.
 
 To reach the organization's provider the worker needs the session secret (the key is stored encrypted under it)
-and the same provider route as the declaration worker. In `docker-compose.prod.yml` the `invoice-worker`
-joins the `backend` and `egress` networks like `worker` and receives `HV_SESSION_SECRET`;
-see [DEPLOY.md](../../DEPLOY.md#invoice-worker-t10). **The portable stack, including the hosted server, starts no invoice
-worker and keeps `HV_INVOICE_EXTRACTION_ENABLED` off, so there an uploaded invoice is saved and waits for manual entry.**
+and the same provider route as the declaration worker.
+
+**Which process processes invoices.** Exactly one per installation, so that no waiting invoice is claimed by two
+processes and none waits for a process that does not exist. The rule is one function, `claims_invoices` in
+`core/invoice_claimant.py`; each stack file gives it the worker kind and the service's own value of
+`HV_INVOICE_EXTRACTION_ENABLED`, and `tests/test_invoice_claimants.py` pins the result for every stack file.
+
+| Stack | The one process that processes invoices | The other workers |
+| --- | --- | --- |
+| `docker-compose.prod.yml` | the dedicated `invoice-worker` (`backend` and `egress` networks like `worker`, `HV_SESSION_SECRET`; [DEPLOY.md](../../DEPLOY.md#invoice-worker-t10)) | the declaration worker `worker` has the value fixed to `false`; so has the `inbox-worker` |
+| Portable stack (self-hosted installations, the hosted server) and staging | the `declaration-worker`, in its own loop ([DEPLOY.md](../../DEPLOY.md#invoice-processing-in-the-portable-stack)) | the optional `inbox-worker` has the value `false` and its default stages leave invoices out |
+| Any stack with the operator's switch off | nobody: the app says processing is switched off and the settings card names no invoices | |
+
+**The declaration worker's loop.** Each round the declaration worker takes one step of the declaration import, as before,
+and then claims and processes at most one waiting invoice (`DeclarationImportWorker._process_one_invoice`), trying the
+organizations in rotation. The two kinds of work take turns, so neither starves the other; a long job of one delays the
+other by its duration. The invoice step is the invoice worker's own: claim, lease (150 seconds), bounds, metering and
+the opt-in are unchanged. A failure of one invoice, one organization or the declaration step is logged with its type
+and place only (`INVOICE_ERROR`, `INVOICE_DISCOVERY_FAILED`, `UNEXPECTED`) and ends neither the round nor the loop, and
+a round without a ready declaration schema claims no invoice. SIGTERM cancels the loop, as for the invoice worker: a
+request that is out is settled at its reservation (`WORKER_CANCELLED`), and the claimed invoice or import keeps its
+lease and is read again once it has expired. The worker keeps its 768 MiB: it runs one task at a time, and an invoice
+is bounded to 10 pages rendered one at a time.
 
 The authenticated retry endpoint rechecks org/write access and document state;
 it reuses an active attempt and cannot exceed the attempt budget. Failure never
@@ -206,7 +225,8 @@ removes the original or creates a cost. Details expose status and processing
 history; manual review remains available. Logs do not contain extracted text;
 document text and transcripts leave the host only to the organization's configured provider.
 
-Rollback: set `HV_INVOICE_EXTRACTION_ENABLED=false` to stop new claims, keep
+Rollback: set `HV_INVOICE_EXTRACTION_ENABLED=false` (portable stack: export it and let the installer recreate the
+services; production: the invoking environment) to stop new claims, keep
 originals, attempt history and the usage ledger readable and use manual review. Stop workers before
 an application rollback. Do not downgrade a populated database: the downgrade of 0197 refuses while a
 model call record or an `invoice-model-v1` proposal exists. Storage/queue

@@ -214,7 +214,7 @@ it("keeps what the stored confirmation covered and asks once more only for the d
   expect(screen.queryByText(/galt, bevor/)).not.toBeInTheDocument();
 });
 
-// Where this installation does not process invoices (HV_INVOICE_EXTRACTION_ENABLED=false, the portable stack) the card
+// Where this installation does not process invoices (the operator's HV_INVOICE_EXTRACTION_ENABLED=false) the card
 // is about the declaration import and the documents of the inbox, which every installation reads with the organization's
 // models: it says nothing about invoices being evaluated or sent. What the card names comes from the settings answer.
 const withoutInvoices = { ...settings, invoice_processing_enabled: false };

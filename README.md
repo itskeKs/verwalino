@@ -166,7 +166,8 @@ exits 1 on blockers ([diagnostics](DEPLOY.md#portable-troubleshooting-start-with
 
 The portable stack includes the declaration worker; AI import and AI Q&A stay off until an
 organization administrator configures a provider (see [AI features](#ai-features)). It ships
-without SMTP and automatic invoice processing; manual voucher processing works. An optional inbox worker (compose profile `inbox`)
+without SMTP. The declaration worker also processes invoices, with the organization's own models and only after its opt-in; manual
+voucher processing always works. An optional inbox worker (compose profile `inbox`)
 processes intake documents locally; see [DEPLOY.md](DEPLOY.md#inbox-worker) and the
 [inbox review chain](docs/operations/inbox-review-chain.md). Database and documents live in named volumes:
 back up the private configuration, database, and documents together. A signed

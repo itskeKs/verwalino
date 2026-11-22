@@ -14,8 +14,11 @@ Status: **Draft for confirmation by the human — no code yet, no commit**
 
 ## Local Invoice Worker (T10)
 
-Invoice extraction runs as its own process, apart from the declaration-of-division
-worker. The API stores the original and durably enqueues the job;
+Invoice extraction runs as its own process (`docker-compose.prod.yml`: `invoice-worker`) or, where a stack
+starts no invoice worker (the portable stack, staging, the hosted server), as a step in the loop of the
+declaration-of-division worker; one process per installation claims invoices
+(`core/invoice_claimant.py`, [invoice extraction](operations/invoice-extraction.md#worker-and-deployment)).
+The API stores the original and durably enqueues the job;
 `invoice_extraction` by default determines the organization IDs in every round and
 processes them serially under the isolated `app_worker` role. `--organization`
 restricts the selection. Claim and result completion remain short, separate

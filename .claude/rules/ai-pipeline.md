@@ -74,8 +74,10 @@ paths:
   `pass_id`; a view of per-stage usage reads that ledger and the run row in one aggregation
   (`api/declaration_imports.py`), never a second counter.
 - Documents and extracted text leave the host only to the configured provider from a worker that
-  has the provider network (the declaration worker; the invoice worker where Compose gives it the same
-  `backend` and `egress` networks, never wider; `DEPLOY.md`); respect `HV_DATA_REGION`. Observability
+  has the provider network (the declaration worker, which also claims invoices where a stack has no invoice
+  worker; the invoice worker where Compose gives it the same `backend` and `egress` networks, never wider;
+  `DEPLOY.md`). An installation has exactly one invoice claimant, decided in `core/invoice_claimant.py` and
+  stated per Compose service; respect `HV_DATA_REGION`. Observability
   records (`declarations/observability.py`) and logs carry identifiers, versions, hashes and
   usage, never document text.
 - The provider-neutral runtime (#66) uses the existing typed interfaces and deterministic
