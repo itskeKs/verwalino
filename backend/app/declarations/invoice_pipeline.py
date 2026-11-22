@@ -48,6 +48,7 @@ from app.declarations.provider import (
     ProviderUsage,
 )
 from app.declarations.schemas import InvoiceExtractionOutput, PageTranscript, transcript_text
+from app.models.invoice_model_call import REQUEST_NOT_SENT
 from app.repositories.invoice_model_call_repo import InvoiceModelCallRepository
 from app.repositories.organization_ai_settings_repo import OrganizationAiSettingsRepository
 from app.services.ai_settings_service import (
@@ -96,6 +97,9 @@ INVOICE_AI_LIMIT = "invoice_ai_limit"
 ORGANIZATION_BUDGET_EXCEEDED = "organization_ai_budget_exceeded"
 MODEL_READING_FAILED = "model_reading_failed"
 MODEL_EXTRACTION_FAILED = "model_extraction_failed"
+# The request never left the host (the name did not resolve, the endpoint guard refused the address, the connection could not
+# be made): nothing was sent and nothing is booked for it.
+PROVIDER_UNREACHABLE = "provider_unreachable"
 MODEL_RESULT_INVALID = "model_result_invalid"
 LEASE_LOST = "lease_lost"
 
@@ -314,8 +318,8 @@ class InvoiceModelPipeline:
             raw = await call(reservation.output_tokens)
         except ProviderFailure as exc:
             self._exclude_wait(budget, started)
-            await self._settle(call_id, *_failed_amounts(exc, reservation), error_code=exc.code)
-            raise InvoiceModelFailure("failed", failure_code) from None
+            await self._settle(call_id, *_failed_amounts(exc, reservation), error_code=REQUEST_NOT_SENT if exc.not_sent else exc.code)
+            raise InvoiceModelFailure("failed", PROVIDER_UNREACHABLE if exc.not_sent else failure_code) from None
         except asyncio.CancelledError:
             # A worker shutdown while the request was out: what it consumed is unknown, so it stays booked at its
             # reservation, as for any failure without reported usage, and the shutdown goes on. A settlement that
@@ -430,7 +434,10 @@ def _failed_amounts(exc: ProviderFailure, reservation: _Reservation) -> tuple[in
     """What a failed request consumed: its reported usage; nothing only when it provably never left; else the reservation.
 
     Unknown is not zero. A request that reached the provider leaves an attempt on the failure (its metadata, counted
-    in ``attempt_count``); a failure without any attempt, usage or metadata was raised before anything was sent.
+    in ``attempt_count``), and one that may have been written (a timeout, a reset, a protocol error) stays at its
+    reservation. Nothing is booked only for a failure the transport states as ``not_sent`` (the name did not resolve, the
+    endpoint guard refused the address, the connection or its TLS handshake could not be made) and for one without any
+    attempt, usage or metadata, which was raised before anything was sent.
     """
     usage = exc.usage if isinstance(exc.usage, ProviderUsage) else None
     if exc.usage_complete is True and usage is not None:
@@ -439,6 +446,8 @@ def _failed_amounts(exc: ProviderFailure, reservation: _Reservation) -> tuple[in
         except PipelineFailure:
             return reservation.input_tokens, reservation.output_tokens, reservation.cost_usd, False
         return usage.input_tokens, usage.output_tokens, usage.cost_usd, True
+    if exc.not_sent:
+        return 0, 0, Decimal("0"), True
     if (exc.usage_complete is True and exc.usage is None and exc.attempt_count == 0
             and not exc.attempt_metadata and exc.metadata is None):
         return 0, 0, Decimal("0"), True

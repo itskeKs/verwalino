@@ -138,6 +138,13 @@ class ProviderFailure(RuntimeError):
     Never put document content, a response body, or a credential in ``message``.
     ``usage`` is optional because a failed request might not have reached the
     provider; when it is present it is already aggregated and sanitized.
+
+    ``not_sent`` is the transport's statement that the request provably never left the host: the name did not
+    resolve, the endpoint guard refused the address, or the connection or its TLS handshake could not be made,
+    so no byte of the request was written and nothing can have been consumed. Everything else, from the moment a
+    request byte may have been written (a reset, a protocol error, a timeout, an HTTP status), is unknown and
+    stays False: unknown is never zero. It is decided from the phase of the request and the types of the HTTP
+    library's errors, never from message text, and it excludes reported usage.
     """
 
     def __init__(
@@ -150,11 +157,13 @@ class ProviderFailure(RuntimeError):
         metadata: ProviderPassMetadata | None = None,
         usage_complete: bool | None = None,
         attempt_count: int | None = None,
+        not_sent: bool = False,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.retryable = retryable
         self.usage = usage
+        self.not_sent = not_sent and usage is None
         self.attempt_metadata = attempt_metadata
         self.metadata = metadata or (attempt_metadata[-1] if attempt_metadata else None)
         inferred_attempt_count = (

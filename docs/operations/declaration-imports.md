@@ -134,7 +134,9 @@ provider, endpoint, timeout and key. One page is one request; a failed page is r
   extraction passes, so reading and extraction count together against the per-import token and
   cost limits and the organization's monthly limit (`IMPORT_TOKEN_BUDGET_EXCEEDED`,
   `IMPORT_COST_BUDGET_EXCEEDED`, `ORGANIZATION_AI_BUDGET_EXCEEDED`). A failed call keeps the
-  usage the provider reported; when it reported none, the reservation stays recorded. An
+  usage the provider reported; when it reported none, the reservation stays recorded, unless the request provably never
+  left the host (`ProviderFailure.not_sent`: the name did not resolve, the endpoint guard refused the address or the
+  connection could not be made), which gives its reservation back. An
   unpriced model is not limited and shown as „kein Preis bekannt“. The token limits (2,500,000
   input, 500,000 output) are sized for the 200 dense scanned pages the page limit permits, with the
   derivation beside them in `app/core/config.py`; the cost limit of 3.00 USD stays the money guard

@@ -48,6 +48,14 @@ Feature: Invoices read by the organization's AI models
     And the original can still be downloaded
     And the invoice shows no usage
 
+  Scenario: A provider that cannot be reached costs nothing and does not use up the monthly limit
+    Given an administrator of "Verwaltung Alpha" is signed in
+    And the organization has enabled the AI import with a monthly limit of five cents
+    When the administrator uploads a scanned building-insurance invoice whose provider cannot be reached and the worker processes it three times
+    Then the invoice says that the provider could not be reached and proposes nothing
+    And the original can still be downloaded
+    And the invoice shows no usage
+
   Scenario: Another organization cannot see what an invoice used
     Given an administrator of "Verwaltung Alpha" is signed in
     And the organization has enabled the AI import with its own key and both models

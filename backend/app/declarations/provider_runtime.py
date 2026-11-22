@@ -152,10 +152,16 @@ class ProviderClient:
         original = url
         try:
             if not self._injected_transport:
-                addresses = await asyncio.wait_for(asyncio.to_thread(socket.getaddrinfo, url.host, url.port or (443 if url.scheme == "https" else 80), type=socket.SOCK_STREAM), timeout=timeout)
-                ips = list(dict.fromkeys(item[4][0] for item in addresses))
-                if not ips or any(not _valid_address(ip, settings.deployment_mode == "hosted") for ip in ips):
-                    raise ValueError("Unsafe endpoint address")
+                try:
+                    addresses = await asyncio.wait_for(asyncio.to_thread(socket.getaddrinfo, url.host, url.port or (443 if url.scheme == "https" else 80), type=socket.SOCK_STREAM), timeout=timeout)
+                    ips = list(dict.fromkeys(item[4][0] for item in addresses))
+                    if not ips or any(not _valid_address(ip, settings.deployment_mode == "hosted") for ip in ips):
+                        raise ValueError("Unsafe endpoint address")
+                except TimeoutError:
+                    raise
+                except Exception:
+                    # The name did not resolve or the guard refused its address: nothing is connected, let alone sent.
+                    raise RequestNotSent(message="Provider connection failed", request=httpx.Request(method, original)) from None
                 headers["Host"] = url.netloc.decode("ascii")
                 extensions["sni_hostname"] = url.host
                 url = url.copy_with(host=ips[0])
@@ -174,8 +180,11 @@ class ProviderClient:
                 return json.loads(content)
         except (httpx.TimeoutException, TimeoutError):
             raise APITimeoutError(request=httpx.Request(method, original)) from None
-        except APIStatusError:
+        except (APIStatusError, RequestNotSent):
             raise
+        except httpx.ConnectError:
+            # The connection (or its TLS handshake) could not be made: raised before the first byte is written.
+            raise RequestNotSent(message="Provider connection failed", request=httpx.Request(method, original)) from None
         except Exception:
             raise APIConnectionError(message="Provider connection failed", request=httpx.Request(method, original)) from None
 
@@ -280,7 +289,7 @@ def create_extraction_provider(effective, *, configured_settings=None):
     return provider_type(effective, configured_settings=configured_settings)
 
 
-from app.declarations.openai_provider import OpenAiDeclarationProvider, _Rates, png_dimensions, reserved_image_tokens
+from app.declarations.openai_provider import OpenAiDeclarationProvider, RequestNotSent, _Rates, png_dimensions, reserved_image_tokens
 
 
 def create_reading_provider(effective, *, configured_settings=None):
