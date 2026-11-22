@@ -46,7 +46,9 @@ def test_selected_page_has_original_number_and_no_other_page_values():
     result=extract_logical(data,'application/pdf',2,2,2)
     assert result['status']==UNSTRUCTURED and valid_inspection(result,data,'application/pdf',2,2,2)
     assert [page['number'] for page in result['pages']]==[2]
-    assert result['pages'][0]['text']=='\n'.join(LINES) and '999' not in str(result)
+    assert result['pages'][0]['text']=='\n'.join(LINES)
+    # The content hash is hex and may hold any digits, "999" among them: what must not appear is what the other page prints.
+    assert all(part not in str(result) for part in ('Other original GmbH','01.01.2024','999,00'))
     assert (result['page_start'],result['page_end'],result['verified_page_count'])==(2,2,2)
     assert not {'payload','evidence','error_code'}&set(result),'a hand-over proposes nothing: the models read the pages'
     assert result['pages'][0]['width']==pytest.approx(595.28,abs=.01) and result['pages'][0]['height']==pytest.approx(841.89,abs=.01)
