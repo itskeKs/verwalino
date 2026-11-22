@@ -541,6 +541,84 @@ def test_output_allowances_descend_exactly_across_logical_calls() -> None:
     assert ledger.output_allowance() == 0
 
 
+@pytest.fixture
+def default_limits():
+    """The shipped per-import and per-call limits, whatever the test environment sets."""
+    fields = type(settings).model_fields
+    names = (
+        "declaration_max_input_tokens",
+        "declaration_max_output_tokens",
+        "declaration_max_cost_usd",
+        "declaration_provider_max_output_tokens_per_call",
+    )
+    return settings.model_copy(update={name: fields[name].default for name in names})
+
+
+def _default_ledger(configured, *, cost_cap=None) -> _Ledger:
+    return _Ledger(
+        0, 0, Decimal("0"), 0, configured.declaration_max_input_tokens, configured.declaration_max_output_tokens,
+        configured.declaration_max_cost_usd if cost_cap is None else cost_cap, configured, model="gpt-5.6-luna",
+    )
+
+
+def test_default_allowance_settles_a_metered_answer_above_twelve_thousand_tokens(default_limits) -> None:
+    ledger = _default_ledger(default_limits)
+    reservation = ledger.reserve("synthetic", reserved_input_tokens=100)
+    ledger.charge_reservation(reservation)
+
+    ledger.settle_reservation(ProviderUsage(100, 12_001, Decimal("0.0144212"), 1), reservation)
+
+    assert reservation.output_tokens == 24_000
+    assert ledger.output_tokens == 12_001
+
+
+def test_default_allowance_final_call_is_bounded_by_what_the_import_has_left(default_limits) -> None:
+    ledger = _default_ledger(default_limits)
+    reservations = []
+    while ledger.output_allowance() > 0:
+        reservation = ledger.reserve("synthetic")
+        reservations.append(reservation.output_tokens)
+        ledger.charge_reservation(reservation)
+
+    # 500,000 output tokens per import: twenty full calls and a last one of the 20,000 that remain.
+    assert reservations == [24_000] * 20 + [20_000]
+    assert ledger.output_tokens == default_limits.declaration_max_output_tokens
+    with pytest.raises(PipelineFailure, match="IMPORT_TOKEN_BUDGET_EXCEEDED"):
+        ledger.reserve("synthetic")
+
+
+@pytest.mark.asyncio
+async def test_default_allowance_worst_case_over_the_cost_cap_is_refused_before_any_provider_request(default_limits) -> None:
+    pipeline = object.__new__(DeclarationPipeline)
+    pipeline._settings = default_limits
+    called = False
+
+    async def checkpoint(_ledger) -> None:
+        return None
+
+    async def should_not_run(*_args, **_kwargs) -> None:
+        nonlocal called
+        called = True
+
+    pipeline._checkpoint = checkpoint
+    pipeline._provider = SimpleNamespace(
+        inventory=should_not_run,
+        estimate_reservation=lambda *_args, **_kwargs: ProviderReservationEstimate(100, 1, (100,)),
+    )
+    # 24,000 output tokens at 1.20 USD per million alone reserve 0.0288 USD, 12,000 would reserve 0.0144 USD.
+    cap = Decimal("0.02")
+    ledger = _default_ledger(default_limits, cost_cap=cap)
+
+    with pytest.raises(PipelineFailure, match="IMPORT_COST_BUDGET_EXCEEDED"):
+        await pipeline._call("inventory", (), ledger, DocumentInventoryOutput)
+
+    assert called is False
+    assert (ledger.input_tokens, ledger.output_tokens, ledger.cost_usd) == (0, 0, Decimal("0"))
+    # The allowance, not the cap or the request, is what makes it too dear: at the former 12,000 it fits.
+    former = default_limits.model_copy(update={"declaration_provider_max_output_tokens_per_call": 12_000})
+    assert _default_ledger(former, cost_cap=cap).reserve("synthetic", reserved_input_tokens=100).output_tokens == 12_000
+
+
 @pytest.mark.asyncio
 async def test_pre_call_checkpoint_loss_prevents_provider_request() -> None:
     pipeline = object.__new__(DeclarationPipeline)
