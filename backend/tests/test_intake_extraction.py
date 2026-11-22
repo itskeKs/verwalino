@@ -335,7 +335,77 @@ def test_a_source_that_does_not_verify_is_unlocated_and_never_guessed(source):
 
 def test_a_passage_that_is_longer_than_the_database_allows_is_unlocated():
     pages=[{'number':1,'text':'start'+' '*5000+'end','method':'text_layer'}]
-    assert model_evidence({**PAYLOAD,'vendor_name':'x'},{'vendor_name':(1,'start end')},pages)['vendor_name']['locator_status']=='unlocated'
+    assert model_evidence({**PAYLOAD,'vendor_name':'start end'},{'vendor_name':(1,'start end')},pages)['vendor_name']['locator_status']=='unlocated'
+
+
+# A passage is a Fundstelle only when it carries the value (review of PR #832, item 3): a place on the page that does not
+# state the value is not a place of it, whatever the page and the text say.
+
+def status_of(key,value,quote,text=None):
+    page={'number':1,'text':text or quote,'method':'text_layer'}
+    return model_evidence({**PAYLOAD,key:value},{key:(1,quote)},[page])[key]['locator_status']
+
+
+@pytest.mark.parametrize('key,value,quote',[
+    ('gross_amount','9999.00','3'),('document_number','XYZ-999','Rechnung'),('vendor_name','Mustermann Versicherungen AG','AG'),
+],ids=['amount-that-is-not-there','number-that-is-not-there','vendor-name-cut-down-to-its-form'])
+def test_the_reviews_examples_of_a_passage_that_does_not_carry_the_value_are_unlocated(key,value,quote):
+    text='Mustermann Versicherungen AG Rechnung RE-1 / Gesamtbetrag 312,00 EUR 3'
+    assert status_of(key,value,quote,text)=='unlocated'
+    assert model_evidence({**PAYLOAD,key:value},{key:(3,quote)},[{'number':3,'text':text,'method':'text_layer'}])[key]['page_number'] is None
+
+
+@pytest.mark.parametrize('value,quote',[
+    ('312.00','312,00'),('312.00','Gesamtbetrag 312,00 EUR'),('312.00','€ 312,00'),('312.00','EUR 312.00'),('312.00','312 EUR'),('312.00','312,0'),('312.00','312,00€.'),
+    ('1234.56','1.234,56'),('1234.56','1,234.56'),('1234.56','1 234,56 EUR'),('1234.56','1234,56'),('1234567.89','1.234.567,89'),
+    ('1234.00','1.234 EUR'),('1.234','1,234'),('0.50','0,50'),('-249.90','-249,90 EUR'),('-249.90','Gutschrift − 249,90'),('-249.90','€ -249,90'),('-249.90','249,90-'),
+    ('19.00','19 %'),('19','MwSt. 19%'),('7.5','7,5 %'),
+],ids=lambda value:str(value))
+def test_an_amount_is_located_by_a_passage_that_shows_its_digits_in_any_german_or_english_spelling(value,quote):
+    key='vat_rate' if value in ('19.00','19','7.5') else 'gross_amount'
+    assert status_of(key,value,quote)=='page_quote'
+
+
+@pytest.mark.parametrize('value,quote',[
+    ('312.00','3'),('312.00','Rechnung RE-2026-0312'),('312.00','RE-2026-312'),('312.00','RE312'),('312.00','31,20'),('312.00','3.120,00'),('312.00','312,01'),
+    ('312.00','-312,00'),('-312.00','312,00'),('-312.00','RE-312,00'),('312.00','01.03.2012'),('312.00','15.01.2026 und 12'),('42.00','RE-2026-0042'),
+    ('1234.56','1.234,5'),('1234.56','12.345,6'),('1234.56','1.23.456'),('19.00','190 %'),('19','1 9'),
+],ids=lambda value:str(value))
+def test_an_amount_is_not_located_by_digits_that_are_another_number(value,quote):
+    key='vat_rate' if value in ('19.00','19') else 'gross_amount'
+    assert status_of(key,value,quote)=='unlocated'
+
+
+@pytest.mark.parametrize('quote',[
+    'Rechnungsdatum 15.01.2026','15.1.2026','15. Januar 2026','15 Januar 2026','15.Januar 2026','15. JANUAR 2026','15. Jan. 2026','vom 15.01.26.',
+    '2026-01-15','Datum: 2026-01-15T08:00:00','15.01.2026 - 31.01.2026','Leistung 01.01.2026 bis 15.01.2026',
+],ids=lambda quote:quote[:24])
+def test_a_date_is_located_by_a_passage_that_shows_its_day_month_and_year_in_a_common_spelling(quote):
+    assert status_of('invoice_date','2026-01-15',quote)=='page_quote'
+
+
+@pytest.mark.parametrize('quote',[
+    '15.01.','Januar 2026','01.15.2026','15.02.2026','16.01.2026','15.01.2025','2026-01-16','2026-15-01','115.01.2026','15.01.20266','15. Januar 20','2026','15','30.02.2026',
+],ids=lambda quote:quote[:24])
+def test_a_date_is_not_located_by_a_passage_that_shows_another_day_or_only_a_part_of_it(quote):
+    assert status_of('invoice_date','2026-01-15',quote)=='unlocated'
+
+
+@pytest.mark.parametrize('key,value,quote,expected',[
+    ('vendor_name','Mustermann Versicherungen AG','mustermann   versicherungen\nag, Hauptstr. 1','page_quote'),
+    ('document_number','RE-2026-0042','Rechnung Nr.RE-2026-0042 vom','page_quote'),
+    ('document_number','re-2026-0042','RECHNUNG RE-2026-0042','page_quote'),
+    ('document_number','RE-2026-0042','RE-2026-0043','unlocated'),
+    ('vendor_name','Mustermann Versicherungen AG','Mustermann Versicherungen','unlocated'),
+    ('service_period_to','2026-12-31','31.12.2026','page_quote'),('service_period_from','2026-01-01','01.01.2026','page_quote'),
+])
+def test_a_text_is_located_by_a_passage_that_contains_it_ignoring_case_and_spacing(key,value,quote,expected):
+    assert status_of(key,value,quote)==expected
+
+
+def test_a_category_code_is_a_choice_from_the_list_and_not_printed_so_its_passage_is_only_a_place():
+    assert status_of('suggested_category_code','GEBAEUDEVERSICHERUNG','Gebaeudeversicherung 2026')=='page_quote'
+    assert status_of('suggested_category_code','GEBAEUDEVERSICHERUNG','Gebaeudeversicherung 2026',text='Seite 1')=='unlocated', 'the passage still has to stand on the page'
 
 
 def located_model_result(data,**locator):

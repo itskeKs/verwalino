@@ -51,7 +51,9 @@ The field lives in the stored proposal (`invoice_document.extraction_payload`, a
 the worker records through `record_invoice_extraction_revision`, whose installed function accepts the optional key
 (0197 changes the function; no further revision). The prompt and schema versions are `invoice-v2` and `invoice-2` since the inbox shares the contract (#501): the
 model also names the page and the passage each stated value was found on, which the invoice path ignores and the inbox
-checks against the pages of its document. The processor version `invoice-model-v1` stays: a proposal stored under
+checks against the pages of its document. That source is advisory: a page that is not a whole number from 1 to 200, a passage
+that is empty or longer than 300 characters or one half of the pair alone is no source (the field reads as if none were stated),
+and never fails an answer that is valid without it; the values keep their strict validation. The processor version `invoice-model-v1` stays: a proposal stored under
 `invoice-v1` is not rewritten.
 
 ## Opt-in: nothing is sent without it
@@ -107,7 +109,8 @@ amounts are entered by hand. Earlier releases read such a PDF with a local patte
 Per attempt (documented constants in `declarations/invoice_pipeline.py` and `core/invoice_pdf.py`, no
 configuration keys): at most **10 pages** and **60,000 characters** of text (text layers and
 transcripts together), **300,000 input and 64,000 output tokens**, **0.25 USD**, and 6,000 (reading)
-or 3,000 (extraction) output tokens per request. Pages are rendered at 180 dpi, at most 20 million
+or 4,000 (extraction) output tokens per request (ten fields with a value, a page and a passage of at most 300 characters each
+answer in about 1,250 tokens; the rest of the allowance is the model's reasoning). Pages are rendered at 180 dpi, at most 20 million
 pixels each, within 30 seconds per page and 120 seconds of local work; waiting for a model is not
 counted. A larger original ends `needs_review` or `unsupported` with `invoice_page_limit`,
 `invoice_ai_limit` or `image_pixel_limit` before the request that would pass the bound. The text bound

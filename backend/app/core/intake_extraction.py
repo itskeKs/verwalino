@@ -16,10 +16,14 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
+import unicodedata
 import xml.etree.ElementTree as ET
+from datetime import date
+from decimal import Decimal, InvalidOperation
 
 from app.core.einvoice import EInvoiceExtractor, invoice_proposal, parse_en16931_xml, _amount, _norm_date
 from app.core.extraction_evidence import FIELD_TYPES, valid_invoice_outcome
@@ -79,11 +83,94 @@ def squashed(text):
     return ''.join(out),index
 
 
+# Whether a passage carries a value: the check that a place a model names is a place of the value it is named for
+# (``model_evidence``). One matcher per value type of ``FIELD_TYPES``, all here. The passage must show the value in a form a
+# reader would recognise; when in doubt it does not, and the field stays unlocated.
+# - text: the value as a substring, compared without case or spacing (NFKC, case-folded, whitespace runs as one space);
+# - decimal: a number of the passage with the same value and sign. A number is digits with one decimal separator (comma or
+#   dot) and optional thousands separators (the other one, or a space, in groups of three), so 312.00 is "312,00",
+#   "312,00 EUR", "€ 312,00", "1.234,56" is 1234.56; a currency or a percent sign beside it is ignored. A number that is part
+#   of a longer word or of a hyphenated identifier, one with leading zeros and a token that is not a number (a date, a
+#   malformed grouping) is no amount. A minus sign counts only in front of the number or directly behind it;
+# - date: the day, month and year as ISO "2026-01-15", German "15.01.2026" (also "15.1.26") or with the month spelled
+#   ("15. Januar 2026", "15 Jan. 2026"); a month and year alone or a day without a year is not the date.
+# A category code is a choice from the organization's list and not text of the document, so only its place is checked.
+QUOTE_EXEMPT=frozenset({'suggested_category_code'})
+_GROUP=' \u00a0\u202f'
+_NUMBER=re.compile(rf'(?<![\w.,])(?<!\w[-\u2212\u2013])(\d{{1,3}}(?:[{_GROUP}]\d{{3}})+(?:[.,]\d+)?|\d+(?:[.,]\d+)*)(?!\w)')
+_MINUS='-\u2212\u2013'
+_MONTHS={name:number for number,names in enumerate((
+    ('januar','jänner','jan'),('februar','feb'),('märz','maerz','mär','mrz'),('april','apr'),('mai',),('juni','jun'),('juli','jul'),
+    ('august','aug'),('september','sept','sep'),('oktober','okt'),('november','nov'),('dezember','dez')),1) for name in names}
+_ISO_DATE=re.compile(r'(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)')
+_GERMAN_DATE=re.compile(r'(?<![\d.])(\d{1,2})\.\s?(\d{1,2})\.\s?(\d{4}|\d{2})(?!\d)')
+_NAMED_DATE=re.compile(r'(?<!\d)(\d{1,2})\.?\s*('+'|'.join(sorted(_MONTHS,key=len,reverse=True))+r')\.?\s*(\d{4})(?!\d)',re.IGNORECASE)
+
+
+def flat_text(text):
+    return ' '.join(unicodedata.normalize('NFKC',text).casefold().split())
+
+
+def _readings(token):
+    """The values a number token can be read as (a lone separator with three digits after it may be either kind)."""
+    token=''.join(char for char in token if char not in _GROUP)
+    whole=re.split('[.,]',token)[0]
+    if len(whole)>1 and whole[0]=='0':return set()
+    marks=[char for char in token if char in '.,']
+    if not marks:return {Decimal(token)}
+    kinds=set(marks)
+    if len(kinds)==2:
+        decimal=marks[-1];grouping=(kinds-{decimal}).pop()
+        head,_,fraction=token.rpartition(decimal)
+        if marks.count(decimal)==1 and re.fullmatch(rf'\d{{1,3}}(?:{re.escape(grouping)}\d{{3}})+',head):
+            return {Decimal(head.replace(grouping,'')+'.'+fraction)}
+        return set()
+    mark=marks[0]
+    if len(marks)==1:
+        head,fraction=token.split(mark)
+        found={Decimal(head+'.'+fraction)}
+        if len(fraction)==3 and len(head)<=3:found.add(Decimal(head+fraction))
+        return found
+    if re.fullmatch(rf'\d{{1,3}}(?:{re.escape(mark)}\d{{3}})+',token):return {Decimal(token.replace(mark,''))}
+    return set()
+
+
+def _numbers(quote):
+    for match in _NUMBER.finditer(quote):
+        negative=(re.search(rf'(?<!\w)[{_MINUS}]\s*(?:€|EUR)?\s*$',quote[:match.start()]) is not None
+                  or (quote[match.end():match.end()+1] in tuple(_MINUS) and not quote[match.end()+1:match.end()+2].isalnum()))
+        for value in _readings(match.group(1)):yield -value if negative else value
+
+
+def _dates(quote):
+    for match in _ISO_DATE.finditer(quote):yield tuple(int(part) for part in match.groups())
+    for match in _GERMAN_DATE.finditer(quote):
+        day,month,year=match.groups();yield int(year)+(2000 if len(year)==2 else 0),int(month),int(day)
+    for match in _NAMED_DATE.finditer(quote):
+        day,month,year=match.groups();yield int(year),_MONTHS[month.casefold()],int(day)
+
+
+def passage_carries(kind,value,passage):
+    """Whether the passage shows the stored value of a field of the given kind in a form a reader recognises."""
+    try:
+        if kind=='text':return flat_text(value) in flat_text(passage)
+        if kind=='decimal':return Decimal(value) in set(_numbers(passage))
+        if kind=='date':
+            wanted=date.fromisoformat(value)
+            for year,month,day in _dates(passage):
+                try:
+                    if date(year,month,day)==wanted:return True
+                except ValueError:continue
+    except (ValueError,InvalidOperation):return False
+    return False
+
+
 def model_evidence(payload,sources,pages):
     """Evidence of every stated field of a model's proposal: located at page level when the page the model names is one
-    of this document's selected pages and its passage occurs in that page's text (whitespace compared the same way on
-    both sides), unlocated otherwise. The value is kept either way; a location is never guessed, and a page of another
-    document of the same original is not one of ``pages``. The passage is recorded as it stands in the page's text."""
+    of this document's selected pages, its passage occurs in that page's text (whitespace compared the same way on both
+    sides) and the passage carries the value (``passage_carries``), unlocated otherwise. The value is kept either way; a
+    location is never guessed, and a page of another document of the same original is not one of ``pages``. The passage
+    is recorded as it stands in the page's text."""
     texts={page['number']:(page,)+squashed(page['text']) for page in pages}
     evidence={}
     for key in FIELD_TYPES:
@@ -95,7 +182,8 @@ def model_evidence(payload,sources,pages):
         start=flat.find(wanted) if wanted else -1
         if start<0:continue
         passage=page['text'][index[start]:index[start+len(wanted)-1]+1]
-        if 1<=len(passage)<=MAX_QUOTATION:evidence[key]=located(number,passage,page['method'])
+        if 1<=len(passage)<=MAX_QUOTATION and (key in QUOTE_EXEMPT or passage_carries(FIELD_TYPES[key],payload[key],passage)):
+            evidence[key]=located(number,passage,page['method'])
     return evidence
 
 

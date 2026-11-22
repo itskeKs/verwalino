@@ -46,9 +46,17 @@ path's core ([invoice extraction](invoice-extraction.md)): processor `intake-mod
   document are sent, with the original's page numbers, and nothing else of the original or of another document. Each request
   is reserved before it leaves and settled in `invoice_model_call` (`intake_attempt_id`, migration 0198), within the invoice
   path's bounds (10 pages, 60,000 characters, 300,000 input and 64,000 output tokens, 0.25 USD per document) and the monthly
-  limit; the opt-in, the destination and the models are read again before every request.
-- **Evidence.** A value is located only if its page is one of the document's selected pages and its quotation occurs in the
-  text read from that page (`method` `text_layer`, `reading_model`, `xml`); otherwise it is stored `unlocated`. The source page
+  limit; the opt-in, the destination and the models are read again before every request. A PNG or JPEG is decoded for the
+  reading model in a killable child with an address-space limit and the shared deadline
+  ([core/image_reading.py](../../backend/app/core/image_reading.py)), never in the worker process; the pixel bound is checked
+  from the header before any decode.
+- **Evidence.** A value is located only if its page is one of the document's selected pages, its quotation occurs in the
+  text read from that page (`method` `text_layer`, `reading_model`, `xml`) and the quotation carries the value
+  (`passage_carries` in [core/intake_extraction.py](../../backend/app/core/intake_extraction.py)): a text as a substring without
+  regard to case and spacing, an amount as its digits with either decimal separator, thousands separators, currency and its
+  sign (312.00 is „312,00 EUR“, „€ 312,00“), a date by day, month and year in ISO, German numeric or month-name spelling
+  (2026-01-15 is „15.01.2026“, „15. Januar 2026“); the suggested category is a choice from the organization's list and not
+  printed, so only its place is checked. When in doubt a value is stored `unlocated`. The source page
   shows page and passage per value and the card „Verbrauch der KI-Verarbeitung“
   (`GET /api/logical-documents/{id}/model-usage`, over all attempts).
 - **Opt-in and confirmation.** Nothing is sent unless the organization's AI import switch, key, reading and extraction models

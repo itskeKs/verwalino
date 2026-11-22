@@ -79,9 +79,15 @@ logger = logging.getLogger(__name__)
 INVOICE_MAX_INPUT_TOKENS = 300_000
 INVOICE_MAX_OUTPUT_TOKENS = 64_000
 INVOICE_MAX_COST_USD = Decimal("0.25")
-# One request's output allowance per stage.
+# One request's output allowance per stage. The extraction answer is ten fields, each a value, a certainty, a page and a
+# passage of at most 300 characters: about 1,250 tokens in the worst case (ten German passages of 250 to 300 characters, or
+# of digits, measured 1,200 to 1,240 with a current tokenizer, plus the values), where the ten values and certainties alone
+# were about 350 tokens. A model that reasons spends its allowance on reasoning first: 3,000 left it about 2,650 before the
+# passages and 1,750 after them, 4,000 leaves about 2,750. A repair request reserves the same again, so the worst reservation
+# of the extraction is 8,000 output tokens, and with the readings of a 10-page invoice (about 30,000 consumed) it stays far
+# below ``INVOICE_MAX_OUTPUT_TOKENS``; at the priced models' output rates (up to 5 USD per million) it is a few cents.
 INVOICE_READING_MAX_OUTPUT_TOKENS = 6_000
-INVOICE_EXTRACTION_MAX_OUTPUT_TOKENS = 3_000
+INVOICE_EXTRACTION_MAX_OUTPUT_TOKENS = 4_000
 # A page whose text layer has fewer non-whitespace characters than this is read by the reading model.
 INVOICE_TEXT_MIN_CHARS = 40
 # Rendering a page for the reading model: poppler at this resolution, at most this many pixels per page (an A4 page

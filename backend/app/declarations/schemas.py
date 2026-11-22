@@ -306,14 +306,32 @@ _INVOICE_DATE = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
 
 # Where the model found a stated value (issue #501): the number of the page it was given, and a short passage copied from
 # that page's text. The worker checks both against the pages of the one document before it records a location; the
-# invoice path ignores them. A value that is not stated has neither, and an answer that leaves them out states no
-# source, which records the field as unlocated and never fails the proposal. The strict wire schema lists every property
-# as required whatever the default. (No docstrings below: they would become descriptions of the wire schema.)
-_SOURCE_PAGE = Field(default=None, ge=1, le=200)
-_SOURCE_QUOTE = Field(default=None, min_length=1, max_length=300)
+# invoice path ignores them. The source is advisory and never costs the paid answer: a page that is not a whole number
+# from 1 to 200, a passage that is not text of 1 to 300 characters, or one half of the pair alone is no source, and
+# the field is read as if the answer had stated none (the value fields keep their strict validation). The limits stay
+# in the fields below, so that the wire schema names them for the transports that carry them; the repair of a source
+# happens before they apply. A value that is not stated has neither, and an answer that leaves them out states no source,
+# which records the field as unlocated and never fails the proposal. The strict wire schema lists every property as
+# required whatever the default. (No docstrings below: they would become descriptions of the wire schema.)
+_SOURCE_PAGE_MAX = 200
+_SOURCE_QUOTE_MAX = 300
+_SOURCE_PAGE = Field(default=None, ge=1, le=_SOURCE_PAGE_MAX)
+_SOURCE_QUOTE = Field(default=None, min_length=1, max_length=_SOURCE_QUOTE_MAX)
 
 
-class InvoiceTextField(StrictModel):
+class _Sourced(StrictModel):
+    @model_validator(mode="before")
+    @classmethod
+    def a_source_that_cannot_be_used_is_no_source(cls, data: object) -> object:
+        if not isinstance(data, dict) or ("source_page" not in data and "source_quote" not in data):
+            return data
+        page, quote = data.get("source_page"), data.get("source_quote")
+        if (type(page) is int and 1 <= page <= _SOURCE_PAGE_MAX) and (isinstance(quote, str) and 1 <= len(quote) <= _SOURCE_QUOTE_MAX):
+            return data
+        return {**data, "source_page": None, "source_quote": None}
+
+
+class InvoiceTextField(_Sourced):
     value: str | None = Field(min_length=1, max_length=4_000)
     confidence: float = Field(ge=0, le=1)
     source_page: int | None = _SOURCE_PAGE
@@ -327,7 +345,7 @@ class InvoiceTextField(StrictModel):
         return value
 
 
-class InvoiceDateField(StrictModel):
+class InvoiceDateField(_Sourced):
     value: str | None = Field(pattern=_INVOICE_DATE)
     confidence: float = Field(ge=0, le=1)
     source_page: int | None = _SOURCE_PAGE
@@ -341,7 +359,7 @@ class InvoiceDateField(StrictModel):
         return value
 
 
-class InvoiceAmountField(StrictModel):
+class InvoiceAmountField(_Sourced):
     value: str | None = Field(pattern=_INVOICE_AMOUNT)
     confidence: float = Field(ge=0, le=1)
     source_page: int | None = _SOURCE_PAGE
@@ -352,7 +370,7 @@ class InvoiceAmountField(StrictModel):
 # (country, length, check digits) is not stated, which leaves the rest of the answer as it is; a valid one is kept
 # without spaces and in upper case. The wire schema allows any text, so that a misread value costs no repair request.
 # Nothing here logs or raises the value. (No docstring: it would become a description of the wire schema.)
-class InvoiceIbanField(StrictModel):
+class InvoiceIbanField(_Sourced):
     value: str | None
     confidence: float = Field(ge=0, le=1)
     source_page: int | None = _SOURCE_PAGE

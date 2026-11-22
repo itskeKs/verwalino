@@ -39,8 +39,9 @@ on `InvoiceModelPipeline`, processor `intake-model-v1`, versions `invoice-v2`/`i
 (`core/intake_extraction.py`) parses a structured original (XRechnung XML, a PDF with valid ZUGFeRD/Factur-X data), which
 never reaches a model, and hands the page texts and sizes of an unstructured PDF, PNG or JPEG to the worker. Only the selected
 pages of that logical document are sent, with the original's page numbers, under the same opt-in and bounds, and only after a
-confirmation that names inbox documents; a value counts as located only if its page is one of the document's pages and its
-quotation occurs in the text read from that page. Requests are reserved and settled in `invoice_model_call` (0198, column
+confirmation that names inbox documents; a value counts as located only if its page is one of the document's pages, its
+quotation occurs in the text read from that page and the quotation shows the value. A PNG or JPEG is decoded for the
+reading model in a killable child with an address-space limit (`core/image_reading.py`), never in the worker. Requests are reserved and settled in `invoice_model_call` (0198, column
 `intake_attempt_id`) and count towards the monthly limit. Without opt-in, model, key or budget, or on a provider failure, the
 original is retained with a structured reason in the state the established manual and retry workflow expects; Tesseract is not
 used (the image keeps it until #502). Which confirmation text versions name which kinds of document is one table

@@ -132,6 +132,30 @@ async def test_a_field_is_located_where_the_model_found_it_only_when_that_verifi
         assert shown["payload"]["gross_amount"] == "99.00", "the value is kept whether or not it is located"
 
 
+async def test_a_passage_on_the_page_that_does_not_carry_the_value_locates_nothing_through_the_worker(migrator_session, scope_seed, store):
+    ids = await fixture(migrator_session, scope_seed)
+    enable_models(ids["org"])
+    async with client(ids) as api:
+        ref = await receive_original(api, ids, document_pdf([FIRST, SECOND]), pages=2)
+        (document,) = (await documents(api, ref)).values()
+        extractor = PerDocument({document: synthetic_invoice_output(
+            # Real places on page 1 that do not state the values (the three examples of the review of PR #832) ...
+            gross_amount=("9999.00", 0.9, 1, "Gesamtbetrag"), document_number=("XYZ-999", 0.9, 1, "Rechnungsnummer"),
+            vendor_name=("Mustermann Versicherungen AG", 0.95, 1, "AG"),
+            # ... one that states a date in another spelling than the stored one, and one that states another date.
+            invoice_date=("2026-01-15", 0.9, 2, "Zahlbar bis 28.02.2026 auf das angegebene Konto"),
+            service_period_to=("2026-02-28", 0.9, 2, "Zahlbar bis 28.02.2026 auf das angegebene Konto"),
+            vat_amount=("312.00", 0.9, 1, "Gebaeudeversicherung 2026, Gesamtbetrag 312,00 EUR"))})
+        assert await extract_all(ids["org"], Harness(extractor=extractor), processor=extract_logical) == 1
+        assert await stated_evidence(ids, document) == {
+            "gross_amount": UNLOCATED, "document_number": UNLOCATED, "vendor_name": UNLOCATED, "invoice_date": UNLOCATED,
+            "service_period_to": ["page_quote", 2, "Zahlbar bis 28.02.2026 auf das angegebene Konto", "text_layer"],
+            "vat_amount": ["page_quote", 1, "Gebaeudeversicherung 2026, Gesamtbetrag 312,00 EUR", "text_layer"],
+            "service_period_from": UNLOCATED, "suggested_category_code": UNLOCATED}
+        assert await read_value("SELECT payload->>'gross_amount' FROM extraction_revision WHERE organization_id=:org AND logical_document_id=:document",
+                                {**ids, "document": uuid.UUID(document)}) == "9999.00", "the value is kept whether or not it is located"
+
+
 async def test_the_assignment_hints_of_a_page_the_reading_model_read_carry_the_originals_page_number_and_how_it_was_read(migrator_session, scope_seed, store):
     ids = await fixture(migrator_session, scope_seed)
     enable_models(ids["org"])

@@ -3,6 +3,11 @@ from __future__ import annotations
 import hashlib
 import io
 import base64
+import os
+import struct
+import sys
+import time
+import zlib
 from dataclasses import FrozenInstanceError
 from decimal import Decimal
 from pathlib import Path
@@ -13,6 +18,7 @@ from PIL import Image
 from pdf2image.exceptions import PDFInfoNotInstalledError, PDFPopplerTimeoutError
 import pdf2image
 
+from app.core import image_reading
 from app.core.config import Settings
 from app.declarations.preflight import (
     READING_MAX_IMAGE_PIXELS,
@@ -835,3 +841,102 @@ def test_an_image_beyond_the_pixel_bound_or_that_cannot_be_decoded_is_refused_wi
         with pytest.raises(DocumentIntegrityError) as caught:
             small.render_image_for_reading(broken, budget=small.new_import_budget())
         assert caught.value.code == "PAGE_RENDER_UNAVAILABLE"
+
+
+# ---- an uploaded image is decoded in a child, never in the worker (issue #501, review of PR #832, item 4) -------------
+
+def _blank_png(width: int, height: int, *, rows: int | None = None) -> bytes:
+    """A grey PNG of the given size whose pixel data is compressed, so that a huge picture is a small file; ``rows`` cuts
+    the data short (a picture whose header promises more than the file holds)."""
+
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+    packer = zlib.compressobj(1)
+    row = bytes(width + 1)
+    data = bytearray()
+    for _ in range(height if rows is None else rows):
+        data += packer.compress(row)
+    data += packer.flush()
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)) + chunk(b"IDAT", bytes(data)) + chunk(b"IEND", b"")
+
+
+class _RecordedChildren:
+    """The child processes of the image reading, to see them gone."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.pids: list[int] = []
+        real = image_reading.subprocess.Popen
+
+        def popen(*args, **kwargs):
+            process = real(*args, **kwargs)
+            self.pids.append(process.pid)
+            return process
+
+        monkeypatch.setattr(image_reading.subprocess, "Popen", popen)
+
+    def gone(self) -> bool:
+        for pid in self.pids:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                continue
+            return False
+        return bool(self.pids)
+
+
+def test_an_uploaded_image_is_never_decoded_in_the_worker_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    import PIL.Image
+    import PIL.ImageOps
+
+    def decoded_here(*args, **kwargs):
+        raise AssertionError("the worker process decoded an uploaded image")
+
+    preflight = PdfPreflight()
+    children = _RecordedChildren(monkeypatch)
+    photo, clear = _picture("JPEG"), _picture("PNG", (100, 100), "RGBA", (0, 0, 0, 0))
+    with monkeypatch.context() as inside:
+        inside.setattr(PIL.Image, "open", decoded_here)
+        inside.setattr(PIL.ImageOps, "exif_transpose", decoded_here)
+        inside.setattr(PIL.Image.Image, "load", decoded_here)
+        inside.setattr(PIL.Image.Image, "convert", decoded_here)
+        png = preflight.render_image_for_reading(photo, budget=preflight.new_import_budget())
+        flat = preflight.render_image_for_reading(clear, budget=preflight.new_import_budget())
+    assert png.startswith(b"\x89PNG") and flat.startswith(b"\x89PNG")
+    assert len(children.pids) == 2 and children.gone(), "one child per image, reaped"
+
+
+def test_a_decode_that_does_not_return_is_killed_at_the_deadline_and_the_worker_goes_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    children = _RecordedChildren(monkeypatch)
+    with monkeypatch.context() as hanging:
+        hanging.setattr(image_reading, "CHILD_COMMAND", (sys.executable, "-c", "import time\nwhile True:\n    time.sleep(1)"))
+        preflight = PdfPreflight(ocr_timeout_seconds=1)
+        started = time.monotonic()
+        with pytest.raises(DocumentIntegrityError) as caught:
+            preflight.render_image_for_reading(_picture("PNG"), budget=preflight.new_import_budget())
+        assert caught.value.code == "PAGE_RENDER_TIMEOUT" and time.monotonic() - started < 10
+    assert children.gone(), "the child that did not return is dead"
+    # The worker process is still here and reads the next image.
+    assert preflight.render_image_for_reading(_picture("PNG"), budget=preflight.new_import_budget()).startswith(b"\x89PNG")
+
+
+def test_a_header_beyond_the_pixel_bound_is_refused_before_any_decode_and_a_broken_image_is_unavailable() -> None:
+    preflight = PdfPreflight()
+    # 100,000 x 100,000 pixels promised, 3 rows of data: a decode would fail on the data (or allocate 10 GB), the header
+    # check refuses it first.
+    with pytest.raises(DocumentIntegrityError) as caught:
+        preflight.render_image_for_reading(_blank_png(100_000, 100_000, rows=3), budget=preflight.new_import_budget())
+    assert caught.value.code == "OCR_RENDERED_PIXELS_LIMIT_EXCEEDED"
+    with pytest.raises(DocumentIntegrityError) as caught:
+        preflight.render_image_for_reading(_picture("JPEG")[:300], budget=preflight.new_import_budget())
+    assert caught.value.code == "PAGE_RENDER_UNAVAILABLE", "within the bound, a truncated image does not decode"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the address-space limit of the child is set on Linux only")
+def test_a_decode_that_needs_more_memory_than_the_child_may_have_ends_in_an_error_and_the_worker_goes_on() -> None:
+    preflight = PdfPreflight(max_pixels_per_page=3_000_000_000)
+    # 1.6 GB of decoded grey pixels from a file of about 7 MB: inside the pixel bound given here, far beyond the child's memory.
+    with pytest.raises(DocumentIntegrityError) as caught:
+        preflight.render_image_for_reading(_blank_png(40_000, 40_000), budget=preflight.new_import_budget())
+    assert caught.value.code == "PAGE_RENDER_UNAVAILABLE"
+    assert preflight.render_image_for_reading(_picture("PNG"), budget=preflight.new_import_budget()).startswith(b"\x89PNG")

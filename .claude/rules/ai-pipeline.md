@@ -10,6 +10,7 @@ paths:
   - "backend/app/core/pdf_extraction.py"
   - "backend/app/core/visual_extract.py"
   - "backend/app/core/intake_extraction.py"
+  - "backend/app/core/image_reading.py"
   - "backend/app/core/extraction.py"
 ---
 
@@ -41,8 +42,9 @@ paths:
 - Local text recognition is Tesseract (`deu`) with poppler and qpdf, run as bounded subprocesses (DPI,
   pixels, pages, temp bytes, timeout) in `core/invoice_ocr.py`, `core/pdf_extraction.py` and
   `core/visual_extract.py`. A path that reads with a model renders its
-  pages with poppler the same bounded way (`declarations/preflight.py`) and has no Tesseract step. Keep
-  every new path bounded the same way.
+  pages with poppler the same bounded way (`declarations/preflight.py`) and has no Tesseract step; an uploaded
+  PNG or JPEG is decoded in a killable child of its own with an address-space limit (`core/image_reading.py`), never
+  in the worker process. Keep every new path bounded the same way.
 - The invoice worker sends an unstructured PDF to the organization's models only when its AI import switch, key
   and models allow it (`ai_settings_service.invoice_import_blocker`); structured invoices never reach a model. Each
   request is reserved and settled in `invoice_model_call` (`declarations/invoice_pipeline.py`), outside any
@@ -51,15 +53,15 @@ paths:
   confirmed an older text keeps its invoices on the host until it confirms again. A retry reads and pays
   again: page transcripts of an invoice are not stored. The extraction answer states for each value the page and
   a passage it was found on (`source_page`, `source_quote` of the fields in `declarations/schemas.py`); the invoice
-  path ignores them.
+  path ignores them, and a source filled badly is no source and never costs the answer.
 - The inbox worker (`workers/intake_extraction.py`) does the same for the selected pages of one logical
   document of an unstructured PDF, PNG or JPEG: `declarations/intake_pipeline.py` is `InvoiceModelPipeline`
   with a few hooks (renewing the claim's fence, the ledger row's attempt, rendering, the document key, the
   confirmation the destination needs, the outcome shape), so reading, extraction, bounds, opt-in re-check and
   metering exist once. Only the pages of that logical document reach a provider, with the original's page numbers;
   ledger rows carry `intake_attempt_id`; proposals are `intake-model-v1`. A field is located at page level only
-  where the page and passage the model names are one of that document's selected pages and occur in its read text
-  (`model_evidence`); otherwise it stays unlocated, never a guessed place. An inbox document is sent only under a
+  where the page and passage the model names are one of that document's selected pages, occur in its read text and
+  carry the value in a form a reader recognises (`model_evidence`, `passage_carries`); otherwise it stays unlocated, never a guessed place. An inbox document is sent only under a
   confirmation text that names inbox documents. `CONFIRMATION_TEXTS` in `ai_settings_service.py` is the one table of
   text versions and the kinds each names (declarations, invoices, inbox documents); every path asks it whether the newest
   confirmation of the destination names its kind, and the settings card shows and a new confirmation records the text for
