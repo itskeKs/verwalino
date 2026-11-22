@@ -1,6 +1,7 @@
 """The declaration worker also claims waiting invoices in its loop (issue #814).
 
-The loop is driven with fake declaration and invoice steps, so what is proved is the schedule: both kinds of work take
+The loop is driven with fake declaration and invoice steps (and an idle fake of the inbox's extraction stage, which has its
+own tests in ``test_inbox_model_stage_process.py``), so what is proved is the schedule: both kinds of work take
 turns, a failure of one neither ends the loop nor holds back the other, a shutdown ends it and nothing is claimed
 where the installation does not process invoices. The real invoice step against the database is covered with the
 invoice worker's own scenarios (``test_invoice_model_extraction.py``).
@@ -13,7 +14,7 @@ import uuid
 import pytest
 
 from app.core.config import settings
-from app.workers import declaration_import, invoice_extraction
+from app.workers import declaration_import, intake_extraction, invoice_extraction
 from app.workers.declaration_import import DeclarationImportWorker, WorkerResult
 
 pytestmark = pytest.mark.no_db
@@ -27,12 +28,14 @@ class Loop:
 
     def __init__(self, monkeypatch, *, rounds, declaration=None, invoice=None, organizations=(A, B, C), enabled=True):
         self.events = []
+        self.inbox_turns = []
         self.sleeps = 0
         self.rounds = rounds
         self.organizations = organizations
         self.declaration = declaration or self.processed
         self.invoice = invoice or self.always
         monkeypatch.setattr(invoice_extraction, "process_once", self.process_once)
+        monkeypatch.setattr(intake_extraction, "process_once", self.inbox_once)
         monkeypatch.setattr(declaration_import, "get_worker_session_factory", lambda: "worker session factory")
         self.worker = DeclarationImportWorker(
             configured=settings.model_copy(update={"invoice_extraction_enabled": enabled}), sleep=self.sleep)
@@ -61,6 +64,11 @@ class Loop:
         assert factory == "worker session factory"
         self.events.append(("invoice", organization))
         return await self.invoice(organization)
+
+    async def inbox_once(self, factory, organization, **options):
+        """The inbox's stage in the loop: idle here, so that the schedule of the invoices is what these tests look at."""
+        self.inbox_turns.append(organization)
+        return False
 
     async def sleep(self, _seconds):
         self.sleeps += 1
@@ -136,7 +144,9 @@ async def test_a_failure_finding_the_organizations_ends_the_invoice_turn_but_not
     with caplog.at_level(logging.WARNING, logger="app.workers.declaration_import"):
         events = await loop.run()
     assert events == ["declaration", "declaration"]
-    assert [record.getMessage().split(" error_type")[0] for record in caplog.records] == ["declaration worker result=INVOICE_DISCOVERY_FAILED"] * 2
+    # Each round the invoice turn and the inbox turn look for the organizations and say so, each for itself.
+    assert [record.getMessage().split(" error_type")[0] for record in caplog.records] == [
+        "declaration worker result=INVOICE_DISCOVERY_FAILED", "declaration worker result=INBOX_DISCOVERY_FAILED"] * 2
     assert all(SENTINEL not in record.getMessage() for record in caplog.records)
 
 
@@ -150,10 +160,13 @@ async def test_without_a_ready_schema_no_invoice_is_claimed(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_with_the_operators_switch_off_the_loop_claims_no_invoice_and_does_not_even_look_for_organizations(monkeypatch):
+async def test_with_the_operators_switch_off_the_loop_claims_no_invoice_and_the_invoice_turn_does_not_even_look_for_organizations(monkeypatch):
     loop = Loop(monkeypatch, rounds=3, enabled=False)
+    assert await loop.worker._process_one_invoice() is False
+    assert loop.events == [], "the invoice turn looked for nothing"
     assert await loop.run() == ["declaration"] * 3
-    assert "organizations" not in loop.events
+    # The inbox's extraction stage does not depend on the invoice switch: it still takes its turn in every round.
+    assert loop.inbox_turns == [A, B, C] * 3
 
 
 @pytest.mark.asyncio
