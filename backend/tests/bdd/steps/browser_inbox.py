@@ -124,8 +124,11 @@ async def proposal_of_the_invoice(browser_world, amount, number, vendor, first, 
         await expect(page.get_by_text("Vorschläge verfügbar · Versuch")).to_be_visible()
         await _value_on_its_page(section, "Aussteller", vendor, INSURANCE[0], read_by="PDF-Text", in_quote=vendor)
         await _value_on_its_page(section, "Belegnummer", number, INSURANCE[1], read_by="PDF-Text", in_quote=number)
-        # The value is shown as stored (an ISO amount); the passage is the document's own print of it.
-        await _value_on_its_page(section, "Bruttobetrag", re.compile(re.escape(amount).replace(",", "[.,]")), INSURANCE[2], read_by="PDF-Text", in_quote=f"{amount} EUR")
+        # The value is shown in the money format of the project (not as the ISO amount it is stored as); the passage is the
+        # document's own print of it.
+        await _value_on_its_page(section, "Bruttobetrag", f"{amount} €", INSURANCE[2], read_by="PDF-Text", in_quote=f"{amount} EUR")
+        await expect(_field(section, "Rechnungsdatum")).to_contain_text("15.01.2026")
+        await expect(section).not_to_contain_text("2026-01-15")
         await _fits_the_width(page)
     await page.set_viewport_size(DESKTOP)
 
@@ -141,7 +144,11 @@ async def proposal_of_the_water_bill(browser_world, amount, vendor, first, last)
         section = await _open_source(browser_world, first, last)
         # Pages 3 and 4 are scans: the reading model read them, and the passages are theirs.
         await _value_on_its_page(section, "Aussteller", vendor, WATER_BILL[0], read_by="vom Lesemodell gelesen", in_quote=vendor)
-        await _value_on_its_page(section, "Bruttobetrag", re.compile(re.escape(amount).replace(",", "[.,]")), WATER_BILL[1], read_by="vom Lesemodell gelesen", in_quote=f"{amount} EUR")
+        await _value_on_its_page(section, "Bruttobetrag", f"{amount} €", WATER_BILL[1], read_by="vom Lesemodell gelesen", in_quote=f"{amount} EUR")
+        # The water bill's date has no passage: it is shown in the date format and as unlocated.
+        await expect(_field(section, "Rechnungsdatum")).to_contain_text("03.02.2026")
+        await expect(_field(section, "Rechnungsdatum")).to_contain_text("Keine Fundstelle bestätigt")
+        await expect(section).not_to_contain_text("99.00")
         await expect(section).not_to_contain_text(INSURANCE[0])
         await _fits_the_width(page)
     await page.set_viewport_size(DESKTOP)
@@ -192,6 +199,11 @@ async def batch_explains_confirmation(browser_world):
         await expect(page.get_by_text("Ihre Organisation hat noch nicht bestätigt, dass Dokumente im Posteingang an den KI-Anbieter übermittelt werden dürfen.")).to_be_visible()
         await expect(page.get_by_text("Es wird nichts (mehr) an einen KI-Anbieter übermittelt.")).to_be_visible()
         await expect(page.get_by_text("Ihre Administration kann das")).to_contain_text("ohne den Schlüssel erneut einzugeben")
+        # The file waits for the organization: it is counted as received, not as blocked or failed.
+        counts = page.get_by_role("region", name="Verarbeitungsstand")
+        await expect(counts.locator(".card").filter(has_text="Empfangen")).to_have_text(re.compile(r"^1\s*Empfangen$"))
+        await expect(counts.locator(".card").filter(has_text="Gesperrt / fehlgeschlagen")).to_have_text(re.compile(r"^0\s*Gesperrt / fehlgeschlagen$"))
+        await expect(page.locator("main article .badge")).to_have_text("Empfangen")
         await _fits_the_width(page)
     await page.set_viewport_size(DESKTOP)
 

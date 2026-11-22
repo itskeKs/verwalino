@@ -1,10 +1,11 @@
-import { formatDateTime } from "../lib/format";
+import { formatDate, formatDateTime, formatDecimalMoney, formatPercent, shown } from "../lib/format";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { AssignmentPanel } from '../components/intake/AssignmentPanel';
 import { IntakeModelUsage } from '../components/intake/IntakeModelUsage';
 import { SourcePartitionPanel } from '../components/intake/SourcePartitionPanel';
 import { ApiError } from '../api/client';
+import { listCostCategories } from '../api/endpoints';
 import { extractionApi, type ExtractionRevision, type ExtractionStatus, type FieldEvidence, type LogicalDocument } from '../api/intake';
 import { invoiceProcessingMessage } from '../lib/invoiceProcessing';
 
@@ -17,6 +18,20 @@ const statuses: Record<string, string> = { queued: 'Wartet auf Auswertung', runn
 // How the page a passage stands on was read: its own text layer, the organization's document reading model, or (results of earlier releases) text recognition.
 const readAs: Record<string, string> = { text_layer: 'PDF-Text', reading_model: 'vom Lesemodell gelesen', ocr: 'Texterkennung (frühere Version)', xml: 'Strukturiertes Feld' };
 const MODEL_RESULT = 'intake-model-v1';
+// The project's display formats for the values of a proposal, as the invoice page shows them (`shown` keeps a value a format cannot read as it is stored).
+const valueFormats: Record<string, (value: string) => string> = { invoice_date: formatDate, service_period_from: formatDate, service_period_to: formatDate,
+  gross_amount: formatDecimalMoney, vat_amount: formatDecimalMoney, vat_rate: formatPercent };
+
+/** The names of the cost categories by code: a proposal holds the code, the screen shows the name. Without the list (it did not load) the code is shown. */
+function useCategoryNames(): Map<string, string> {
+  const [names, setNames] = useState<Map<string, string>>(() => new Map());
+  useEffect(() => {
+    let alive = true;
+    listCostCategories().then(categories => { if (alive) setNames(new Map(categories.map(category => [category.code, category.label]))); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, []);
+  return names;
+}
 
 /** What happened to an attempt and what the user can do, from the one map of reasons; nothing while nothing went wrong. */
 function Outcome({ status, code }: { status: string; code: string | null }) {
@@ -40,6 +55,9 @@ const range = (document: LogicalDocument) => document.page_start === null ? 'Ges
 
 function Proposals({ document, onDenied, parentBusy, parentGeneration, focusExtraction }: { focusExtraction?: string; document: LogicalDocument; onDenied: () => void; parentBusy: boolean; parentGeneration: number }) {
   const [view, setView] = useState<{ status: ExtractionStatus; revisions: ExtractionRevision[] } | null>(null);
+  const categoryNames = useCategoryNames();
+  const displayed = (field: FieldEvidence) => shown(field.value, field.field_name === 'suggested_category_code'
+    ? code => categoryNames.get(code) ?? code : valueFormats[field.field_name] ?? (value => value));
   const [generation, setGeneration] = useState(0);
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
@@ -114,7 +132,7 @@ function Proposals({ document, onDenied, parentBusy, parentGeneration, focusExtr
         <Outcome status={revision.status} code={revision.error_code} />
         {!revision.fields.length && <p>Dieser Versuch enthält keine Feldvorschläge. Frühere Ergebnisse bleiben in der Historie erhalten.</p>}
         <div className="grid min-w-0 gap-4 lg:grid-cols-2">{revision.fields.map(field => <article key={field.field_name} className="min-w-0 rounded-md border border-input p-3 space-y-2">
-          <h3>{fieldLabels[field.field_name] ?? field.field_name}</h3><p className="break-words font-semibold">{field.value}</p>
+          <h3>{fieldLabels[field.field_name] ?? field.field_name}</h3><p className="break-words font-semibold">{displayed(field)}</p>
           {field.confidence !== null && <p className="text-sm">Extraktionssicherheit: {Math.round(Number(field.confidence) * 100)} % · ungeprüft</p>}
           <Location field={field} byModel={revision.processor_version === MODEL_RESULT} />
         </article>)}</div>

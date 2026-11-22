@@ -40,6 +40,8 @@ const PAID_AGAIN = "Ein erneuter Start liest das Dokument noch einmal ein und ve
 const LEGACY_OCR = `Die frühere Texterkennung konnte dieses Dokument nicht auswerten. ${KEPT} Sie können die Verarbeitung erneut starten oder ${BY_HAND}.`;
 
 // ---- the screens of the inbox --------------------------------------------------------------------------------
+// The text of the inbox names the documents of the inbox and no other kind: which other kinds the one switch covers depends on the
+// installation (invoices only where it processes them), which only the administration's settings answer tells.
 // A document of the inbox is a verified range of pages of an original. It is processed from "Belege und Vorschläge",
 // where it is started again and where its usage is shown; a cost position is created by hand under "Kostenpositionen".
 const IN_BY_HAND = "die Kostenposition unter „Kostenpositionen“ von Hand anlegen";
@@ -59,7 +61,7 @@ const PROCESSING_MESSAGES: Record<string, Entry> = {
   // The organization's choices and what the models need
   ai_import_disabled: {
     invoice: `Die automatische Auswertung per KI ist für Ihre Organisation nicht eingerichtet. ${NOTHING_MORE_SENT} ${KEPT} ${MANUAL} Ihre Administration kann ${SETTINGS} die KI einrichten und den Schalter für Teilungserklärungen und Rechnungen einschalten.`,
-    inbox: `Die automatische Auswertung per KI ist für Ihre Organisation nicht eingerichtet. ${IN_NOTHING_MORE_SENT} ${KEPT} ${IN_MANUAL} Ihre Administration kann ${SETTINGS} die KI einrichten und den Schalter für Teilungserklärungen, Rechnungen und Dokumente im Posteingang einschalten; danach können Sie ${IN_AGAIN}.`,
+    inbox: `Die automatische Auswertung per KI ist für Ihre Organisation nicht eingerichtet. ${IN_NOTHING_MORE_SENT} ${KEPT} ${IN_MANUAL} Ihre Administration kann ${SETTINGS} die KI einrichten und den Schalter einschalten, der auch die Dokumente im Posteingang auswertet; danach können Sie ${IN_AGAIN}.`,
   },
   ai_invoice_confirmation_missing: `Ihre Organisation hat noch nicht bestätigt, dass Rechnungen an den KI-Anbieter übermittelt werden dürfen. ${NOTHING_MORE_SENT} ${KEPT} Ihre Administration kann das ${SETTINGS} bestätigen; danach können Sie die Verarbeitung erneut starten. ${MANUAL}`,
   ai_inbox_confirmation_missing: `Ihre Organisation hat noch nicht bestätigt, dass Dokumente im Posteingang an den KI-Anbieter übermittelt werden dürfen. ${IN_NOTHING_MORE_SENT} ${KEPT} Ihre Administration kann das ${SETTINGS} bestätigen, ohne den Schlüssel erneut einzugeben; danach können Sie ${IN_AGAIN}. ${IN_MANUAL}`,
@@ -178,6 +180,13 @@ const PROCESSING_MESSAGES: Record<string, Entry> = {
   },
   incomplete_text: { invoice: LEGACY_OCR, inbox: IN_LEGACY_OCR },
 };
+
+/**
+ * The reasons for which the extraction of a document of the inbox waits for the organization and has not failed: the AI import
+ * is off, the confirmation of the provider is missing, no reading model is chosen or the stored key cannot be read. The original
+ * is kept and the extraction can be requested again once the administration has set it up.
+ */
+export const AWAITS_SETUP: ReadonlySet<string> = new Set(["ai_import_disabled", "ai_inbox_confirmation_missing", "ai_document_model_missing", "ai_key_unreadable"]);
 
 const text = (entry: Entry, context: ProcessingContext) => (typeof entry === "string" ? entry : entry[context]);
 

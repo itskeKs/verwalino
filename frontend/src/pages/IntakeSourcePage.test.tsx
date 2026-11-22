@@ -40,6 +40,50 @@ it('renders unverified source evidence and requests complete child history', asy
   expect(fetch.mock.calls.some(([url]) => url.endsWith('/extractions?logical_document_id=logical-1'))).toBe(true);
 });
 
+// The values of a proposal are shown in the project's display formats, as the invoice page shows them (review of PR #832).
+const stored = (field_name: string, value: string) => ({ field_name, value, confidence: '0.9', locator_status: 'unlocated', page_number: null, quotation: null, xml_path: null, method: 'unlocated' });
+const category = { id: 'category-1', code: 'GEBAEUDEVERSICHERUNG', label: 'Gebäudeversicherung', plan_version: 1 };
+
+function withFields(fields: ReturnType<typeof stored>[], categories: unknown[] = [category]) {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => url === '/api/cost-categories' ? json(categories)
+    : url.startsWith('/api/extraction-revisions/') ? json({ ...revision, status: 'succeeded', error_code: null, processor_version: 'intake-model-v1', fields }) : response(url)));
+  page();
+}
+const card = (label: string) => screen.getByRole('heading', { name: label }).closest('article')!;
+
+it('shows dates, amounts, the VAT rate and the category in the display formats', async () => {
+  withFields([stored('invoice_date', '2026-02-03'), stored('gross_amount', '1234.50'), stored('vat_amount', '197.12'), stored('vat_rate', '19.00'),
+    stored('service_period_from', '2026-01-01'), stored('service_period_to', '2026-12-31'), stored('suggested_category_code', 'GEBAEUDEVERSICHERUNG'),
+    stored('vendor_name', 'Mustermann Versicherungen AG'), stored('document_number', 'RE-2026-0042')]);
+  await screen.findByRole('heading', { name: 'Rechnungsdatum' });
+  await waitFor(() => expect(card('Vorgeschlagene Kostenart')).toHaveTextContent('Gebäudeversicherung'));
+  expect(card('Rechnungsdatum')).toHaveTextContent('03.02.2026');
+  expect(card('Bruttobetrag')).toHaveTextContent('1.234,50 €');
+  expect(card('Umsatzsteuerbetrag')).toHaveTextContent('197,12 €');
+  expect(card('Umsatzsteuersatz')).toHaveTextContent('19 %');
+  expect(card('Leistungszeitraum von')).toHaveTextContent('01.01.2026');
+  expect(card('Leistungszeitraum bis')).toHaveTextContent('31.12.2026');
+  expect(card('Aussteller')).toHaveTextContent('Mustermann Versicherungen AG');
+  expect(card('Belegnummer')).toHaveTextContent('RE-2026-0042');
+  for (const stale of ['2026-02-03', '1234.50', '19.00', 'GEBAEUDEVERSICHERUNG']) expect(document.body).not.toHaveTextContent(stale);
+});
+
+it('shows a value that a format cannot read, and a category the list does not name, as stored', async () => {
+  withFields([stored('gross_amount', 'ca. 312,00'), stored('invoice_date', 'Anfang Februar'), stored('suggested_category_code', 'UNBEKANNT')], []);
+  await screen.findByRole('heading', { name: 'Bruttobetrag' });
+  expect(card('Bruttobetrag')).toHaveTextContent('ca. 312,00');
+  expect(card('Rechnungsdatum')).toHaveTextContent('Anfang Februar');
+  expect(card('Vorgeschlagene Kostenart')).toHaveTextContent('UNBEKANNT');
+});
+
+it('shows the stored category code while the list of categories is not available', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => url === '/api/cost-categories' ? json({ detail: 'down' }, 503)
+    : url.startsWith('/api/extraction-revisions/') ? json({ ...revision, fields: [stored('suggested_category_code', 'GEBAEUDEVERSICHERUNG')] }) : response(url)));
+  page();
+  await screen.findByRole('heading', { name: 'Vorgeschlagene Kostenart' });
+  expect(card('Vorgeschlagene Kostenart')).toHaveTextContent('GEBAEUDEVERSICHERUNG');
+});
+
 it('clears quotes and source selection after access revocation', async () => {
   let revoked = false;
   vi.stubGlobal('fetch', vi.fn(async (url: string) => revoked && url.endsWith('/processing') ? json({ detail: 'revoked' }, 404) : response(url)));

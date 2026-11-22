@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ApiError } from '../api/client';
 import { fileDigest, intakeApi, type IntakeBatch, type IntakeItem, type IntakeStatus } from '../api/intake';
-import { invoiceProcessingMessage } from '../lib/invoiceProcessing';
+import { AWAITS_SETUP, invoiceProcessingMessage } from '../lib/invoiceProcessing';
 
 const labels: Record<IntakeStatus, string> = { waiting: 'Datei fehlt', received: 'Empfangen', processing: 'In Verarbeitung', review: 'Zur Sichtung', confirmed: 'Bestätigt', failed: 'Gesperrt / fehlgeschlagen' };
 const stageLabels = { inspection: 'Dateiprüfung', preparation: 'Dokumentvorbereitung', extraction: 'Auswertung', review: 'Vorschläge verfügbar' };
@@ -20,6 +20,15 @@ const explanations: Record<string, string> = {
   storage_integrity_mismatch: 'Das gespeicherte Original konnte nicht unverändert bestätigt werden. Bitte die Administration informieren.',
   stored_original_unavailable: 'Das gespeicherte Original ist derzeit nicht verfügbar.',
 };
+// The group a file is counted in. A file whose extraction waits for the organization's setup (AI import, confirmation, model or key) did not
+// fail and is not blocked: it is received, kept, and can be requested again, so it is counted as "Empfangen", not as "Gesperrt / fehlgeschlagen".
+const groupOf = (item: IntakeItem): IntakeStatus => item.status === 'failed' && item.stage === 'extraction' && item.error_code && AWAITS_SETUP.has(item.error_code) ? 'received' : item.status;
+// The counts of the server with the files shown here moved to their group; a file that is not loaded yet is counted as the server counts it.
+function countsOf(batch: IntakeBatch): Record<IntakeStatus, number> {
+  const counts = { ...batch.counts };
+  for (const item of batch.items) { const group = groupOf(item); if (group !== item.status) { counts[item.status] -= 1; counts[group] += 1; } }
+  return counts;
+}
 // A file that failed in its extraction is explained from the one map of reasons (the models, their limits and the opt-in
 // of the organization, issue #501); the codes above belong to the inspection of the file.
 const explain = (item: IntakeItem) => !item.error_code ? null : item.stage === 'extraction' ? invoiceProcessingMessage('failed', item.error_code, 'inbox')
@@ -97,6 +106,7 @@ function BatchDetail({ batchId }: { batchId: string }) {
     const timer = window.setTimeout(refresh, 3000);
     return () => window.clearTimeout(timer);
   }, [active, batch?.revision, generation, refresh, error, busy]);
+  const counts = batch ? countsOf(batch) : null;
   return <div className="min-w-0 space-y-5">
     <Link to="/posteingang">Zum Posteingang</Link>
     <header className="flex flex-wrap items-start justify-between gap-3"><div><h1>Dokumentenstapel</h1>
@@ -104,14 +114,14 @@ function BatchDetail({ batchId }: { batchId: string }) {
       <button className="btn" disabled={busy} onClick={refresh}>Stand aktualisieren</button></header>
     {error && <p role="alert" className="error-text">{error}{batch && ' Die angezeigten Daten stammen vom letzten erfolgreichen Abruf.'}</p>}
     {busy && <p role="status">Lade aktuellen Stand…</p>}
-    {batch && <>
+    {batch && counts && <>
       <section className="grid grid-cols-2 gap-3 md:grid-cols-3" aria-label="Verarbeitungsstand">
-        {(Object.keys(labels) as IntakeStatus[]).map(status => <div className="card min-w-0" key={status}><p className="text-2xl font-semibold">{batch.counts[status]}</p><p>{labels[status]}</p></div>)}
+        {(Object.keys(labels) as IntakeStatus[]).map(status => <div className="card min-w-0" key={status}><p className="text-2xl font-semibold">{counts[status]}</p><p>{labels[status]}</p></div>)}
       </section>
       <p>Nach der Dateiprüfung werden die Belege vorbereitet und ausgelesen. „Zur Sichtung“ zeigt ungeprüfte Vorschläge und bestätigt keine Kosten, Zuordnung oder Abrechnung.</p>
       <p>{batch.item_count} Datei(en) · Eingang vom {formatDateTime(batch.created_at)}</p>
       <div className="space-y-3">{batch.items.map(item => <article className="card min-w-0 space-y-3" key={item.id}>
-        <div className="flex flex-wrap items-start justify-between gap-2"><h2 className="min-w-0 break-all">{item.filename}</h2><span className="badge">{labels[item.status]}</span></div>
+        <div className="flex flex-wrap items-start justify-between gap-2"><h2 className="min-w-0 break-all">{item.filename}</h2><span className="badge">{labels[groupOf(item)]}</span></div>
         <p className="text-sm">{(item.content_byte_size / 1024).toLocaleString('de-DE', { maximumFractionDigits: 1 })} KiB · {item.mime_type}</p>
         {item.stage && <p>{stageLabels[item.stage]}{item.logical_counts?.total > 0 && ` · ${item.logical_counts.total} Beleg(e), ${item.logical_counts.review} zur Sichtung`}</p>}
         {explain(item) && <p className="break-words max-w-prose">{explain(item)}</p>}

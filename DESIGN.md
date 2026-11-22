@@ -2420,7 +2420,9 @@ screens say so and show where a value was found. The batch page (`/posteingang/:
 „Texterkennung“ before), and a file whose evaluation did not finish is explained under its stage line, from the same map of
 reasons as the invoice screen (`lib/invoiceProcessing.ts`, `invoiceProcessingMessage(…, 'inbox')`; the codes of the inspection
 keep their own sentences): what happened, that the original is kept and nothing was applied (“Das Original bleibt erhalten; es
-wurde nichts übernommen.”), what the organization or the administration can do and that the established retry stays open. The
+wurde nichts übernommen.”), what the organization or the administration can do and that the established retry stays open. A file whose evaluation waits for
+the organization (AI import off, confirmation, reading model or key missing) is counted and badged „Empfangen“ and not
+„Gesperrt / fehlgeschlagen“: nothing failed, the original is kept and the evaluation can be requested again. The
 source page (`/posteingang/belege/:documentRefId`) calls the states „Wartet auf Auswertung“, „Auswertung läuft“ and „Auswertung
 nicht möglich“, and its retry „Auswertung erneut anfordern“ with the reason field „Grund für die erneute Auswertung“. Each
 document of an original shows, below its status line, the card „Verbrauch der KI-Verarbeitung“
@@ -2429,12 +2431,13 @@ invoice card (`components/InvoiceModelUsage.tsx`: one block per stage and model,
 „Reservierte Eingabetoken“, a model without a price as „kein Preis bekannt“) over all attempts of that document; it is absent
 while no request was made.
 
-Every proposed value is a card with its label, the value as stored (an ISO date, a decimal amount), the certainty and where it
-was found: „Fundstelle auf Seite N · PDF-Text“ for a page with a text layer, „· vom Lesemodell gelesen“ for a page the
+Every proposed value is a card with its label, the value in the display formats of the invoice page (a date as TT.MM.JJJJ, an amount
+as `1.234,56 €`, the VAT rate as `19 %`, the category as the name of the cost category; a value a format cannot read as it is
+stored), the certainty and where it was found: „Fundstelle auf Seite N · PDF-Text“ for a page with a text layer, „· vom Lesemodell gelesen“ for a page the
 organization's reading model read, „Fundstelle im XML · Strukturiertes Feld“ for a structured e-invoice (with its XML path), and
 „· Texterkennung (frühere Version)“ for a result of an earlier release; below it the passage as a quotation. A model names the page
-and the passage it found a value on, and a value counts as found only if that page belongs to this document and the passage
-occurs in the text read from it; otherwise the card says „Keine Fundstelle bestätigt: Das Modell hat keine Seite und Textstelle
+and the passage it found a value on, and a value counts as found only if that page belongs to this document, the passage
+occurs in the text read from it and the passage shows the value (the same amount, date or text in any common spelling); otherwise the card says „Keine Fundstelle bestätigt: Das Modell hat keine Seite und Textstelle
 genannt, die sich in diesem Beleg nachweisen lässt.“ (a result of the local stage keeps „Keine eindeutige Fundstelle
 ermittelt.“). The twin checks at both widths that the pages are those of the document, that a scanned page names the reading
 model and that nothing scrolls horizontally.
@@ -2446,8 +2449,8 @@ frontend of `main` the "before" files; a card that did not exist before is captu
 
 | Inbox screen (#501) | Before, 1280 px | Before, 360 px | After, 1280 px | After, 360 px |
 |---|---|---|---|---|
-| Batch page: a file held back because the organization has not confirmed the inbox text, explained in German with the original kept | [view](docs/assets/design/inbox-processing/batch-explained-before-1280.png) | [view](docs/assets/design/inbox-processing/batch-explained-before-360.png) | [view](docs/assets/design/inbox-processing/batch-explained-after-1280.png) | [view](docs/assets/design/inbox-processing/batch-explained-after-360.png) |
-| Source page, pages 1 to 2: proposal with the page and passage of every value | [view](docs/assets/design/inbox-processing/source-proposal-before-1280.png) | [view](docs/assets/design/inbox-processing/source-proposal-before-360.png) | [view](docs/assets/design/inbox-processing/source-proposal-after-1280.png) | [view](docs/assets/design/inbox-processing/source-proposal-after-360.png) |
+| Batch page: a file held back because the organization has not confirmed the inbox text, counted as „Empfangen“, explained in German with the original kept | [view](docs/assets/design/inbox-processing/batch-explained-before-1280.png) | [view](docs/assets/design/inbox-processing/batch-explained-before-360.png) | [view](docs/assets/design/inbox-processing/batch-explained-after-1280.png) | [view](docs/assets/design/inbox-processing/batch-explained-after-360.png) |
+| Source page, pages 1 to 2: proposal with the page and passage of every value (the after pictures show the display formats) | [view](docs/assets/design/inbox-processing/source-proposal-before-1280.png) | [view](docs/assets/design/inbox-processing/source-proposal-before-360.png) | [view](docs/assets/design/inbox-processing/source-proposal-after-1280.png) | [view](docs/assets/design/inbox-processing/source-proposal-after-360.png) |
 | Source page, pages 3 to 4 (scan): reading-model passages and the card „Verbrauch der KI-Verarbeitung“ (no such card before) | [view](docs/assets/design/inbox-processing/source-scan-before-1280.png) | [view](docs/assets/design/inbox-processing/source-scan-before-360.png) | [view](docs/assets/design/inbox-processing/source-scan-after-1280.png) | [view](docs/assets/design/inbox-processing/source-scan-after-360.png) |
 | AI settings card of the local stack (no invoices) holding a confirmation of the first text: asks once for the inbox, without the key | [view](docs/assets/design/inbox-processing/settings-card-confirmation-before-1280.png) | [view](docs/assets/design/inbox-processing/settings-card-confirmation-before-360.png) | [view](docs/assets/design/inbox-processing/settings-card-confirmation-after-1280.png) | [view](docs/assets/design/inbox-processing/settings-card-confirmation-after-360.png) |
 

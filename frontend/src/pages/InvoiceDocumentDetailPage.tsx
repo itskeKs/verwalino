@@ -33,7 +33,7 @@ import { InvoiceModelUsage } from "../components/InvoiceModelUsage";
 import { InvoiceProcessingExplanation, InvoiceProcessingStatus } from "../components/InvoiceProcessingStatus";
 import { INVOICE_RETRY_FAILED, INVOICE_RETRY_REFUSED } from "../lib/invoiceProcessing";
 import { Badge } from "../components/ui/badge";
-import { centsFromDecimal, formatDate, formatDateTime, formatIban, formatMoney, formatPercent } from "../lib/format";
+import { formatDate, formatDateTime, formatDecimalMoney, formatIban, formatPercent, shown } from "../lib/format";
 
 /** Human-readable short label for source_format values from the e-invoice parser. */
 const FORMAT_LABELS: Record<string, string> = {
@@ -60,18 +60,6 @@ function confidenceLabel(c: number): string {
   if (c > 0) return "Niedrig";
   return "-";
 }
-
-/** A proposal's value in the project's display format; a stored value the format cannot read (an older proposal) is shown as stored. */
-function shown(value: string | null | undefined, format: (value: string) => string): string | null {
-  if (value == null) return null;
-  try {
-    return format(value);
-  } catch {
-    return value;
-  }
-}
-
-const asMoney = (value: string) => formatMoney(centsFromDecimal(value));
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -482,12 +470,12 @@ export function InvoiceDocumentDetailPage() {
             />
             <ExtractionRow
               label="Bruttobetrag"
-              value={shown(ext.gross_amount, asMoney)}
+              value={shown(ext.gross_amount, formatDecimalMoney)}
               fieldConf={ext.field_confidences?.gross_amount}
             />
             <ExtractionRow
               label="USt-Betrag"
-              value={shown(ext.vat_amount, asMoney)}
+              value={shown(ext.vat_amount, formatDecimalMoney)}
               fieldConf={ext.field_confidences?.vat_amount}
             />
             <ExtractionRow

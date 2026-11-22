@@ -153,3 +153,35 @@ it('keeps the explanations of the inspection of a file, and a general sentence f
   expect(screen.getByText(/Die Auswertung konnte nicht abgeschlossen werden\. Das Original bleibt erhalten/)).toBeInTheDocument();
   expect(document.body).not.toHaveTextContent(/a_code_nobody_mapped/);
 });
+
+// A document that waits for the organization is not counted as blocked or failed (review of PR #832).
+const tile = (label: string) => screen.getAllByText(label).find(element => element.tagName === 'P')!.previousElementSibling!;
+
+it('counts a document that waits for the organizations setup as received and keeps the other failures as failed', async () => {
+  const waiting = ['ai_import_disabled', 'ai_inbox_confirmation_missing', 'ai_document_model_missing', 'ai_key_unreadable'].map((code, index) => extracting(code, { id: `waiting-${index}`, can_retry: true }));
+  const failed = extracting('model_extraction_failed', { id: 'failed-1' });
+  const blocked = { ...item, id: 'blocked-1', stage: 'inspection', error_code: 'scanner_detected', can_retry: false };
+  const received = { ...item, id: 'received-1', status: 'received', error_code: null, can_retry: false };
+  const counts = { waiting: 0, received: 1, processing: 0, review: 0, confirmed: 0, failed: 6 };
+  vi.stubGlobal('fetch', vi.fn(async () => json({ ...state, item_count: 7, counts, items: [received, ...waiting, failed, blocked] })));
+  page('/posteingang/batch-1');
+  await screen.findByRole('heading', { name: 'Dokumentenstapel' });
+  expect(tile('Empfangen')).toHaveTextContent('5');
+  expect(tile('Gesperrt / fehlgeschlagen')).toHaveTextContent('2');
+  expect(screen.getAllByText('Empfangen').filter(element => element.className.includes('badge'))).toHaveLength(5);
+  expect(screen.getAllByText('Gesperrt / fehlgeschlagen').filter(element => element.className.includes('badge'))).toHaveLength(2);
+});
+
+it('does not poll for a document that waits for the setup of the organization', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const fetch = vi.fn(async () => json({ ...state, counts: { waiting: 0, received: 0, processing: 0, review: 0, confirmed: 0, failed: 1 }, items: [extracting('ai_import_disabled', { status: 'failed', can_retry: true })] }));
+  vi.stubGlobal('fetch', fetch);
+  try {
+    page('/posteingang/batch-1');
+    await screen.findByRole('heading', { name: 'Dokumentenstapel' });
+    expect(tile('Empfangen')).toHaveTextContent('1');
+    const loads = fetch.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetch.mock.calls.length).toBe(loads);
+  } finally { vi.useRealTimers(); }
+});

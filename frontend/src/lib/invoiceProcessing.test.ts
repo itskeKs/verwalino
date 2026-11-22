@@ -105,6 +105,13 @@ it("tells whether anything was sent: not before the first request, and where the
   for (const code of ["ai_import_disabled", "invoice_page_limit", "ai_inbox_confirmation_missing"]) expect(INBOX_PROCESSING_MESSAGES[code], code).not.toMatch(/verursacht/);
 });
 
+it("names the inbox documents the switch covers and no kind of document that depends on the installation (invoices are processed only on some)", () => {
+  const text = INBOX_PROCESSING_MESSAGES.ai_import_disabled;
+  expect(text).toMatch(/Schalter einschalten, der auch die Dokumente im Posteingang auswertet/);
+  expect(text).not.toMatch(/Rechnung|Teilungserkl/);
+  expect(INVOICE_PROCESSING_MESSAGES.ai_import_disabled).toMatch(/Teilungserklärungen und Rechnungen/);
+});
+
 it("keeps the invoice wording for an invoice and has no inbox code in an invoice's wording of the shared reasons", () => {
   expect(invoiceProcessingMessage("failed", "model_extraction_failed")).toBe(INVOICE_PROCESSING_MESSAGES.model_extraction_failed);
   expect(INVOICE_PROCESSING_MESSAGES.model_extraction_failed).toMatch(/Kostenposition erstellen/);
