@@ -197,7 +197,9 @@ async def test_explicit_retry_replay_keeps_history_and_budget(migrator_session,s
         assert (await api.post(url,headers=headers,json={**body,'reason':'Changed body'})).status_code==409
         assert (await api.post(url,headers={'Idempotency-Key':str(uuid.uuid4())},json=body)).status_code==409
         status=(await api.get('/api/logical-documents/'+child['id']+'/processing')).json()
-        assert status['status']=='succeeded' and status['attempt_number']==2 and not status['can_retry']
+        # The first attempt was refused before any request (it used none of the three), the second made the requests.
+        assert status['status']=='succeeded' and status['attempt_number']==1 and not status['can_retry']
+        assert await read_value('SELECT attempt_number FROM intake_extraction_job WHERE organization_id=:org',ids)==2, 'two claims were made'
         history=(await api.get('/api/document-refs/'+ref['id']+'/extractions')).json()['items']
         assert [row['status'] for row in history]==['succeeded','unavailable']
 

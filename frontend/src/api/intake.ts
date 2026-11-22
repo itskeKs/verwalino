@@ -38,6 +38,7 @@ export interface LogicalDocument {
   origin: 'manual' | 'inspection'; review_state: 'unreviewed'; reason: string;
 }
 export interface ExtractionStatus {
+  /** `attempt_number` counts the attempts that made a request to an AI provider (at most three); a park or a refusal before the first request counts none. */
   id: string; status: string; attempt_number: number; fence: string | null; error_code: string | null; can_retry: boolean;
 }
 export interface FieldEvidence {

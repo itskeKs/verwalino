@@ -122,6 +122,14 @@ it('hides retry and field data after a failed fresh read', async () => {
   expect(screen.queryByRole('button', { name: 'Auswertung erneut anfordern' })).not.toBeInTheDocument();
 });
 
+it('counts only the attempts that made a request: none is named before the first one', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => url.endsWith('/processing')
+    ? json({ ...status, status: 'unavailable', error_code: 'ai_import_disabled', attempt_number: 0 }) : response(url)));
+  page();
+  expect(await screen.findByText('Auswertung nicht möglich')).toBeInTheDocument();
+  expect(screen.queryByText(/Versuch \d/)).not.toBeInTheDocument();
+});
+
 it('allows a new retry reason when a later attempt fails', async () => {
   let advanced = false;
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
@@ -309,8 +317,10 @@ it('keeps naming text recognition for the pages that an earlier release recogniz
 
 it('says that a document waits for the division, offers no retry and names where to confirm it', async () => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => url.endsWith('/processing')
-    ? json({ ...status, status: 'awaiting_split', error_code: 'awaiting_split', can_retry: false }) : url.includes('/extractions?') ? json({ items: [] }) : response(url))); page();
-  expect(await screen.findByText('Wartet auf die Aufteilung · Versuch 1 von höchstens 3')).toBeInTheDocument();
+    ? json({ ...status, status: 'awaiting_split', error_code: 'awaiting_split', can_retry: false, attempt_number: 0 }) : url.includes('/extractions?') ? json({ items: [] }) : response(url))); page();
+  // Nothing was requested, so none of the three attempts is used and the line names none.
+  expect(await screen.findByText('Wartet auf die Aufteilung')).toBeInTheDocument();
+  expect(screen.queryByText(/Versuch \d/)).not.toBeInTheDocument();
   expect(screen.getAllByText(/Das Original hat mehr als eine Seite und wird erst ausgewertet.*Bis dahin wurde nichts an einen KI-Anbieter übermittelt/)).not.toHaveLength(0);
   expect(screen.queryByRole('button', { name: 'Auswertung erneut anfordern' })).not.toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Seiten zu Belegen zusammenstellen' })).toBeInTheDocument();

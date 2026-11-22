@@ -54,6 +54,9 @@ class IntakeModelPipeline(InvoiceModelPipeline):
         super().__init__(session_factory=session_factory, org_id=org_id, claim=claim, data=data, effective=effective,
                          providers=providers, categories=categories, document_key=str(claim["logical_document_id"]))
         self._mime = mime
+        # Set when the claim is still the live one and a request was refused because the division of the original no longer
+        # lists this document: the run did not fail, the document waits for a decision again (``workers/intake_extraction.py``).
+        self.division_changed = False
 
     def _outcome(self, status: str, error: str | None, payload: dict | None = None, evidence: dict | None = None,
                  pages: list | None = None) -> dict:
@@ -80,10 +83,14 @@ class IntakeModelPipeline(InvoiceModelPipeline):
         return self._preflight.render_image_for_reading(self._data, budget=budget)
 
     async def _renew(self, session) -> bool:
-        return bool(await session.scalar(
-            text("SELECT renew_intake_extraction(:org,:job,:fence,:seconds)"),
-            {"org": self._org_id, "job": uuid.UUID(str(self._claim["job_id"])), "fence": uuid.UUID(str(self._claim["fence"])),
-             "seconds": self._lease_seconds}))
+        claim = {"org": self._org_id, "job": uuid.UUID(str(self._claim["job_id"])), "fence": uuid.UUID(str(self._claim["fence"]))}
+        if await session.scalar(text("SELECT renew_intake_extraction(:org,:job,:fence,:seconds)"), {**claim, "seconds": self._lease_seconds}):
+            return True
+        # Refused: the claim is lost, or it is still the live one and the latest division of the original leaves this document
+        # out. Only the second is a decision of a person; the context answers while the fence is live.
+        context = await session.scalar(text("SELECT intake_extraction_context(:org,:job,:fence)"), claim)
+        self.division_changed = context is not None and context["split_state"] != "decided"
+        return False
 
     async def _record_reservation(self, session, stage, pdf_page, model, reservation: _Reservation) -> uuid.UUID:
         return await InvoiceModelCallRepository(session, self._org_id).reserve(

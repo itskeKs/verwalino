@@ -19,6 +19,17 @@ DISCARD = (
     "DELETE FROM public.field_evidence WHERE extraction_revision_id IN"
     " (SELECT id FROM public.extraction_revision WHERE processor_version='invoice-model-v1')",
     "DELETE FROM public.extraction_revision WHERE processor_version='invoice-model-v1'",
+    # A document of the inbox that was claimed more than three times (an attempt that sent nothing does not use up its limit)
+    # cannot go back to the older rule, which numbers its attempts from one to three: its history goes with it.
+    "ALTER TABLE public.intake_extraction_retry DISABLE TRIGGER USER",
+    "DELETE FROM public.field_evidence WHERE extraction_revision_id IN (SELECT r.id FROM public.extraction_revision r WHERE r.intake_attempt_id IN"
+    " (SELECT a.id FROM public.intake_extraction_attempt a WHERE a.job_id IN (SELECT j.id FROM public.intake_extraction_job j WHERE j.attempt_number>3)))",
+    "DELETE FROM public.extraction_revision WHERE intake_attempt_id IN"
+    " (SELECT a.id FROM public.intake_extraction_attempt a WHERE a.job_id IN (SELECT j.id FROM public.intake_extraction_job j WHERE j.attempt_number>3))",
+    "DELETE FROM public.intake_extraction_retry WHERE job_id IN (SELECT j.id FROM public.intake_extraction_job j WHERE j.attempt_number>3)",
+    "DELETE FROM public.intake_extraction_attempt WHERE job_id IN (SELECT j.id FROM public.intake_extraction_job j WHERE j.attempt_number>3)",
+    "DELETE FROM public.intake_extraction_job WHERE attempt_number>3",
+    "ALTER TABLE public.intake_extraction_retry ENABLE TRIGGER USER",
     "UPDATE public.extraction_revision SET processor_version='intake-local-v1' WHERE processor_version='intake-model-v1'",
     # The location a model stated on a page it read is no location of a locally read proposal.
     "UPDATE public.field_evidence SET locator_status='unlocated', page_number=NULL, quotation=NULL, xml_path=NULL, method='unlocated' WHERE method='reading_model'",

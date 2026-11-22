@@ -2445,9 +2445,12 @@ failed: the batch page counts the original under „Zur Sichtung“, names the s
 under it, from the same map (`awaiting_split`), that the original has more than one page and is evaluated only after the division is
 confirmed, where to confirm it („Seiten zu Belegen zusammenstellen“: the documents it falls into, or the whole original as one document),
 that nothing was sent to an AI provider until then, that each document is then evaluated with only its own pages and that the original
-is kept. The source page shows „Wartet auf die Aufteilung · Versuch N von höchstens 3“ with the same sentence and offers no retry (there
-is nothing to retry). A document the confirmed division leaves out (the unsplit whole after the split) says (`not_in_split`) that it
-does not belong to the confirmed division, is not evaluated and was not sent, and how to include it; it does not hold the original back
+is kept. The source page shows „Wartet auf die Aufteilung“ with the same sentence and offers no retry (there
+is nothing to retry); the status line names „Versuch N von höchstens 3“ only once an attempt has made a request to an AI provider (a park
+or a refusal before the first request uses none of the three). A document the confirmed division leaves out (the unsplit whole after the
+split, or a document whose run was stopped by a new division) says (`not_in_split`) that it does not belong to the confirmed division and is
+not evaluated, that nothing more is sent and where what was already requested stands („Verbrauch der KI-Verarbeitung“), and how to include
+it; it does not hold the original back
 from „Zur Sichtung“. A single page and a structured e-invoice are processed at once and show none of this. A request that never left the host
 (`provider_unreachable`) is explained in the inbox words (the Anfrage wurde nicht gesendet, no cost, the usage already incurred under
 „Verbrauch der KI-Verarbeitung“) and is not listed on that card.

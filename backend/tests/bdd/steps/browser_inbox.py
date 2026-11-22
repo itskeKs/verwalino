@@ -135,7 +135,9 @@ async def waits_for_the_division(browser_world):
         await expect(counts.locator(".card").filter(has_text="Gesperrt / fehlgeschlagen")).to_have_text(re.compile(r"^0\s*Gesperrt / fehlgeschlagen$"))
         await _fits_the_width(page)
         section = await _open_source(browser_world)
-        await expect(page.get_by_text("Wartet auf die Aufteilung · Versuch 1 von höchstens 3")).to_be_visible()
+        # Nothing was requested, so none of the three attempts is used and the status line names none.
+        await expect(page.get_by_text("Wartet auf die Aufteilung", exact=True)).to_be_visible()
+        await expect(page.get_by_text(re.compile(r"Versuch \d"))).to_have_count(0)
         await expect(section).to_contain_text(WAITS)
         await expect(section).to_contain_text(NOTHING_SENT)
         # Nothing to press: waiting is no failure, and the place to act is on the page.
@@ -309,7 +311,9 @@ async def not_set_up(browser_world):
     for viewport in (DESKTOP, PHONE):
         await page.set_viewport_size(viewport)
         section = await _open_source(browser_world)
-        await expect(page.get_by_text(f"{UNAVAILABLE} · Versuch")).to_be_visible()
+        # Refused before any request: none of the three attempts is used and the status line names none.
+        await expect(page.get_by_text(UNAVAILABLE, exact=True)).to_be_visible()
+        await expect(page.get_by_text(re.compile(r"Versuch \d"))).to_have_count(0)
         await expect(section).to_contain_text("Das Original bleibt erhalten; es wurde nichts übernommen.")
         await expect(section).to_contain_text("Die automatische Auswertung per KI ist für Ihre Organisation nicht eingerichtet. Es wird nichts (mehr) an einen KI-Anbieter übermittelt.")
         # The established workflow stays open: a new attempt can be asked for once the cause is removed.

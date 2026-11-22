@@ -52,7 +52,9 @@ async def model_outcome(session_factory,org_id,claim,data,inspected,providers):
     local decision and carries the local processor version; only a run of the models carries ``intake-model-v1``.
 
     ``None`` means that the job is to be parked instead: the original has more than one page and nobody has decided yet
-    how it divides, or the latest decision leaves this document out. Nothing is sent then either.
+    how it divides, or the latest decision leaves this document out. Nothing is sent then either. A run that was under way
+    when somebody divided the original differently stops before its next request and ends the same way: the job is parked
+    (or queued again, if the new division lists the document), not failed.
     """
     mime=claim['mime_type']
     def refusal(status,code):
@@ -70,8 +72,10 @@ async def model_outcome(session_factory,org_id,claim,data,inspected,providers):
     if len(pages)>INVOICE_MAX_PAGES:return refusal('needs_review',INVOICE_PAGE_LIMIT)
     owned=providers(effective)
     try:
-        return await IntakeModelPipeline(session_factory=session_factory,org_id=org_id,claim=claim,data=data,mime=mime,
-            effective=effective,providers=owned,categories=categories).run(pages)
+        pipeline=IntakeModelPipeline(session_factory=session_factory,org_id=org_id,claim=claim,data=data,mime=mime,
+            effective=effective,providers=owned,categories=categories)
+        answer=await pipeline.run(pages)
+        return None if pipeline.division_changed else answer
     finally:await close_invoice_providers(owned)
 
 

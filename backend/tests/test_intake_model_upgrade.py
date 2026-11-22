@@ -148,6 +148,17 @@ async def test_the_downgrade_refuses_to_discard_inbox_usage_or_a_model_read_prop
                 assert "split_state" in gate("intake_extraction_context(uuid,uuid,uuid)") and "awaiting_split" in gate("review_source_partition(uuid,uuid,uuid,uuid,uuid[],text,boolean)")
                 assert "awaiting_split" in gate("intake_batch_status(uuid,uuid,integer,integer)")
                 assert "'awaiting_split'" in db.scalar(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='intake_extraction_job_status_check'"))
+                limit = lambda table: db.scalar(text(f"SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='{table}_attempt_number_check'"))
+                readers = ("claim_intake_extraction(uuid)", "intake_extraction_status(uuid,uuid)", "retry_intake_extraction(uuid,uuid,uuid,uuid,text)")
+                assert all("intake_attempts_used" in gate(reader) for reader in readers), "the claim, the status and the retry read the one count"
+                assert "<= 3" not in limit("intake_extraction_job") and "<= 3" not in limit("intake_extraction_attempt"), "claims are numbered without end"
+                db.execute(text("UPDATE intake_extraction_job SET attempt_number=attempt_number+10"))
+                db.execute(text("UPDATE intake_extraction_attempt SET attempt_number=attempt_number+10"))
+                with pytest.raises(DBAPIError, match='Inbox extraction attempts beyond the third require this release'):
+                    with db.begin_nested():
+                        migration.downgrade()
+                db.execute(text("UPDATE intake_extraction_job SET attempt_number=attempt_number-10"))
+                db.execute(text("UPDATE intake_extraction_attempt SET attempt_number=attempt_number-10"))
                 db.execute(text("UPDATE intake_extraction_job SET status='awaiting_split',error_code='awaiting_split'"))
                 migration.downgrade()
                 # The older runtime sends a whole original: a parked job is queued again, nothing else of it is lost.
@@ -158,6 +169,9 @@ async def test_the_downgrade_refuses_to_discard_inbox_usage_or_a_model_read_prop
                 assert "awaiting_split" not in db.scalar(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='intake_extraction_job_status_check'"))
                 assert db.scalar(text("SELECT to_regprocedure('public.hold_intake_extraction(uuid,uuid,uuid)')")) is None
                 assert db.scalar(text("SELECT to_regprocedure('public.intake_split_state(uuid,uuid)')")) is None
+                assert db.scalar(text("SELECT to_regprocedure('public.intake_attempts_used(uuid,uuid)')")) is None
+                assert not any("intake_attempts_used" in gate(reader) for reader in readers) and all("attempt_number>=3" in gate(reader) or "attempt_number<3" in gate(reader) for reader in readers)
+                assert "<= 3" in limit("intake_extraction_job") and "<= 3" in limit("intake_extraction_attempt"), "the older numbering from one to three is back"
                 assert 'intake-model-v1' not in definition() and 'vendor_iban' not in definition() and 'reading_model' not in definition()
                 assert "'reading_model'" not in locator() and "'text_layer'" in locator() and "'ocr'" in locator()
                 assert "'intake-local-v1'" in definition() and 'intake-model-v1' not in constraint() and "'invoice-model-v1'" in constraint()
@@ -171,6 +185,8 @@ async def test_the_downgrade_refuses_to_discard_inbox_usage_or_a_model_read_prop
                 assert db.scalar(text("SELECT to_regprocedure('public.renew_intake_extraction(uuid,uuid,uuid,integer)')")) is not None
                 assert "split_state" in gate("intake_extraction_context(uuid,uuid,uuid)") and "awaiting_split" in gate("intake_batch_status(uuid,uuid,integer,integer)")
                 assert db.scalar(text("SELECT to_regprocedure('public.hold_intake_extraction(uuid,uuid,uuid)')")) is not None
+                assert db.scalar(text("SELECT to_regprocedure('public.intake_attempts_used(uuid,uuid)')")) is not None
+                assert all("intake_attempts_used" in gate(reader) for reader in readers) and "<= 3" not in limit("intake_extraction_attempt")
             finally:
                 savepoint.rollback()
     finally:
@@ -241,3 +257,44 @@ async def test_the_renewal_refuses_a_claim_whose_document_the_division_leaves_ou
         assert await work_sql(ids, HOLD, **params) is True
         assert await read_value("SELECT status||':'||error_code FROM intake_extraction_job WHERE organization_id=:org AND logical_document_id=:document",
                                 {**ids, "document": uuid.UUID(whole)}) == "awaiting_split:not_in_split"
+
+
+USED = "SELECT intake_attempts_used(:org,:job)"
+ATTEMPT = """INSERT INTO intake_extraction_attempt(organization_id,job_id,attempt_number,fence,finished_at,result)
+    VALUES (:org,:job,:number,gen_random_uuid(),clock_timestamp(),CAST(:result AS jsonb)) RETURNING id"""
+REQUEST = """INSERT INTO invoice_model_call(organization_id,intake_attempt_id,stage,pdf_page,model_name,status,reserved_input_tokens,
+    reserved_output_tokens,reserved_cost_usd,input_tokens,output_tokens,cost_usd,usage_complete,error_code,settled_at)
+    VALUES (:org,:intake,'read_page',1,'m','SETTLED',100,50,0.5,0,0,0,true,:code,clock_timestamp())"""
+
+
+async def test_an_attempt_counts_against_the_limit_only_when_a_request_left_the_host_or_the_run_was_abandoned(migrator_session, scope_seed, store):
+    ids = await fixture(migrator_session, scope_seed)
+    async with client(ids) as api:
+        await source(api, ids)
+    job = {"job": uuid.UUID((await work_sql(ids, CLAIM))["job_id"])}
+    # No role calls the count: only the functions of the claim, the status and the retry do.
+    for role in ("clerk", "actor"):
+        with pytest.raises(DBAPIError, match="permission denied"):
+            await read_value(USED, {**ids, **job}, actor_key=role)
+    with pytest.raises(DBAPIError, match="permission denied"):
+        await work_sql(ids, USED, **job)
+    used = lambda: read_value(USED, {**ids, **job})
+    assert await used() == 0, "the live claim has sent nothing yet"
+    number = [1]
+
+    async def attempt(result, request=False):
+        number[0] += 1
+        row = await read_value(ATTEMPT, {**ids, **job, "number": number[0], "result": json.dumps(result)})
+        if request is not False:
+            await mutate(text(REQUEST), {**ids, "intake": row, "code": request})
+
+    await attempt({"status": "awaiting_split", "error_code": "awaiting_split"})
+    await attempt({"status": "unavailable", "error_code": "ai_import_disabled"})
+    await attempt({"status": "failed", "error_code": "provider_unreachable"}, request="PROVIDER_REQUEST_NOT_SENT")
+    assert await used() == 0, "a park, a refusal and a request that never left the host use none of the three"
+    await attempt({"status": "failed", "error_code": "model_reading_failed"}, request="PROVIDER_CONNECTION_ERROR")
+    assert await used() == 1, "a request that left the host and failed uses one"
+    await attempt({"status": "blocked", "error_code": "lease_expired"})
+    assert await used() == 2, "an abandoned run is claimed again by itself, so it counts"
+    await attempt({"status": "succeeded", "error_code": None}, request=None)
+    assert await used() == 3, "a request without an error uses one"

@@ -350,7 +350,8 @@ async def test_whatever_stops_the_models_the_document_is_retained_nothing_is_app
         assert retried.status_code == 202, retried.text
         assert await extract_all(ids["org"], Harness(), processor=extract_logical) == 1
         second, ended = await state_of(api, document)
-        assert (ended, second["attempt_number"]) == (("succeeded", None, False), 2)
+        # The attempts used are those that made a request: a first attempt that was refused before its first request used none.
+        assert (ended, second["attempt_number"]) == (("succeeded", None, False), 2 if rows else 1)
         assert len(await ledger(ids["org"])) == len(rows) + scans + 1, "the second attempt reads every page and extracts"
         again = (await usage_of(api, document)).json()
         assert [(stage["stage"], stage["calls"]) for stage in again["stages"]] == [

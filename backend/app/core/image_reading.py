@@ -18,10 +18,10 @@ import signal
 import subprocess
 import sys
 
-from app.core.document_limits import MAX_UPLOAD_BYTES
+from app.core.document_limits import CHILD_MEMORY_BYTES, MAX_UPLOAD_BYTES
 
-# The child's address space: far above a 20 million pixel picture and its copies (about 250 MB), far below the worker's.
-CHILD_MEMORY_BYTES = 1024**3
+# The child's address space is ``CHILD_MEMORY_BYTES`` (``core/document_limits.py``): above a 20 million pixel picture and its
+# copies (about 250 MiB of resident memory measured), below what the worker's container has left for a child.
 # The pipe carries a PNG of at most the output bound; anything much larger is not what the child was asked for.
 MAX_OUTPUT_BYTES = 64 * 1024**2
 # Exit status of a child that refused the picture for its size, before decoding it.

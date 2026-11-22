@@ -360,7 +360,8 @@ def test_the_reviews_examples_of_a_passage_that_does_not_carry_the_value_are_unl
 @pytest.mark.parametrize('value,quote',[
     ('312.00','312,00'),('312.00','Gesamtbetrag 312,00 EUR'),('312.00','€ 312,00'),('312.00','EUR 312.00'),('312.00','312 EUR'),('312.00','312,0'),('312.00','312,00€.'),
     ('1234.56','1.234,56'),('1234.56','1,234.56'),('1234.56','1 234,56 EUR'),('1234.56','1234,56'),('1234567.89','1.234.567,89'),
-    ('1234.00','1.234 EUR'),('1.234','1,234'),('0.50','0,50'),('-249.90','-249,90 EUR'),('-249.90','Gutschrift − 249,90'),('-249.90','€ -249,90'),('-249.90','249,90-'),
+    ('1234.00','1.234 EUR'),('312000.00','312.000 EUR'),('1312.00','1.312,00'),('1312.00','1,312.00'),('312.00','312,00 EUR'),('312.00','312.00 EUR'),
+    ('1234567.00','1.234.567'),('1234567.00','1,234,567'),('0.50','0,50'),('0.50','0.500'),('1234.567','1234,567'),('-249.90','-249,90 EUR'),('-249.90','Gutschrift − 249,90'),('-249.90','€ -249,90'),('-249.90','249,90-'),
     ('19.00','19 %'),('19','MwSt. 19%'),('7.5','7,5 %'),
 ],ids=lambda value:str(value))
 def test_an_amount_is_located_by_a_passage_that_shows_its_digits_in_any_german_or_english_spelling(value,quote):
@@ -372,6 +373,12 @@ def test_an_amount_is_located_by_a_passage_that_shows_its_digits_in_any_german_o
     ('312.00','3'),('312.00','Rechnung RE-2026-0312'),('312.00','RE-2026-312'),('312.00','RE312'),('312.00','31,20'),('312.00','3.120,00'),('312.00','312,01'),
     ('312.00','-312,00'),('-312.00','312,00'),('-312.00','RE-312,00'),('312.00','01.03.2012'),('312.00','15.01.2026 und 12'),('42.00','RE-2026-0042'),
     ('1234.56','1.234,5'),('1234.56','12.345,6'),('1234.56','1.23.456'),('19.00','190 %'),('19','1 9'),
+    # Review of PR #832, round 2, item 3: three digits after a single separator are thousands in German writing, so "312.000"
+    # reads as 312,000 and no passage may carry 312.00 with it; a comma there is a German decimal and an English thousands
+    # sign at once, which the passage cannot settle, so it states no value at all.
+    ('312.00','312.000 EUR'),('312.00','312.000'),('312.00','€ 312.000'),('312.00','312,000 EUR'),('312000.00','312,000 EUR'),('1.234','1,234'),
+    ('1234.00','1,234'),('12.00','312,00'),('12.00','1.312,00'),('312.00','1.312,00'),('312.00','1,312.00'),
+    ('1312.00','312,00'),('1312.00','1.312,000.00'),
 ],ids=lambda value:str(value))
 def test_an_amount_is_not_located_by_digits_that_are_another_number(value,quote):
     key='vat_rate' if value in ('19.00','19') else 'gross_amount'
@@ -403,6 +410,38 @@ def test_a_date_is_not_located_by_a_passage_that_shows_another_day_or_only_a_par
 ])
 def test_a_text_is_located_by_a_passage_that_contains_it_ignoring_case_and_spacing(key,value,quote,expected):
     assert status_of(key,value,quote)==expected
+
+
+# A text value is a Fundstelle only at the boundaries of a word, a number or an identifier of the passage (review of PR #832,
+# round 2, item 4): a short value is no value of the longer word that happens to contain it.
+
+@pytest.mark.parametrize('key,value,quote',[
+    ('vendor_name','Ista','Distanz'),('vendor_name','AG','Tagesgeld'),('document_number','1','Rechnung 12'),
+    ('vendor_name','Muster','Musterversicherung AG'),('vendor_name','versicherung AG','Musterversicherung AG'),
+    ('document_number','RE-2026-004','RE-2026-0042'),('document_number','2026','Rechnung RE-2026-0042'),('document_number','0042','RE-2026-0042'),
+    ('document_number','42','RE-2026-0042 vom'),('document_number','12','12.01.2026'),('document_number','1','Musterstr 1,5'),('document_number','1','Musterstr 1/2'),
+    ('vendor_name','Müller','Müller-Lüdenscheid GmbH'),('vendor_name','Lüdenscheid GmbH','Müller-Lüdenscheid GmbH'),('document_number','A','A_B'),
+],ids=lambda value:str(value)[:30])
+def test_a_text_is_not_located_inside_another_word_number_or_identifier(key,value,quote):
+    assert status_of(key,value,quote)=='unlocated'
+    text='Rechnung 12 vom Tagesgeld Distanz '+quote
+    assert status_of(key,value,quote,text)=='unlocated'
+
+
+@pytest.mark.parametrize('key,value,quote',[
+    ('vendor_name','Musterversicherung AG','Rechnung der Musterversicherung AG, Musterstr 1'),
+    ('document_number','RE-2026-0042','Rechnung RE-2026-0042 vom 15.01.2026'),('document_number','1','Rechnung der Musterversicherung AG, Musterstr 1'),
+    ('document_number','12','Rechnung 12'),('vendor_name','AG','Mustermann AG'),('vendor_name','Müller','Müller, Berlin'),
+    ('document_number','RE-2026-0042','(RE-2026-0042)'),('document_number','RE-2026-0042','Nr.RE-2026-0042.'),('document_number','RE-2026-0042','Rechnung - RE-2026-0042 -'),
+    ('vendor_name','Müller & Söhne GmbH & Co. KG','Müller   &  Söhne GmbH\n& Co. KG, Berlin'),('vendor_name','Straße','Hauptstraße 1 – Straße des 17. Juni'),
+],ids=lambda value:str(value)[:30])
+def test_a_text_is_located_where_it_stands_between_the_boundaries_of_the_passage(key,value,quote):
+    assert status_of(key,value,quote)=='page_quote'
+
+
+def test_a_text_is_found_at_a_later_occurrence_when_the_first_one_is_part_of_a_longer_word():
+    assert status_of('vendor_name','AG','Tagesgeld bei der Mustermann AG')=='page_quote'
+    assert status_of('document_number','1','Rechnung 12, Position 1')=='page_quote'
 
 
 def test_a_category_code_is_a_choice_from_the_list_and_not_printed_so_its_passage_is_only_a_place():

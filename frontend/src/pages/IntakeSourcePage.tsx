@@ -119,7 +119,7 @@ function Proposals({ document, onDenied, parentBusy, parentGeneration, focusExtr
     {error && <p role="alert" className="error-text">{error}</p>}
     {view && <>
       {focusExtraction && <p>Der Extraktionsstand dieses Klärungsfalls ist in der Historie markiert. Neue Vorschläge verwenden weiterhin die neueste Grundlage.</p>}
-      <p>{statuses[view.status.status] ?? 'Verarbeitungsstand unbekannt'} · Versuch {view.status.attempt_number} von höchstens 3</p>
+      <p>{`${statuses[view.status.status] ?? 'Verarbeitungsstand unbekannt'}${view.status.attempt_number > 0 ? ` · Versuch ${view.status.attempt_number} von höchstens 3` : ''}`}</p>
       {showStatusReason && <Outcome status={view.status.status} code={view.status.error_code} />}
       <IntakeModelUsage logicalId={document.id} state={`${view.status.status}:${view.status.attempt_number}`} />
       {!view.revisions.length && <p>Es liegt noch kein Extraktionsergebnis vor.</p>}

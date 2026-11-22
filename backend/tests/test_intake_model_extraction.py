@@ -138,6 +138,7 @@ async def test_a_multipage_upload_waits_and_nothing_is_requested_before_a_person
             assert await processing(api, document) == ("awaiting_split", "awaiting_split", False), "waiting is no failure: no retry to press"
             assert (await revision(ids, document))[1] is None
             assert (await job_state(ids, document))["attempts"] == 1
+            assert await used_attempts(api, document) == 0, "waiting sent nothing, so it used none of the three attempts"
         item = (await api.get("/api/intake-batches/" + ref["batch_id"])).json()["items"][0]
         assert (item["status"], item["stage"], item["error_code"]) == ("review", "split", "awaiting_split")
         assert item["logical_counts"] == {"total": 3, "processing": 0, "review": 0, "failed": 0}
@@ -220,8 +221,9 @@ async def test_an_original_confirmed_as_one_document_is_sent_whole_and_only_then
         await confirm_partition(api, ref, whole)
         assert await extract_all(ids["org"], harness, processor=extract_logical) == 1
         assert await processing(api, whole) == ("succeeded", None, False)
+        assert await used_attempts(api, whole) == 1, "only the attempt that made requests is used"
     assert [call.pages for call in harness.extractor.calls] == [(1, 2, 3, 4)] and [read.pdf_page for read in harness.reader.reads] == [3, 4]
-    assert (await job_state(ids, whole))["attempts"] == 2, "the wait used an attempt"
+    assert (await job_state(ids, whole))["attempts"] == 2, "the wait made a claim of its own"
 
 
 async def test_a_single_page_upload_is_processed_at_once_without_a_split_decision(migrator_session, scope_seed, store):
@@ -275,18 +277,53 @@ async def test_a_partition_that_leaves_the_document_out_during_a_run_stops_furth
         first, second = parts
         assert [read.pdf_page for read in reader.reads if read.document_key == whole] == [1], "the second page of the whole is never read"
         assert {call.document_key for call in harness.extractor.calls} == {first, second}, "the whole is never extracted"
-        assert await processing(api, whole) == ("failed", "lease_lost", True), "the run stopped like a lost claim"
+        # The run stopped at the division: the document is where the new division puts it (outside it), not failed, with
+        # nothing to retry; what was already requested stays on its usage card.
+        assert await processing(api, whole) == ("awaiting_split", "not_in_split", False)
         assert (await revision(ids, whole))[1] is None
         assert [await processing(api, part) for part in parts] == [("succeeded", None, False)] * 2, "the two documents of the division are read"
-        # The next claim of the whole finds it outside the division and parks it instead of reading it.
-        fence = (await api.get("/api/logical-documents/" + whole + "/processing")).json()["fence"]
-        again = await api.post("/api/logical-documents/" + whole + "/retry-extraction", json={"expected_fence": fence, "reason": "Again"},
-                               headers={"Idempotency-Key": str(uuid.uuid4())})
-        assert again.status_code == 202, again.text
+        assert await used_attempts(api, whole) == 1, "the page that was read is paid and uses an attempt"
+        (stage,) = (await api.get("/api/logical-documents/" + whole + "/model-usage")).json()["stages"]
+        assert (stage["stage"], stage["calls"]) == ("READING", 1)
         sent = len(reader.reads) + len(harness.extractor.calls)
-        assert await extract_all(ids["org"], harness, processor=extract_logical) == 1
+        assert await extract_all(ids["org"], harness, processor=extract_logical) == 0, "nothing is left to do for it"
         assert len(reader.reads) + len(harness.extractor.calls) == sent
         assert await processing(api, whole) == ("awaiting_split", "not_in_split", False)
+
+
+async def test_a_run_stopped_by_a_division_that_lists_the_document_again_before_it_is_parked_is_queued_again(migrator_session, scope_seed, store, monkeypatch):
+    from app.declarations.intake_pipeline import IntakeModelPipeline
+    from app.workers.intake_extraction import process_once
+
+    ids = await fixture(migrator_session, scope_seed)
+    enable_models(ids["org"])
+    async with client(ids) as api:
+        ref = await receive_original(api, ids, document_pdf([None, None]), pages=2)
+        (whole,) = (await documents(api, ref)).values()
+        await confirm_partition(api, ref, whole)
+        parts = []
+
+        async def divided(count):
+            if not parts:
+                parts.extend([await split(api, ref, 1, 1), await split(api, ref, 2, 2)])
+                await confirm_partition(api, ref, *parts)
+
+        run = IntakeModelPipeline.run
+
+        async def then_confirmed_again(self, pages):
+            answer = await run(self, pages)
+            await confirm_partition(api, ref, whole)  # the whole is confirmed as one document again before the job is parked
+            return answer
+
+        monkeypatch.setattr(IntakeModelPipeline, "run", then_confirmed_again)
+        reader = Reader(after=divided)
+        harness = Harness(reader=reader)
+        assert await process_once(get_worker_session_factory(), ids["org"], processor=extract_logical, providers=harness)
+        assert await processing(api, whole) == ("queued", None, False), "the division lists it: it is queued again, not parked"
+        assert [read.pdf_page for read in reader.reads] == [1], "the run stopped before its second request"
+        assert await extract_all(ids["org"], harness, processor=extract_logical) == 3
+        assert await processing(api, whole) == ("succeeded", None, False)
+        assert [await processing(api, part) for part in parts] == [("awaiting_split", "not_in_split", False)] * 2
 
 
 async def test_the_decision_of_one_organization_changes_nothing_for_the_waiting_document_of_another(migrator_session, scope_seed, store):
@@ -584,3 +621,92 @@ async def test_the_real_child_process_hands_the_selected_pages_over_and_the_work
     assert {call.pages for call in harness.extractor.calls} == {(1,), (2,)}
     header, payload, _, pages = await revision(ids, first)
     assert (header["processor_version"], payload["source_pages"], [page["text"] for page in pages]) == ("intake-model-v1", [1], ["\n".join(FIRST)])
+
+
+# ---- the limit of three attempts bounds paid work (review of PR #832, round 2, item 1) ----------------------------------
+# An attempt that made no provider request has cost nothing: a park, a refusal for a missing opt-in, confirmation, model or key,
+# a budget that was exhausted before the first request and a provider that could not be reached do not use one of the three.
+
+async def retry_extraction(api, document, reason="Again"):
+    """The user asks again (the only way an attempt that ended starts another); the status code of the answer."""
+    fence = (await api.get("/api/logical-documents/" + document + "/processing")).json()["fence"]
+    reply = await api.post("/api/logical-documents/" + document + "/retry-extraction", json={"expected_fence": fence, "reason": reason},
+                           headers={"Idempotency-Key": str(uuid.uuid4())})
+    return reply.status_code
+
+
+async def used_attempts(api, document):
+    return (await api.get("/api/logical-documents/" + document + "/processing")).json()["attempt_number"]
+
+
+async def test_a_parked_document_is_read_once_it_is_confirmed_although_earlier_attempts_were_refused(migrator_session, scope_seed, store):
+    """The review's sequence: two refused attempts, the opt-in, a park, then the whole is confirmed as one document."""
+    ids = await fixture(migrator_session, scope_seed)
+    async with client(ids) as api:
+        ref = await receive_original(api, ids, document_pdf([FIRST, SECOND]), pages=2)
+        (whole,) = (await documents(api, ref)).values()
+        harness = Harness()
+        for attempt in (1, 2):
+            assert await extract_all(ids["org"], harness, processor=extract_logical) == 1
+            assert await processing(api, whole) == ("unavailable", "ai_import_disabled", True), f"attempt {attempt} is refused"
+            assert await retry_extraction(api, whole) == 202
+        enable_models(ids["org"])
+        assert await extract_all(ids["org"], harness, processor=extract_logical) == 1
+        assert await processing(api, whole) == ("awaiting_split", "awaiting_split", False), "attempt 3 is parked"
+        assert nothing_was_sent(harness) and await ledger(ids["org"]) == []
+        assert await used_attempts(api, whole) == 0, "nothing was requested, so none of the three is used"
+        await confirm_partition(api, ref, whole)
+        assert await processing(api, whole) == ("queued", None, False)
+        assert await extract_all(ids["org"], harness, processor=extract_logical) == 1
+        assert await processing(api, whole) == ("succeeded", None, False), "the confirmed document is read, not blocked"
+        assert await used_attempts(api, whole) == 1
+    assert [call.pages for call in harness.extractor.calls] == [(1, 2)] and len(await ledger(ids["org"])) == 1
+    assert (await job_state(ids, whole))["attempts"] == 4, "four claims were made, one of them paid"
+
+
+@pytest.mark.parametrize("cause", ["unreachable", "budget"])
+async def test_an_attempt_whose_request_never_left_or_was_refused_before_it_does_not_use_up_the_limit(migrator_session, scope_seed, store, cause):
+    ids = await fixture(migrator_session, scope_seed)
+    enable_models(ids["org"], monthly_limit_usd=Decimal("0.0000001") if cause == "budget" else None)
+    expected = ("failed", "provider_unreachable", True) if cause == "unreachable" else ("unavailable", "organization_ai_budget_exceeded", True)
+    async with client(ids) as api:
+        ref = await receive_original(api, ids, document_pdf([None]), pages=1)
+        (document,) = (await documents(api, ref)).values()
+        failure = ProviderFailure(PROVIDER_CONNECTION_ERROR, True, "synthetic: the connection was refused", not_sent=True)
+        down = Harness(reader=Reader(failures={(document, 1): failure}))
+        for attempt in range(1, 5):
+            assert await extract_all(ids["org"], down, processor=extract_logical) == 1
+            assert await processing(api, document) == expected, f"attempt {attempt} sent nothing, so it can be asked again"
+            assert await used_attempts(api, document) == 0
+            assert await retry_extraction(api, document) == 202
+        if cause == "budget":
+            enable_models(ids["org"])
+        assert await extract_all(ids["org"], Harness(), processor=extract_logical) == 1
+        assert await processing(api, document) == ("succeeded", None, False)
+    assert (await job_state(ids, document))["attempts"] == 5
+
+
+async def test_three_attempts_that_each_sent_a_request_end_at_the_limit_whatever_came_before(migrator_session, scope_seed, store):
+    ids = await fixture(migrator_session, scope_seed)
+    enable_models(ids["org"], import_enabled=False)
+    outage = ProviderFailure(PROVIDER_CONNECTION_ERROR, True, "synthetic outage", usage=ProviderUsage(40, 0, Decimal("0.00001"), 1))
+    async with client(ids) as api:
+        ref = await receive_original(api, ids, document_pdf([None]), pages=1)
+        (document,) = (await documents(api, ref)).values()
+        reader = Reader(failures={(document, 1): outage})
+        harness = Harness(reader=reader)
+        assert await extract_all(ids["org"], harness, processor=extract_logical) == 1
+        assert await processing(api, document) == ("unavailable", "ai_import_disabled", True), "a refused attempt comes first and does not count"
+        enable_models(ids["org"])
+        assert await retry_extraction(api, document) == 202
+        for number in (1, 2, 3):
+            assert await extract_all(ids["org"], harness, processor=extract_logical) == 1
+            assert await processing(api, document) == ("failed", "model_reading_failed", number < 3)
+            assert await used_attempts(api, document) == number
+            assert await retry_extraction(api, document) == (202 if number < 3 else 409), "the third paid attempt is the last"
+        assert len(reader.reads) == 3
+        # No other path takes the document past the limit either: a claim of a job that was queued again ends at it.
+        await mutate(text("UPDATE intake_extraction_job SET status='queued' WHERE organization_id=:org"), ids)
+        assert await extract_all(ids["org"], harness, processor=extract_logical) == 0
+        assert await processing(api, document) == ("blocked", "attempt_limit", False)
+    assert len(reader.reads) == 3 and len(await ledger(ids["org"])) == 3, "nothing more was sent"

@@ -38,15 +38,24 @@ part of the issue has to change the schema:
   the others ``not_in_split``. ``renew_intake_extraction`` refuses a claim whose document is no longer part of the
   decision, so no request is paid for after the partition changed. A parked job is not active and not failed in
   ``intake_batch_status``, which names the stage ``split``. A structured original needs no decision: the parking happens
-  after its local parse, and only for an unstructured one. A parked job used one of its three attempts.
+  after its local parse, and only for an unstructured one.
+* The limit of three attempts bounds paid work, so it counts the attempts that made a provider request (review of PR #832,
+  round 2): ``intake_attempts_used`` is the one place that says how many of the three an inbox document has used, and the
+  claim, the retry and the status read it. An attempt counts when the ledger holds a request of it that left the host
+  (a row that is not settled as ``PROVIDER_REQUEST_NOT_SENT``) or when it was abandoned (its lease ran out, which is an
+  automatic claim and stays bounded); a park, a refusal for a missing opt-in, confirmation, model or key, an exhausted
+  budget before the first request and a provider that could not be reached do not count. The job's ``attempt_number``
+  counts the claims (the number of the attempt row, which no longer ends at three), and the status keeps the key
+  ``attempt_number`` for the attempts used. A retry stays the user's act: nothing here queues a document again.
 
 No row is read or rewritten and nothing is sent anywhere because of the upgrade: whether an organization's inbox
 documents reach a provider stays governed by its own AI import switch, confirmation, key and models.
 
 ``downgrade()`` refuses while a ledger row of an inbox attempt, an ``intake-model-v1`` proposal or located evidence of a
 model-read page exists, so that none is discarded silently: the older runtime cannot read a model-read proposal and a
-dropped ledger row would reopen the monthly limit. It restores the older function text; the ``vendor_iban`` key of a stored proposal stays
-where it is.
+dropped ledger row would reopen the monthly limit. It refuses as well while a document has been claimed more than three
+times, because the older runtime numbers its attempts from one to three. It restores the older function text and puts a
+parked job back in the queue; the ``vendor_iban`` key of a stored proposal stays where it is.
 
 Revision ID: 0198
 Revises: 0197
@@ -118,6 +127,16 @@ _BATCH_CHANGES = (
      "              WHERE l.organization_id=org AND l.document_ref_id=ref AND j.status='awaiting_split' ORDER BY j.created_at,j.id LIMIT 1;\n"
      "          ELSIF total>0 THEN stage:='review';state:='review';failure:=NULL;"),
 )
+# The attempt rule (see the docstring). Fragments of the installed texts of the functions of 0098 that read the limit.
+_CLAIM = 'claim_intake_extraction(uuid)'
+_CLAIM_CHANGE = ("IF work.attempt_number>=3 THEN", "IF public.intake_attempts_used(org,work.id)>=3 THEN")
+_STATUS = 'intake_extraction_status(uuid,uuid)'
+_STATUS_CHANGES = (
+    ("'attempt_number',attempt_number,", "'attempt_number',public.intake_attempts_used(org,id),"),
+    ("AND attempt_number<3 AND public.intake_actor_access", "AND public.intake_attempts_used(org,id)<3 AND public.intake_actor_access"),
+)
+_RETRY = 'retry_intake_extraction(uuid,uuid,uuid,uuid,text)'
+_RETRY_CHANGE = ("OR work.attempt_number>=3 THEN", "OR public.intake_attempts_used(org,work.id)>=3 THEN")
 _JOB_STATUS = "('queued','running','succeeded','needs_review','unsupported','unavailable','timeout','failed','canceled','blocked')"
 _JOB_STATUS_SPLIT = "('queued','running','succeeded','needs_review','unsupported','unavailable','timeout','failed','canceled','blocked','awaiting_split')"
 
@@ -234,7 +253,28 @@ def upgrade():
     GRANT EXECUTE ON FUNCTION public.hold_intake_extraction(uuid,uuid,uuid) TO app_worker;
     ALTER TABLE public.intake_extraction_job DROP CONSTRAINT intake_extraction_job_status_check;
     ALTER TABLE public.intake_extraction_job ADD CONSTRAINT intake_extraction_job_status_check CHECK (status IN """ + _JOB_STATUS_SPLIT + """);
+
+    -- How many of its three attempts an inbox document has used: the attempts that made a provider request (a ledger row
+    -- that is not settled as a request that never left the host) and the abandoned ones (a run whose lease ran out is claimed
+    -- again by itself, so it stays bounded). Called by the functions that read the limit only; no role may call it.
+    CREATE FUNCTION public.intake_attempts_used(org uuid, job uuid) RETURNS integer
+    LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+      SELECT count(*)::integer FROM public.intake_extraction_attempt a WHERE a.organization_id=org AND a.job_id=job
+        AND (a.result->>'error_code'='lease_expired'
+          OR EXISTS(SELECT 1 FROM public.invoice_model_call c WHERE c.organization_id=org AND c.intake_attempt_id=a.id
+            AND c.error_code IS DISTINCT FROM 'PROVIDER_REQUEST_NOT_SENT'));
+    $$;
+    REVOKE ALL ON FUNCTION public.intake_attempts_used(uuid,uuid) FROM PUBLIC,app_rw,app_worker,app_review;
+    -- The claims are numbered without end: an attempt that sent nothing leaves its number behind and the next claim takes the next.
+    ALTER TABLE public.intake_extraction_job DROP CONSTRAINT intake_extraction_job_attempt_number_check;
+    ALTER TABLE public.intake_extraction_job ADD CONSTRAINT intake_extraction_job_attempt_number_check CHECK (attempt_number>=0);
+    ALTER TABLE public.intake_extraction_attempt DROP CONSTRAINT intake_extraction_attempt_attempt_number_check;
+    ALTER TABLE public.intake_extraction_attempt ADD CONSTRAINT intake_extraction_attempt_attempt_number_check CHECK (attempt_number>=1);
     """)
+    _replace_definition(_CLAIM, *_CLAIM_CHANGE)
+    for before, after in _STATUS_CHANGES:
+        _replace_definition(_STATUS, before, after)
+    _replace_definition(_RETRY, *_RETRY_CHANGE)
     _replace_definition(_CONTEXT, _CONTEXT_BEFORE, _CONTEXT_AFTER)
     _replace_definition(_PARTITION, _PARTITION_BEFORE, _PARTITION_AFTER)
     for before, after in _BATCH_CHANGES:
@@ -252,6 +292,9 @@ def downgrade():
     op.execute("""DO $$ BEGIN IF EXISTS(SELECT 1 FROM public.extraction_revision WHERE processor_version='intake-model-v1')
       OR EXISTS(SELECT 1 FROM public.field_evidence WHERE method='reading_model')
       THEN RAISE EXCEPTION 'Model-read inbox proposals require this release'; END IF; END $$""")
+    op.execute("""DO $$ BEGIN IF EXISTS(SELECT 1 FROM public.intake_extraction_job WHERE attempt_number>3)
+      OR EXISTS(SELECT 1 FROM public.intake_extraction_attempt WHERE attempt_number>3)
+      THEN RAISE EXCEPTION 'Inbox extraction attempts beyond the third require this release'; END IF; END $$""")
     _evidence_locator("'text_layer','ocr'")
     _typed_attempt(_TYPED_INTAKE_BEFORE)
     for before, after in reversed(_COMPLETE_CHANGES):
@@ -259,6 +302,10 @@ def downgrade():
     # The older runtime sends a whole original: a parked job goes back in the queue, which no record is lost by.
     op.execute("""UPDATE public.intake_extraction_job SET status='queued',error_code=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
       WHERE status='awaiting_split'""")
+    _replace_definition(_RETRY, _RETRY_CHANGE[1], _RETRY_CHANGE[0], reverting=True)
+    for before, after in reversed(_STATUS_CHANGES):
+        _replace_definition(_STATUS, after, before, reverting=True)
+    _replace_definition(_CLAIM, _CLAIM_CHANGE[1], _CLAIM_CHANGE[0], reverting=True)
     for before, after in reversed(_BATCH_CHANGES):
         _replace_definition(_BATCH, after, before, reverting=True)
     _replace_definition(_PARTITION, _PARTITION_AFTER, _PARTITION_BEFORE, reverting=True)
@@ -266,6 +313,11 @@ def downgrade():
     op.execute("""
     ALTER TABLE public.intake_extraction_job DROP CONSTRAINT intake_extraction_job_status_check;
     ALTER TABLE public.intake_extraction_job ADD CONSTRAINT intake_extraction_job_status_check CHECK (status IN """ + _JOB_STATUS + """);
+    ALTER TABLE public.intake_extraction_attempt DROP CONSTRAINT intake_extraction_attempt_attempt_number_check;
+    ALTER TABLE public.intake_extraction_attempt ADD CONSTRAINT intake_extraction_attempt_attempt_number_check CHECK (attempt_number BETWEEN 1 AND 3);
+    ALTER TABLE public.intake_extraction_job DROP CONSTRAINT intake_extraction_job_attempt_number_check;
+    ALTER TABLE public.intake_extraction_job ADD CONSTRAINT intake_extraction_job_attempt_number_check CHECK (attempt_number BETWEEN 0 AND 3);
+    DROP FUNCTION public.intake_attempts_used(uuid,uuid);
     DROP FUNCTION public.hold_intake_extraction(uuid,uuid,uuid);
     DROP FUNCTION public.intake_split_state(uuid,uuid);
     DROP FUNCTION public.intake_model_usage(uuid,uuid);

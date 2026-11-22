@@ -70,8 +70,10 @@ path's core ([invoice extraction](invoice-extraction.md)): processor `intake-mod
 - **Evidence.** A value is located only if its page is one of the document's selected pages, its quotation occurs in the
   text read from that page (`method` `text_layer`, `reading_model`, `xml`) and the quotation carries the value
   (`passage_carries` in [core/intake_extraction.py](../../backend/app/core/intake_extraction.py)): a text as a substring without
-  regard to case and spacing, an amount as its digits with either decimal separator, thousands separators, currency and its
-  sign (312.00 is „312,00 EUR“, „€ 312,00“), a date by day, month and year in ISO, German numeric or month-name spelling
+  regard to case and spacing and only at the boundaries of the passage's words, numbers and identifiers („Ista“ is not in
+  „Distanz“, „AG“ not in „Tagesgeld“, „1“ not in „Rechnung 12“), an amount as its digits with either decimal separator,
+  thousands separators, currency and its sign (312.00 is „312,00 EUR“, „€ 312,00“; three digits after a lone separator are
+  thousands in German writing, so „312.000“ is 312,000 and no passage of 312.00, and after a lone comma they state no value), a date by day, month and year in ISO, German numeric or month-name spelling
   (2026-01-15 is „15.01.2026“, „15. Januar 2026“); the suggested category is a choice from the organization's list and not
   printed, so only its place is checked. When in doubt a value is stored `unlocated`. The source page
   shows page and passage per value and the card „Verbrauch der KI-Verarbeitung“
@@ -87,7 +89,7 @@ path's core ([invoice extraction](invoice-extraction.md)): processor `intake-mod
   `model_extraction_failed`, `provider_unreachable` (a request that never left the host: settled at zero, not on the usage
   card), `invoice_page_limit`, …); the screens explain each in German from one map
   (`frontend/src/lib/invoiceProcessing.ts`) and `POST /api/logical-documents/{logical}/retry-extraction` stays open within
-  its three attempts. Usage already incurred stays visible.
+  its three attempts that made a request (below). Usage already incurred stays visible.
 - **No Tesseract.** It stays in the image until [#502](https://github.com/itskeKs/verwalino/issues/502) but no code of this
   path calls it.
 
@@ -106,17 +108,61 @@ Belegen zusammenstellen“, „Aufteilung speichern“); the partition that list
 - **Waiting.** After its local stage, an unstructured document that is not `decided` is parked by `hold_intake_extraction`: the
   job gets the status `awaiting_split` with the reason `awaiting_split` or `not_in_split`, no provider is built and no request is
   made. The order of refusals is the opt-in, then the decision, then the page bound. A structured original is parsed before
-  this and never waits. The parked job used one of its three attempts and cannot be retried: there is nothing to retry, and
-  the screens show nothing to press.
+  this and never waits. The parked job cannot be retried: there is nothing to retry, and the screens show nothing to press.
+- **The limit of three attempts bounds paid work.** An attempt counts only when it made a provider request:
+  `intake_attempts_used` (migration 0198) is the one place that says how many of the three a document has used, and the claim
+  (`attempt_limit`), the retry and the status (`attempt_number`, `can_retry`) read it. A request counts when the ledger holds a
+  row of the attempt that is not settled as `PROVIDER_REQUEST_NOT_SENT`; a run that was abandoned (its lease ran out and it was
+  claimed again by itself) counts as well, so that the automatic claims stay bounded. A park, a refusal for a missing opt-in,
+  confirmation, model or key, a budget that was exhausted before the first request and a provider that could not be reached use
+  none of the three, so a document that was refused twice and parked is still read once its division is confirmed. The retry
+  stays the user's act; nothing queues a document again by itself. The job's own `attempt_number` counts the claims (the number
+  of the attempt row), and the source page names „Versuch N von höchstens 3“ only once an attempt has made a request.
 - **After the decision.** `review_source_partition` puts the parked documents the new partition lists back in the queue and marks
   the other parked ones `not_in_split`; each listed document is then read and extracted on its own, with only its own pages,
   each page read once. The unsplit whole is never sent after the split. A later confirmation that lists it again sends it
   (the reviewer's decision); the renewal before every paid request (`renew_intake_extraction`) refuses a claim whose
-  document is no longer listed, so a division confirmed during a run stops the spending.
+  document is no longer listed, so a division confirmed during a run stops the spending. Such a run does not fail: the worker
+  hands the claim to `hold_intake_extraction`, which parks the document as `not_in_split` (or queues it again if the new
+  division lists it); what the run already requested stays on the usage card, and the text of `not_in_split` says that nothing
+  more is sent instead of claiming that nothing was.
 - **What the screens say.** The batch page counts the original under „Zur Sichtung“ (it is the reviewer's turn, nothing failed),
   names the stage „Aufteilung ausstehend“ and says in German what to do and that nothing was sent; the source page calls the
   state „Wartet auf die Aufteilung“ and says the same next to the division panel
   ([DESIGN.md](../../DESIGN.md#inbox-processing-outcomes-evidence-and-usage-501)).
+
+### Memory of the stage
+
+The declaration worker runs the stage in a container of 768 MiB (`mem_limit` in every Compose file) and starts a child for
+the local parse of a PDF (`core/intake_extraction.py`) and one for the decode of a PNG or JPEG (`core/image_reading.py`); poppler's
+`pdftoppm` renders a scanned page in a process of its own. Each of the two children has an address-space limit,
+`CHILD_MEMORY_BYTES` in `core/document_limits.py`: the container's memory less `WORKER_RESERVE_BYTES` for the worker process
+itself (768 − 256 = 512 MiB), so that a document that needs more is stopped by its child's own bound and not by the container,
+whose kernel ends whichever process it chooses. There is no configuration key. `backend/tests/test_inbox_stage_memory.py`
+reads the three Compose files and fails when the constants and the container drift apart; on Linux it also reads the limit of
+each started child from `/proc`.
+
+Measured on 2026-11-22, resident memory in MiB of a worker process tree (`DeclarationImportWorker`, one turn of the stage, the
+offline fake providers on the test database, the fake reading stage building the base64 and JSON body a real client would hold;
+`ps` sampled every 25 ms for the tree, `getrusage` for each process's own peak). It was a macOS process: its resident memory
+is not that of the Linux container, no address-space limit applies there (the children ran unbounded, which is the need) and
+the page cache and the tmpfs of the container are not in the figures. The worker alone is about 120 MiB after its imports.
+
+| Original (the inspection and stage bounds at their maximum) | Result | Worker peak | Largest child | Tree at its peak |
+| --- | --- | --- | --- | --- |
+| PDF of 10 scanned pages, each 1609 pt square (16.2 million pixels at 180 DPI), 24.2 MiB | read and extracted | 348 | `pdftoppm` 113 | 454 |
+| PDF of 10 pages with text (57,000 characters) | extracted | 133 | local parse 143 | 266 |
+| JPEG of 20 million pixels, 22.4 MiB | read and extracted | 259 | image decode 251 | 436 |
+| PNG of 20 million pixels | read and extracted | 126 | image decode 221 | 343 |
+| PDF of 200 scanned pages, 23.9 MiB | ends `invoice_page_limit` | 177 | local parse 82 | 248 |
+| PDF of 200 pages with about 1 million characters (0.15 MiB) | ends `invoice_text_limit` after 27 s | 122 | local parse 1,993 | 2,115 |
+
+What a document can ask for therefore fits the container, except one thing: the local parse extracts the text of every
+selected page before it checks the text bound of 60,000 characters, and `pdfplumber` keeps what it extracted, so a long text
+PDF of up to 200 pages needs about 2 KiB of memory per character. Such a document used to end at the former limit of 1 GiB or
+at the container's, whichever came first, and now ends at the child's bound of 512 MiB: the child runs out of memory and the
+extraction records `invalid_document` (the child's general failure), as it would at any bound it runs into. Checking the bound while the pages are read would end it as
+`invoice_text_limit` without that memory; that is a change of the local parse, not made with the limits.
 
 ## Run and verify
 

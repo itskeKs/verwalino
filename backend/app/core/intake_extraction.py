@@ -25,6 +25,7 @@ import xml.etree.ElementTree as ET
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from app.core.document_limits import CHILD_MEMORY_BYTES
 from app.core.einvoice import EInvoiceExtractor, invoice_proposal, parse_en16931_xml, _amount, _norm_date
 from app.core.extraction_evidence import FIELD_TYPES, valid_invoice_outcome
 from app.core.intake_inspection import MAX_BYTES, MAX_TEXT, inspect_structure, sniff
@@ -86,10 +87,14 @@ def squashed(text):
 # Whether a passage carries a value: the check that a place a model names is a place of the value it is named for
 # (``model_evidence``). One matcher per value type of ``FIELD_TYPES``, all here. The passage must show the value in a form a
 # reader would recognise; when in doubt it does not, and the field stays unlocated.
-# - text: the value as a substring, compared without case or spacing (NFKC, case-folded, whitespace runs as one space);
+# - text: the value as a substring, compared without case or spacing (NFKC, case-folded, whitespace runs as one space), and
+#   only at the boundaries of the passage's words, numbers and identifiers: "Ista" is not in "Distanz", "AG" not in
+#   "Tagesgeld" and "1" neither in "Rechnung 12" nor in "RE-2026-0042" ("_joined");
 # - decimal: a number of the passage with the same value and sign. A number is digits with one decimal separator (comma or
 #   dot) and optional thousands separators (the other one, or a space, in groups of three), so 312.00 is "312,00",
-#   "312,00 EUR", "€ 312,00", "1.234,56" is 1234.56; a currency or a percent sign beside it is ignored. A number that is part
+#   "312,00 EUR", "€ 312,00", "1.234,56" is 1234.56; a currency or a percent sign beside it is ignored. Three digits after a
+#   lone separator are thousands in German writing: "312.000" is 312,000 and never 312.00; after a lone comma the same
+#   digits are a German decimal and an English thousands group at once, so that number states no value. A number that is part
 #   of a longer word or of a hyphenated identifier, one with leading zeros and a token that is not a number (a date, a
 #   malformed grouping) is no amount. A minus sign counts only in front of the number or directly behind it;
 # - date: the day, month and year as ISO "2026-01-15", German "15.01.2026" (also "15.1.26") or with the month spelled
@@ -112,7 +117,12 @@ def flat_text(text):
 
 
 def _readings(token):
-    """The values a number token can be read as (a lone separator with three digits after it may be either kind)."""
+    """The values a number token can be read as: none when its pattern states no value.
+
+    A token is read from its own pattern. With both separators the last one is the decimal sign and the other groups
+    thousands. A repeated separator groups thousands. A lone separator is a decimal sign, except that three digits after it
+    behind one to three digits that do not start with a zero are a thousands group in German writing (a dot: "312.000" is
+    312000) or ambiguous (a comma is the German decimal sign and the English thousands sign: no value)."""
     token=''.join(char for char in token if char not in _GROUP)
     whole=re.split('[.,]',token)[0]
     if len(whole)>1 and whole[0]=='0':return set()
@@ -128,9 +138,8 @@ def _readings(token):
     mark=marks[0]
     if len(marks)==1:
         head,fraction=token.split(mark)
-        found={Decimal(head+'.'+fraction)}
-        if len(fraction)==3 and len(head)<=3:found.add(Decimal(head+fraction))
-        return found
+        if len(fraction)==3 and re.fullmatch(r'[1-9]\d{0,2}',head):return {Decimal(head+fraction)} if mark=='.' else set()
+        return {Decimal(head+'.'+fraction)}
     if re.fullmatch(rf'\d{{1,3}}(?:{re.escape(mark)}\d{{3}})+',token):return {Decimal(token.replace(mark,''))}
     return set()
 
@@ -150,10 +159,37 @@ def _dates(quote):
         day,month,year=match.groups();yield int(year),_MONTHS[month.casefold()],int(day)
 
 
+# What joins a character to the word, number or identifier it stands in: a letter, digit or underscore, a hyphen or slash
+# between two of them, and a dot or comma between two digits.
+_LINKS='-\u2010\u2011\u2012\u2013\u2212/'
+
+
+def _joined(text,index,step,edge):
+    """Whether the character at ``index``, next to a value whose edge character on that side is ``edge``, continues it."""
+    if not 0<=index<len(text):return False
+    char=text[index]
+    if char.isalnum() or char=='_':return True
+    beyond=index+step
+    if not 0<=beyond<len(text):return False
+    if char in _LINKS:return text[beyond].isalnum()
+    return char in '.,' and edge.isdigit() and text[beyond].isdigit()
+
+
+def text_stands_in(value,passage):
+    """Whether the value occurs in the passage (without case or spacing) at the boundaries of a word, number or identifier."""
+    wanted,flat=flat_text(value),flat_text(passage)
+    start=flat.find(wanted) if wanted else -1
+    while start>=0:
+        end=start+len(wanted)
+        if not ((wanted[0].isalnum() and _joined(flat,start-1,-1,wanted[0])) or (wanted[-1].isalnum() and _joined(flat,end,1,wanted[-1]))):return True
+        start=flat.find(wanted,start+1)
+    return False
+
+
 def passage_carries(kind,value,passage):
     """Whether the passage shows the stored value of a field of the given kind in a form a reader recognises."""
     try:
-        if kind=='text':return flat_text(value) in flat_text(passage)
+        if kind=='text':return text_stands_in(value,passage)
         if kind=='decimal':return Decimal(value) in set(_numbers(passage))
         if kind=='date':
             wanted=date.fromisoformat(value)
@@ -406,5 +442,5 @@ if __name__=='__main__':
     signal.alarm(TOTAL_SECONDS)
     if sys.platform=='linux':
         import resource
-        resource.setrlimit(resource.RLIMIT_AS,(1024**3,1024**3))
+        resource.setrlimit(resource.RLIMIT_AS,(CHILD_MEMORY_BYTES,CHILD_MEMORY_BYTES))
     print(json.dumps(extract_logical(sys.stdin.buffer.read(MAX_BYTES+1),sys.argv[1],*json.loads(sys.argv[2]))))

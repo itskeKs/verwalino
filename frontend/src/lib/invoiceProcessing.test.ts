@@ -150,8 +150,16 @@ it("tells a user whose upload waits for the division what to do, that nothing wa
 
 it("tells a user whose document is left out of the confirmed division that it is not evaluated and how to change that", () => {
   const text = INBOX_PROCESSING_MESSAGES.not_in_split;
-  expect(text).toMatch(/gehört nicht zur bestätigten Aufteilung.*wird nicht ausgewertet.*nicht an einen KI-Anbieter übermittelt/s);
+  expect(text).toMatch(/gehört nicht zur bestätigten Aufteilung.*wird nicht ausgewertet/s);
   expect(text).toMatch(/„Seiten zu Belegen zusammenstellen“.*neue Aufteilung/s);
+});
+
+// A document can be left out after a run that already sent requests (the division changed under it): the text must not say
+// that nothing was sent, only that nothing more is, and where what was already used stands.
+it("does not claim that nothing was sent for a document that the division left out, and points to the usage", () => {
+  const text = INBOX_PROCESSING_MESSAGES.not_in_split;
+  expect(text).toMatch(/Es wird nichts \(mehr\) an einen KI-Anbieter übermittelt\. Falls schon Anfragen gesendet wurden, steht ihr Verbrauch unter „Belege und Vorschläge“ im Abschnitt „Verbrauch der KI-Verarbeitung“\./);
+  expect(text).not.toMatch(/wurden? nicht an einen KI-Anbieter übermittelt|wurde nichts an einen/);
 });
 
 it("says that an inbox request that never left the host cost nothing and where the usage already incurred stands", () => {
