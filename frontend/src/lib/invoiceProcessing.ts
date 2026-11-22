@@ -94,6 +94,10 @@ const PROCESSING_MESSAGES: Record<string, Entry> = {
     invoice: `Die Auswertung hat die Grenze für eine einzelne Rechnung erreicht (Seiten, Token oder Kosten) und wurde beendet, damit keine weiteren Kosten entstehen. ${KEPT} ${MANUAL} Oder laden Sie eine kürzere Fassung hoch.`,
     inbox: `Die Auswertung hat die Grenze für einen einzelnen Beleg erreicht (Seiten, Token oder Kosten) und wurde beendet, damit keine weiteren Kosten entstehen. ${KEPT} ${IN_USAGE} ${IN_SMALLER} ${IN_MANUAL}`,
   },
+  // A document of an original of more than one page is evaluated only after a person has decided how the original divides
+  // (owner decision of 2026-11-22 on #501): nothing is sent before, and the unsplit whole is not sent after the division.
+  awaiting_split: `Das Original hat mehr als eine Seite und wird erst ausgewertet, wenn Sie bestätigt haben, wie es aufgeteilt ist: Bestätigen Sie unter „Seiten zu Belegen zusammenstellen“ entweder die Belege, in die es zerfällt, oder das ganze Original als einen Beleg. Bis dahin wurde nichts an einen KI-Anbieter übermittelt; danach wird jeder Beleg nur mit seinen eigenen Seiten ausgewertet. ${KEPT}`,
+  not_in_split: `Dieser Beleg gehört nicht zur bestätigten Aufteilung des Originals und wird nicht ausgewertet. ${IN_NOT_SENT} ${KEPT} Soll er ausgewertet werden, nehmen Sie ihn unter „Seiten zu Belegen zusammenstellen“ in eine neue Aufteilung auf.`,
   structured_selection_partial: `Dieser Beleg ist nur ein Teil einer E-Rechnung im PDF-Format. Deren Daten gelten für das gesamte Dokument und werden nicht für einzelne Seiten ausgewertet; es wurde nichts an einen KI-Anbieter übermittelt. ${KEPT} Wählen Sie unter „Belege und Vorschläge“ den Gesamtbeleg mit allen Seiten aus, oder ${IN_BY_HAND}.`,
   // The models and the provider
   model_reading_failed: {

@@ -13,7 +13,7 @@ from app.core.intake_extraction import extract_logical
 from app.declarations.fake_provider import FakeInvoiceExtractionProvider, synthetic_invoice_output
 from app.declarations.schemas import ReadingBlock
 from app.services.organization_deletion_service import run_deletion
-from tests.intake_model_support import Harness, document_pdf, enable_models, extract_all, ledger, tesseract_unusable as tesseract_unusable
+from tests.intake_model_support import Harness, confirm_partition, document_pdf, enable_models, extract_all, ledger, tesseract_unusable as tesseract_unusable
 from tests.test_financial_scope_boundary import scope_seed as scope_seed, worker_tenant as worker_tenant
 from tests.test_intake_model_extraction import FIRST, SECOND, Reader, receive_original, split
 from tests.test_invoice_source_custody import fixture, store as store
@@ -33,8 +33,9 @@ async def test_an_organization_with_inbox_ledger_rows_is_erased_in_foreign_key_o
     try:
         async with client(ids, "actor") as api:
             ref = await receive_original(api, ids, document_pdf([FIRST, SECOND, None, None]), pages=4)
-            await split(api, ref, 1, 2)
+            first = await split(api, ref, 1, 2)
             second = await split(api, ref, 3, 4)
+            await confirm_partition(api, ref, first, second)
             reader = Reader(transcripts={(second, 3): [ReadingBlock(kind="TEXT", text="Stadtwerke Test GmbH, Abrechnung Wasser, Seite 3")],
                                          (second, 4): [ReadingBlock(kind="TEXT", text="Gesamtbetrag 99,00 EUR, Seite 4")]})
             harness = Harness(reader=reader, extractor=FakeInvoiceExtractionProvider(synthetic_invoice_output(gross_amount=("99.00", 0.9))))

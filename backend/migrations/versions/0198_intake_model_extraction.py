@@ -27,6 +27,19 @@ part of the issue has to change the schema:
   document before it records the location, and the function above already requires the passage to occur in the stored text
   of that page and the method to be the page's own.
 
+* A document of a multipage original is sent to a model only after a person has decided how the original divides (owner
+  decision of 2026-11-22): the extraction job gets the status ``awaiting_split``, a state of the existing split workflow, not
+  a new workflow. ``intake_split_state`` says for one logical document whether that decision is made: a single-page
+  original needs none, a multipage one needs the latest confirmed source partition (0100; the partition that lists the
+  whole original as one document is the confirmation "this is one document") to list the document. The claimed job's
+  context carries that state; ``hold_intake_extraction`` parks the job when it is not made (``awaiting_split`` while no
+  partition is confirmed, ``not_in_split`` for a document the latest partition leaves out, such as the unsplit whole after
+  the split) and ``review_source_partition`` puts the parked documents the new partition lists back in the queue and marks
+  the others ``not_in_split``. ``renew_intake_extraction`` refuses a claim whose document is no longer part of the
+  decision, so no request is paid for after the partition changed. A parked job is not active and not failed in
+  ``intake_batch_status``, which names the stage ``split``. A structured original needs no decision: the parking happens
+  after its local parse, and only for an unstructured one. A parked job used one of its three attempts.
+
 No row is read or rewritten and nothing is sent anywhere because of the upgrade: whether an organization's inbox
 documents reach a provider stays governed by its own AI import switch, confirmation, key and models.
 
@@ -76,15 +89,50 @@ def _locator_page(methods):
             f"AND length(quotation) BETWEEN 1 AND 4000 AND xml_path IS NULL AND method IN ({methods}))")
 
 
+# The split gate (see the docstring). Fragments of the installed texts of the functions it extends (0098, 0099, 0100).
+_CONTEXT = 'intake_extraction_context(uuid,uuid,uuid)'
+_CONTEXT_BEFORE = "'verified_page_count',logical.verified_page_count);"
+_CONTEXT_AFTER = "'verified_page_count',logical.verified_page_count,'split_state',public.intake_split_state(org,logical.id));"
+_PARTITION = 'review_source_partition(uuid,uuid,uuid,uuid,uuid[],text,boolean)'
+_PARTITION_BEFORE = "      RETURN public.source_partition_result(org,created);"
+_PARTITION_AFTER = """      UPDATE public.intake_extraction_job j SET status='queued',error_code=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
+        FROM public.logical_document l WHERE j.organization_id=org AND j.status='awaiting_split' AND l.organization_id=org
+        AND l.id=j.logical_document_id AND l.document_ref_id=ref_id AND l.id=ANY(normalized);
+      UPDATE public.intake_extraction_job j SET error_code='not_in_split',updated_at=clock_timestamp()
+        FROM public.logical_document l WHERE j.organization_id=org AND j.status='awaiting_split' AND l.organization_id=org
+        AND l.id=j.logical_document_id AND l.document_ref_id=ref_id AND NOT l.id=ANY(normalized);
+      RETURN public.source_partition_result(org,created);"""
+_BATCH = 'intake_batch_status(uuid,uuid,integer,integer)'
+_BATCH_CHANGES = (
+    ("total integer; active integer; failed integer; reviewable integer; failure text; stage text; state text;",
+     "total integer; active integer; failed integer; reviewable integer; held integer; failure text; stage text; state text;"),
+    ("ref:=NULL;total:=0;active:=0;failed:=0;reviewable:=0;", "ref:=NULL;total:=0;active:=0;failed:=0;reviewable:=0;held:=0;"),
+    ("count(*) FILTER(WHERE j.status NOT IN ('queued','running','succeeded','needs_review'))\n            INTO total,active,reviewable,failed FROM",
+     "count(*) FILTER(WHERE j.status NOT IN ('queued','running','succeeded','needs_review','awaiting_split')),\n"
+     "            count(*) FILTER(WHERE j.status='awaiting_split')\n            INTO total,active,reviewable,failed,held FROM"),
+    ("AND j.status NOT IN ('queued','running','succeeded','needs_review') ORDER BY j.created_at,j.id LIMIT 1;",
+     "AND j.status NOT IN ('queued','running','succeeded','needs_review','awaiting_split') ORDER BY j.created_at,j.id LIMIT 1;"),
+    ("          ELSIF total>0 THEN stage:='review';state:='review';failure:=NULL;",
+     "          ELSIF reviewable=0 AND held>0 THEN\n            stage:='split';state:='review';\n"
+     "            SELECT j.error_code INTO failure FROM public.intake_extraction_job j JOIN public.logical_document l ON l.organization_id=j.organization_id AND l.id=j.logical_document_id\n"
+     "              WHERE l.organization_id=org AND l.document_ref_id=ref AND j.status='awaiting_split' ORDER BY j.created_at,j.id LIMIT 1;\n"
+     "          ELSIF total>0 THEN stage:='review';state:='review';failure:=NULL;"),
+)
+_JOB_STATUS = "('queued','running','succeeded','needs_review','unsupported','unavailable','timeout','failed','canceled','blocked')"
+_JOB_STATUS_SPLIT = "('queued','running','succeeded','needs_review','unsupported','unavailable','timeout','failed','canceled','blocked','awaiting_split')"
+
 _TYPED_INVOICE = "(invoice_attempt_id IS NOT NULL AND intake_attempt_id IS NULL AND logical_document_id IS NULL AND processor_version IN ('invoice-local-v1','invoice-model-v1'))"
 _TYPED_INTAKE_BEFORE = "(invoice_attempt_id IS NULL AND intake_attempt_id IS NOT NULL AND logical_document_id IS NOT NULL AND processor_version='intake-local-v1')"
 _TYPED_INTAKE_AFTER = "(invoice_attempt_id IS NULL AND intake_attempt_id IS NOT NULL AND logical_document_id IS NOT NULL AND processor_version IN ('intake-local-v1','intake-model-v1'))"
 
 
-def _replace_definition(function, before, after):
-    """Replace one fragment of an installed function body: the older definitions are not edited."""
+def _replace_definition(function, before, after, *, reverting=False):
+    """Replace one fragment of an installed function body: the older definitions are not edited.
+
+    A fragment that already stands in the body is left alone, except when reverting: there the older text may be part of
+    the newer one, and the newer one is what must go."""
     definition = op.get_bind().scalar(sa.text(f"SELECT pg_get_functiondef('public.{function}'::regprocedure)"))
-    if definition.count(after) == 1:
+    if not reverting and definition.count(after) == 1:
         return
     if definition.count(before) != 1:
         raise RuntimeError(f'Unexpected {function}')
@@ -113,12 +161,17 @@ def upgrade():
 
     CREATE FUNCTION public.renew_intake_extraction(org uuid, job uuid, token uuid, seconds integer) RETURNS boolean
     LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+    DECLARE context jsonb;
     BEGIN
       IF session_user<>'app_worker' THEN RAISE EXCEPTION 'Extraction runtime required' USING ERRCODE='42501'; END IF;
       IF seconds IS NULL OR seconds NOT BETWEEN 1 AND 3600 THEN RAISE EXCEPTION 'Invalid lease extension' USING ERRCODE='22023'; END IF;
       -- The one live-claim and initiator check of the inbox path: it also cancels the job of an initiator who lost the
       -- permission, which the caller commits instead of rolling it back.
-      IF public.intake_extraction_context(org,job,token) IS NULL THEN RETURN false; END IF;
+      context:=public.intake_extraction_context(org,job,token);
+      IF context IS NULL THEN RETURN false; END IF;
+      -- A document that is no longer part of the decision how its original divides (a later partition left it out) is
+      -- not paid for any more: the claim is refused like a lost fence.
+      IF context->>'split_state' IS DISTINCT FROM 'decided' THEN RETURN false; END IF;
       UPDATE public.intake_extraction_job
         SET lease_expires_at=GREATEST(lease_expires_at,clock_timestamp()+make_interval(secs=>seconds)),updated_at=clock_timestamp()
         WHERE organization_id=org AND id=job;
@@ -146,7 +199,46 @@ def upgrade():
     END $$;
     REVOKE ALL ON FUNCTION public.intake_model_usage(uuid,uuid) FROM PUBLIC,app_rw,app_worker,app_review;
     GRANT EXECUTE ON FUNCTION public.intake_model_usage(uuid,uuid) TO app_rw;
+
+    CREATE FUNCTION public.intake_split_state(org uuid, document uuid) RETURNS text
+    LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+      SELECT CASE
+        WHEN l.verified_page_count IS NULL OR l.verified_page_count<=1 THEN 'decided'
+        WHEN NOT EXISTS(SELECT 1 FROM public.source_partition_revision r WHERE r.organization_id=org AND r.document_ref_id=l.document_ref_id) THEN 'awaiting'
+        WHEN EXISTS(SELECT 1 FROM public.source_partition_member m WHERE m.organization_id=org AND m.logical_document_id=l.id
+          AND m.partition_revision_id=(SELECT r.id FROM public.source_partition_revision r WHERE r.organization_id=org AND r.document_ref_id=l.document_ref_id
+            ORDER BY r.revision_number DESC LIMIT 1)) THEN 'decided'
+        ELSE 'excluded' END
+      FROM public.logical_document l WHERE l.organization_id=org AND l.id=document;
+    $$;
+    REVOKE ALL ON FUNCTION public.intake_split_state(uuid,uuid) FROM PUBLIC,app_rw,app_worker,app_review;
+
+    CREATE FUNCTION public.hold_intake_extraction(org uuid, job uuid, token uuid) RETURNS boolean
+    LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+    DECLARE context jsonb; reason text;
+    BEGIN
+      IF session_user<>'app_worker' THEN RAISE EXCEPTION 'Extraction runtime required' USING ERRCODE='42501'; END IF;
+      context:=public.intake_extraction_context(org,job,token);
+      IF context IS NULL THEN RETURN false; END IF;
+      -- Parked while nobody has decided how the original divides (or the latest decision leaves this document out); if the
+      -- decision was made after the claim, the job is queued again instead.
+      reason:=CASE context->>'split_state' WHEN 'awaiting' THEN 'awaiting_split' WHEN 'excluded' THEN 'not_in_split' END;
+      UPDATE public.intake_extraction_attempt SET finished_at=clock_timestamp(),
+        result=jsonb_build_object('status',CASE WHEN reason IS NULL THEN 'queued' ELSE 'awaiting_split' END,'error_code',reason)
+        WHERE organization_id=org AND job_id=job AND fence=token AND finished_at IS NULL;
+      UPDATE public.intake_extraction_job SET status=CASE WHEN reason IS NULL THEN 'queued' ELSE 'awaiting_split' END,error_code=reason,
+        lease_expires_at=NULL,updated_at=clock_timestamp() WHERE organization_id=org AND id=job;
+      RETURN true;
+    END $$;
+    REVOKE ALL ON FUNCTION public.hold_intake_extraction(uuid,uuid,uuid) FROM PUBLIC,app_rw,app_worker,app_review;
+    GRANT EXECUTE ON FUNCTION public.hold_intake_extraction(uuid,uuid,uuid) TO app_worker;
+    ALTER TABLE public.intake_extraction_job DROP CONSTRAINT intake_extraction_job_status_check;
+    ALTER TABLE public.intake_extraction_job ADD CONSTRAINT intake_extraction_job_status_check CHECK (status IN """ + _JOB_STATUS_SPLIT + """);
     """)
+    _replace_definition(_CONTEXT, _CONTEXT_BEFORE, _CONTEXT_AFTER)
+    _replace_definition(_PARTITION, _PARTITION_BEFORE, _PARTITION_AFTER)
+    for before, after in _BATCH_CHANGES:
+        _replace_definition(_BATCH, before, after)
     for before, after in _COMPLETE_CHANGES:
         _replace_definition(_COMPLETE, before, after)
     _typed_attempt(_TYPED_INTAKE_AFTER)
@@ -154,7 +246,7 @@ def upgrade():
 
 
 def downgrade():
-    op.execute('LOCK TABLE public.invoice_model_call, public.intake_extraction_attempt, public.extraction_revision, public.field_evidence IN ACCESS EXCLUSIVE MODE NOWAIT')
+    op.execute('LOCK TABLE public.invoice_model_call, public.intake_extraction_job, public.intake_extraction_attempt, public.extraction_revision, public.field_evidence IN ACCESS EXCLUSIVE MODE NOWAIT')
     op.execute("""DO $$ BEGIN IF EXISTS(SELECT 1 FROM public.invoice_model_call WHERE intake_attempt_id IS NOT NULL)
       THEN RAISE EXCEPTION 'Inbox model call records require this release'; END IF; END $$""")
     op.execute("""DO $$ BEGIN IF EXISTS(SELECT 1 FROM public.extraction_revision WHERE processor_version='intake-model-v1')
@@ -164,7 +256,18 @@ def downgrade():
     _typed_attempt(_TYPED_INTAKE_BEFORE)
     for before, after in reversed(_COMPLETE_CHANGES):
         _replace_definition(_COMPLETE, after, before)
+    # The older runtime sends a whole original: a parked job goes back in the queue, which no record is lost by.
+    op.execute("""UPDATE public.intake_extraction_job SET status='queued',error_code=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
+      WHERE status='awaiting_split'""")
+    for before, after in reversed(_BATCH_CHANGES):
+        _replace_definition(_BATCH, after, before, reverting=True)
+    _replace_definition(_PARTITION, _PARTITION_AFTER, _PARTITION_BEFORE, reverting=True)
+    _replace_definition(_CONTEXT, _CONTEXT_AFTER, _CONTEXT_BEFORE, reverting=True)
     op.execute("""
+    ALTER TABLE public.intake_extraction_job DROP CONSTRAINT intake_extraction_job_status_check;
+    ALTER TABLE public.intake_extraction_job ADD CONSTRAINT intake_extraction_job_status_check CHECK (status IN """ + _JOB_STATUS + """);
+    DROP FUNCTION public.hold_intake_extraction(uuid,uuid,uuid);
+    DROP FUNCTION public.intake_split_state(uuid,uuid);
     DROP FUNCTION public.intake_model_usage(uuid,uuid);
     DROP FUNCTION public.renew_intake_extraction(uuid,uuid,uuid,integer);
     DROP INDEX public.ix_invoice_model_call_intake_attempt;

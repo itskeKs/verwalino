@@ -306,3 +306,12 @@ it('keeps naming text recognition for the pages that an earlier release recogniz
   expect(await screen.findByText('Fundstelle auf Seite 2 · Texterkennung (frühere Version)')).toBeInTheDocument();
   expect(screen.getByText('Keine eindeutige Fundstelle ermittelt.')).toBeInTheDocument();
 });
+
+it('says that a document waits for the division, offers no retry and names where to confirm it', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => url.endsWith('/processing')
+    ? json({ ...status, status: 'awaiting_split', error_code: 'awaiting_split', can_retry: false }) : url.includes('/extractions?') ? json({ items: [] }) : response(url))); page();
+  expect(await screen.findByText('Wartet auf die Aufteilung · Versuch 1 von höchstens 3')).toBeInTheDocument();
+  expect(screen.getAllByText(/Das Original hat mehr als eine Seite und wird erst ausgewertet.*Bis dahin wurde nichts an einen KI-Anbieter übermittelt/)).not.toHaveLength(0);
+  expect(screen.queryByRole('button', { name: 'Auswertung erneut anfordern' })).not.toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Seiten zu Belegen zusammenstellen' })).toBeInTheDocument();
+});

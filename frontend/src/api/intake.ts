@@ -10,7 +10,7 @@ export type IntakeStatus = 'waiting' | 'received' | 'processing' | 'review' | 'c
 export interface IntakeItem extends IntakeManifestItem {
   id: string; position: number; status: IntakeStatus; original_id: string | null; job_id: string | null;
   fence: string | null; error_code: string | null; can_upload: boolean; can_retry: boolean; can_export: boolean;
-  stage: 'inspection' | 'preparation' | 'extraction' | 'review'; document_ref_id: string | null;
+  stage: 'inspection' | 'preparation' | 'extraction' | 'split' | 'review'; document_ref_id: string | null;
   logical_counts: { total: number; processing: number; review: number; failed: number };
 }
 export interface IntakeBatch extends IntakeHeader {

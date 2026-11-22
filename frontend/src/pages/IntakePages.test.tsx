@@ -185,3 +185,19 @@ it('does not poll for a document that waits for the setup of the organization', 
     expect(fetch.mock.calls.length).toBe(loads);
   } finally { vi.useRealTimers(); }
 });
+
+// A multipage upload waits for the division (owner decision of 2026-11-22 on #501): it is the reviewer's turn, nothing failed.
+it('says that a multipage upload waits for the division, that nothing was sent and where to act, without a failure count', async () => {
+  const waiting = { ...item, status: 'review', stage: 'split', document_ref_id: 'ref-1', logical_counts: { total: 3, processing: 0, review: 0, failed: 0 },
+    error_code: 'awaiting_split', can_retry: false };
+  const counts = { waiting: 0, received: 0, processing: 0, review: 1, confirmed: 0, failed: 0 };
+  vi.stubGlobal('fetch', vi.fn(async () => json({ ...state, counts, items: [waiting] }))); page('/posteingang/batch-1');
+  expect(await screen.findByText(/^Das Original hat mehr als eine Seite und wird erst ausgewertet, wenn Sie bestätigt haben, wie es aufgeteilt ist/)).toBeInTheDocument();
+  expect(screen.getByText(/Bis dahin wurde nichts an einen KI-Anbieter übermittelt/)).toBeInTheDocument();
+  expect(screen.getByText('Aufteilung ausstehend · 3 Beleg(e), 0 zur Sichtung')).toBeInTheDocument();
+  expect(tile('Zur Sichtung')).toHaveTextContent('1');
+  expect(tile('Gesperrt / fehlgeschlagen')).toHaveTextContent('0');
+  expect(screen.getByRole('link', { name: 'Belege und Vorschläge ansehen' })).toHaveAttribute('href', '/posteingang/belege/ref-1');
+  expect(screen.queryByText(/Grund für die Wiederholung/)).not.toBeInTheDocument();
+  expect(screen.getByText(/ein Original mit mehreren Seiten erst, wenn Sie unter „Belege und Vorschläge“ bestätigt haben, wie es aufgeteilt ist/)).toBeInTheDocument();
+});

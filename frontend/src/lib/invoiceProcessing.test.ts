@@ -69,7 +69,7 @@ const INBOX_PATH = ["ai_import_disabled", "ai_inbox_confirmation_missing", "ai_d
   "missing_fields", "model_reading_failed", "model_extraction_failed", "model_result_invalid", "lease_lost", "render_timeout", "render_unavailable",
   "image_pixel_limit", "pdf_parser_unavailable", "file_size_limit", "mime_mismatch", "invalid_page_selection", "source_page_count_changed",
   "unsupported_format", "invalid_document", "extraction_timeout", "processor_failed", "storage_integrity_mismatch", "stored_original_unavailable",
-  "initiator_permission_changed", "attempt_limit"];
+  "initiator_permission_changed", "attempt_limit", "awaiting_split", "not_in_split", "provider_unreachable"];
 
 it.each(INBOX_PATH)("explains the inbox reason %s in German, and not as an invoice", code => {
   const text = invoiceProcessingMessage("failed", code, "inbox");
@@ -136,4 +136,28 @@ it("has no explanation while a document of the inbox waits, runs or succeeded, a
   expect(text).toMatch(/^Die Auswertung konnte nicht abgeschlossen werden\. Das Original bleibt erhalten/);
   expect(text).not.toContain("a_code_nobody_mapped");
   expect(invoiceProcessingMessage("failed", "constructor", "inbox")).toMatch(/^Die Auswertung/);
+});
+
+// An original of more than one page is evaluated only after a person has decided how it divides (owner decision of 2026-11-22 on #501).
+it("tells a user whose upload waits for the division what to do, that nothing was sent and that the original is kept", () => {
+  const text = INBOX_PROCESSING_MESSAGES.awaiting_split;
+  expect(text).toMatch(/mehr als eine Seite.*erst ausgewertet.*bestätigt haben, wie es aufgeteilt ist/s);
+  expect(text).toMatch(/„Seiten zu Belegen zusammenstellen“.*die Belege, in die es zerfällt, oder das ganze Original als einen Beleg/s);
+  expect(text).toMatch(/Bis dahin wurde nichts an einen KI-Anbieter übermittelt.*jeder Beleg nur mit seinen eigenen Seiten/s);
+  expect(text).toMatch(/Das Original bleibt erhalten; es wurde nichts übernommen\./);
+  expect(text).not.toMatch(/erneut anfordern|Kosten/);
+});
+
+it("tells a user whose document is left out of the confirmed division that it is not evaluated and how to change that", () => {
+  const text = INBOX_PROCESSING_MESSAGES.not_in_split;
+  expect(text).toMatch(/gehört nicht zur bestätigten Aufteilung.*wird nicht ausgewertet.*nicht an einen KI-Anbieter übermittelt/s);
+  expect(text).toMatch(/„Seiten zu Belegen zusammenstellen“.*neue Aufteilung/s);
+});
+
+it("says that an inbox request that never left the host cost nothing and where the usage already incurred stands", () => {
+  const text = INBOX_PROCESSING_MESSAGES.provider_unreachable;
+  expect(text).toMatch(/konnte nicht erreicht werden.*nicht gesendet.*keine Kosten/s);
+  expect(text).toMatch(/unter „Belege und Vorschläge“ im Abschnitt „Verbrauch der KI-Verarbeitung“/);
+  expect(text).toMatch(/unter „Belege und Vorschläge“ die Auswertung erneut anfordern/);
+  expect(text).not.toMatch(/Verarbeitung erneut starten|erneut Kosten/);
 });

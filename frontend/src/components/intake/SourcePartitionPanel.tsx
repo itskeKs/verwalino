@@ -71,6 +71,7 @@ export function SourcePartitionPanel({ refId, documents, parentBusy, parentGener
     <div className="flex flex-wrap justify-between gap-3"><h2>Seiten zu Belegen zusammenstellen</h2>
       <button className="btn" disabled={blocked} onClick={() => { setError(null); refresh(); }}>Aufteilung aktualisieren</button></div>
     <p>Ordnen Sie jede sichtbare Seite genau einem Beleg zu. Prüfen Sie die Grenzen anhand des Originals. Eingebettete XML-Daten und Anlagen werden hier nicht bewertet; Feldwerte und Kosten bleiben ungeprüft.</p>
+    <p>Ein Original mit mehreren Seiten wird erst an einen KI-Anbieter übermittelt, wenn Sie die Aufteilung gespeichert haben, und dann jeder Beleg nur mit seinen eigenen Seiten. Wählen Sie nur den Beleg mit allen Seiten, um das Original als einen Beleg zu bestätigen.</p>
     {busy && <p role="status">Lade geprüfte Aufteilung…</p>}
     {error && <p role="alert" className="error-text">{error}</p>}
     {saved !== null && <p role="status">Aufteilung als Version {saved} gespeichert.</p>}
@@ -138,7 +139,7 @@ function RangeCreator({ refId, documents, pages, disabled, onDenied, onCreated, 
     } finally { if (alive.current) { setBusy(false); onBusy(false); } }
   }
   return <details className="space-y-3"><summary className="cursor-pointer">Weiteren Seitenbereich anlegen</summary>
-    <p>Seiten beziehen sich auf ihre Reihenfolge im Original. Ein neuer Bereich bleibt ein ungeprüfter Vorschlag und wird für die Auswertung vorgemerkt.</p>
+    <p>Seiten beziehen sich auf ihre Reihenfolge im Original. Ein neuer Bereich bleibt ein ungeprüfter Vorschlag; ausgewertet wird er erst, wenn Sie eine Aufteilung mit ihm gespeichert haben.</p>
     <fieldset disabled={disabled || busy || submitted} className="space-y-3">
       <div className="grid grid-cols-2 gap-3"><label>Erste Seite<input className={inputClass} type="number" min={1} max={pages} value={start} onChange={event => setStart(event.target.value)} /></label>
         <label>Letzte Seite<input className={inputClass} type="number" min={1} max={pages} value={end} onChange={event => setEnd(event.target.value)} /></label></div>

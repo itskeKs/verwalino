@@ -3,7 +3,8 @@
 Everything here runs the real queue-fenced worker against the test database with the in-process fake providers: no provider
 call is made, and Tesseract is made unusable, because this path has none. Each logical document of an original is read
 from its own selected pages only, every request is reserved and settled in the shared ledger, and the opt-in is the
-organization's own.
+organization's own. An original of more than one page is sent only after a person has decided how it divides (a
+confirmed source partition lists the document); until then nothing is requested from a provider.
 """
 import hashlib
 import uuid
@@ -30,6 +31,7 @@ from tests.intake_model_support import (
     EXTRACTION_MODEL,
     READING_MODEL,
     Harness,
+    confirm_partition,
     document_pdf,
     enable_models,
     extract_all,
@@ -62,7 +64,8 @@ async def receive_original(api, ids, data, *, pages, mime="application/pdf", fil
     factory = get_worker_session_factory()
     assert await inspect_once(factory, ids["org"], inspector=lambda content, kind: result(content, "clean", mime=kind, pages=pages))
     assert await deliver_once(factory, ids["org"])
-    return (await api.get("/api/document-refs/page", params={"source_id": uploaded.json()["original_id"]})).json()["items"][0]
+    ref = (await api.get("/api/document-refs/page", params={"source_id": uploaded.json()["original_id"]})).json()["items"][0]
+    return {**ref, "batch_id": batch["id"]}
 
 
 async def documents(api, ref):
@@ -111,7 +114,43 @@ class Reader(FakeDocumentReadingProvider):
         return answer
 
 
-async def test_each_logical_document_of_a_split_original_is_read_from_its_own_pages_with_the_two_models(migrator_session, scope_seed, store):
+async def processing(api, document):
+    reply = (await api.get("/api/logical-documents/" + document + "/processing")).json()
+    return reply["status"], reply["error_code"], reply["can_retry"]
+
+
+def nothing_was_sent(harness):
+    return harness.built == [] and harness.reader.reads == [] and harness.extractor.calls == []
+
+
+async def test_a_multipage_upload_waits_and_nothing_is_requested_before_a_person_has_decided_how_it_divides(migrator_session, scope_seed, store):
+    ids = await fixture(migrator_session, scope_seed)
+    enable_models(ids["org"])
+    async with client(ids) as api:
+        ref = await receive_original(api, ids, document_pdf([FIRST, SECOND, None, None]), pages=4)
+        whole = (await documents(api, ref))[(1, 4)]
+        first, second = await split(api, ref, 1, 2), await split(api, ref, 3, 4)
+        harness = Harness()
+        assert await extract_all(ids["org"], harness, processor=extract_logical) == 3, "every document of the original was looked at once"
+        assert nothing_was_sent(harness), "no provider is even constructed, the whole upload is not sent and neither is a part of it"
+        assert await ledger(ids["org"]) == []
+        for document in (whole, first, second):
+            assert await processing(api, document) == ("awaiting_split", "awaiting_split", False), "waiting is no failure: no retry to press"
+            assert (await revision(ids, document))[1] is None
+            assert (await job_state(ids, document))["attempts"] == 1
+        item = (await api.get("/api/intake-batches/" + ref["batch_id"])).json()["items"][0]
+        assert (item["status"], item["stage"], item["error_code"]) == ("review", "split", "awaiting_split")
+        assert item["logical_counts"] == {"total": 3, "processing": 0, "review": 0, "failed": 0}
+        fence = (await api.get("/api/logical-documents/" + whole + "/processing")).json()["fence"]
+        again = await api.post("/api/logical-documents/" + whole + "/retry-extraction", json={"expected_fence": fence, "reason": "Try again"},
+                               headers={"Idempotency-Key": str(uuid.uuid4())})
+        assert again.status_code == 409, "a waiting document cannot be pushed through by retrying it"
+        # Waiting again does not send anything either, and uses no further attempt.
+        assert await extract_all(ids["org"], harness, processor=extract_logical) == 0 and nothing_was_sent(harness)
+        assert (await job_state(ids, whole))["attempts"] == 1
+
+
+async def test_after_the_split_is_confirmed_each_document_is_read_from_its_own_pages_and_the_unsplit_whole_is_never_sent(migrator_session, scope_seed, store):
     ids = await fixture(migrator_session, scope_seed)
     enable_models(ids["org"])
     data = document_pdf([FIRST, SECOND, None, None])
@@ -124,14 +163,22 @@ async def test_each_logical_document_of_a_split_original_is_read_from_its_own_pa
             (second, 4): [ReadingBlock(kind="TEXT", text="Gesamtbetrag 99,00 EUR, Seite 4")]})
         harness = Harness(reader=reader, extractor=FakeInvoiceExtractionProvider(synthetic_invoice_output(gross_amount=("99.00", 0.9))))
         assert await extract_all(ids["org"], harness, processor=extract_logical) == 3
+        assert nothing_was_sent(harness)
+
+        partition = await confirm_partition(api, ref, first, second)
+        assert partition["logical_document_ids"] == [first, second]
+        # What waited for the decision is queued again, the whole is left out of it and says so.
+        assert [await processing(api, document) for document in (first, second, whole)] == [
+            ("queued", None, False), ("queued", None, False), ("awaiting_split", "not_in_split", False)]
+        assert await extract_all(ids["org"], harness, processor=extract_logical) == 2
 
         reads = {}
         for record in reader.reads:
             assert record.model == READING_MODEL
             reads.setdefault(record.document_key, []).append(record.pdf_page)
         asked = {call.document_key: call for call in harness.extractor.calls}
-        assert reads == {second: [3, 4], whole: [3, 4]}, "no page is read twice for a document and the first document needs none"
-        assert {key: call.pages for key, call in asked.items()} == {first: (1, 2), second: (3, 4), whole: (1, 2, 3, 4)}
+        assert reads == {second: [3, 4]}, "each page is read once, only for its own document, and the first document needs no reading"
+        assert {key: call.pages for key, call in asked.items()} == {first: (1, 2), second: (3, 4)}, "the unsplit whole is never sent"
         assert all(call.model == EXTRACTION_MODEL for call in harness.extractor.calls)
         # Never an unrelated page: what each document's extraction request carries is its own text.
         assert "RE-2026-0042" in asked[first].text and "Seite 3" not in asked[first].text and "Seite 4" not in asked[first].text
@@ -151,9 +198,100 @@ async def test_each_logical_document_of_a_split_original_is_read_from_its_own_pa
         assert (await revision(ids, second))[1]["gross_amount"] == "99.00"
         assert await read_value("SELECT count(*) FROM cost_entry WHERE organization_id=:org", ids) == 0, "a proposal books nothing"
         listed = (await api.get("/api/document-refs/" + ref["id"] + "/extractions")).json()["items"]
-        assert {item["processor_version"] for item in listed} == {"intake-model-v1"} and len(listed) == 3
-        for document in (first, second, whole):
+        assert {item["processor_version"] for item in listed} == {"intake-model-v1"} and len(listed) == 2
+        for document in (first, second):
             assert (await job_state(ids, document))["status"] == "succeeded"
+        assert await processing(api, whole) == ("awaiting_split", "not_in_split", False) and (await revision(ids, whole))[1] is None
+        assert [row.document_key for row in harness.extractor.calls] == [first, second] and len(await ledger(ids["org"])) == 4
+        # The original is processed from where the user sees it: the batch is ready for review, the whole does not hold it back.
+        item = (await api.get("/api/intake-batches/" + ref["batch_id"])).json()["items"][0]
+        assert (item["status"], item["stage"], item["error_code"]) == ("review", "review", None)
+
+
+async def test_an_original_confirmed_as_one_document_is_sent_whole_and_only_then(migrator_session, scope_seed, store):
+    ids = await fixture(migrator_session, scope_seed)
+    enable_models(ids["org"])
+    async with client(ids) as api:
+        ref = await receive_original(api, ids, document_pdf([FIRST, SECOND, None, None]), pages=4)
+        (whole,) = (await documents(api, ref)).values()
+        harness = Harness()
+        assert await extract_all(ids["org"], harness, processor=extract_logical) == 1 and nothing_was_sent(harness)
+        assert await processing(api, whole) == ("awaiting_split", "awaiting_split", False)
+        await confirm_partition(api, ref, whole)
+        assert await extract_all(ids["org"], harness, processor=extract_logical) == 1
+        assert await processing(api, whole) == ("succeeded", None, False)
+    assert [call.pages for call in harness.extractor.calls] == [(1, 2, 3, 4)] and [read.pdf_page for read in harness.reader.reads] == [3, 4]
+    assert (await job_state(ids, whole))["attempts"] == 2, "the wait used an attempt"
+
+
+async def test_a_single_page_upload_is_processed_at_once_without_a_split_decision(migrator_session, scope_seed, store):
+    ids = await fixture(migrator_session, scope_seed)
+    enable_models(ids["org"])
+    async with client(ids) as api:
+        ref = await receive_original(api, ids, document_pdf([None]), pages=1)
+        (document,) = (await documents(api, ref)).values()
+        harness = Harness()
+        assert await extract_all(ids["org"], harness, processor=extract_logical) == 1
+        assert await processing(api, document) == ("succeeded", None, False)
+        assert (await api.get("/api/document-refs/" + ref["id"] + "/partition")).json()["current"] is None, "nobody was asked"
+    assert [read.pdf_page for read in harness.reader.reads] == [1] and [call.pages for call in harness.extractor.calls] == [(1,)]
+    assert (await job_state(ids, document))["attempts"] == 1
+
+
+async def test_a_structured_multipage_e_invoice_needs_neither_a_model_nor_a_split_decision(migrator_session, scope_seed, store):
+    ids = await fixture(migrator_session, scope_seed)
+    enable_models(ids["org"])
+    async with client(ids) as api:
+        ref = await receive_original(api, ids, zugferd_pdf(pages=3), pages=3)
+        (document,) = (await documents(api, ref)).values()
+        harness = Harness()
+        assert await extract_all(ids["org"], harness, processor=extract_logical) == 1
+        assert await processing(api, document) == ("succeeded", None, False)
+        assert (await api.get("/api/document-refs/" + ref["id"] + "/partition")).json()["current"] is None
+    assert nothing_was_sent(harness) and await ledger(ids["org"]) == []
+    header, payload, _, _ = await revision(ids, document)
+    assert (header["processor_version"], payload["source_format"], payload["source_pages"]) == ("intake-local-v1", "ZUGFERD", [1, 2, 3])
+
+
+async def test_a_partition_that_leaves_the_document_out_during_a_run_stops_further_spending(migrator_session, scope_seed, store):
+    ids = await fixture(migrator_session, scope_seed)
+    enable_models(ids["org"])
+    async with client(ids) as api:
+        ref = await receive_original(api, ids, document_pdf([None, None]), pages=2)
+        (whole,) = (await documents(api, ref)).values()
+        await confirm_partition(api, ref, whole)
+
+        async def divided(count):
+            # While the first page is being read, the user divides the original into two documents: the whole is left out.
+            a, b = await split(api, ref, 1, 1), await split(api, ref, 2, 2)
+            await confirm_partition(api, ref, a, b)
+
+        reader = Reader(after=divided)
+        harness = Harness(reader=reader)
+        process = await extract_all(ids["org"], harness, processor=extract_logical)
+        assert process >= 1
+        assert len([read for read in reader.reads if read.document_key == whole]) == 1, "the second page of the whole is not read"
+        assert harness.extractor.calls == [] or all(call.document_key != whole for call in harness.extractor.calls)
+        assert [row.pdf_page for row in await ledger(ids["org"]) if row.stage == "read_page"][:1] == [1]
+        assert await processing(api, whole) == ("failed", "lease_lost", True)
+        assert (await revision(ids, whole))[1] is None
+
+
+async def test_the_decision_of_one_organization_changes_nothing_for_the_waiting_document_of_another(migrator_session, scope_seed, store):
+    ids = await fixture(migrator_session, scope_seed)
+    foreign = await foreign_fixture(migrator_session)
+    enable_models(ids["org"])
+    enable_models(foreign["org"])
+    async with client(ids) as api, client(foreign) as other:
+        own_ref = await receive_original(api, ids, document_pdf([FIRST, SECOND]), pages=2)
+        foreign_ref = await receive_original(other, foreign, document_pdf([FIRST, SECOND]), pages=2)
+        (own,), (theirs,) = (await documents(api, own_ref)).values(), (await documents(other, foreign_ref)).values()
+        assert await extract_all(ids["org"], Harness(), processor=extract_logical) == 1
+        assert await extract_all(foreign["org"], Harness(), processor=extract_logical) == 1
+        await confirm_partition(api, own_ref, own)
+        assert await processing(api, own) == ("queued", None, False)
+        assert await processing(other, theirs) == ("awaiting_split", "awaiting_split", False), "the other organization is still waiting"
+        assert (await job_state(foreign, theirs))["status"] == "awaiting_split"
 
 
 @pytest.mark.parametrize("fmt,mime", [("PNG", "image/png"), ("JPEG", "image/jpeg")], ids=["png", "jpeg"])
@@ -185,6 +323,7 @@ async def test_a_pdf_with_a_text_layer_needs_no_reading_model(migrator_session, 
     async with client(ids) as api:
         ref = await receive_original(api, ids, document_pdf([FIRST, SECOND]), pages=2)
         (document,) = (await documents(api, ref)).values()
+        await confirm_partition(api, ref, document)
         harness = Harness()
         assert await extract_all(ids["org"], harness, processor=extract_logical) == 1
     assert harness.reader.reads == [] and [call.pages for call in harness.extractor.calls] == [(1, 2)]
@@ -251,6 +390,7 @@ async def test_a_provider_failure_retains_the_document_keeps_its_usage_and_sends
     async with client(ids) as api:
         ref = await receive_original(api, ids, document_pdf([None, None]), pages=2)
         (document,) = (await documents(api, ref)).values()
+        await confirm_partition(api, ref, document)
         reader = Reader(failures={(document, 1): failure}) if failing == "reader" else Reader()
         extractor = FakeInvoiceExtractionProvider(failure=failure) if failing == "extractor" else FakeInvoiceExtractionProvider()
         assert await extract_all(ids["org"], Harness(reader=reader, extractor=extractor), processor=extract_logical) == 1
@@ -263,6 +403,35 @@ async def test_a_provider_failure_retains_the_document_keeps_its_usage_and_sends
     assert (await revision(ids, document))[1] is None
 
 
+async def test_a_request_that_never_left_the_host_is_settled_at_zero_ends_unreachable_and_is_not_on_the_usage_card(migrator_session, scope_seed, store):
+    """The inbox path follows the invoice path (#833): a request the transport states as not sent consumed nothing."""
+    ids = await fixture(migrator_session, scope_seed)
+    enable_models(ids["org"])
+    failure = ProviderFailure(PROVIDER_CONNECTION_ERROR, True, "synthetic: the connection was refused", not_sent=True)
+    async with client(ids) as api:
+        ref = await receive_original(api, ids, document_pdf([None]), pages=1)
+        (document,) = (await documents(api, ref)).values()
+        reader = Reader(failures={(document, 1): failure})
+        assert await extract_all(ids["org"], Harness(reader=reader), processor=extract_logical) == 1
+        assert await processing(api, document) == ("failed", "provider_unreachable", True), "the same reason as the invoice path"
+        (row,) = await ledger(ids["org"])
+        assert (row.status, row.usage_complete, row.error_code) == ("SETTLED", True, "PROVIDER_REQUEST_NOT_SENT")
+        assert (row.input_tokens, row.output_tokens, row.cost_usd) == (0, 0, Decimal("0"))
+        async with get_worker_tenant_session(ids["org"]) as db:
+            assert await OrganizationAiSettingsRepository(db, ids["org"]).monthly_usage() == Decimal("0")
+        card = await api.get("/api/logical-documents/" + document + "/model-usage")
+        assert card.status_code == 200 and card.json() == {"stages": [], "total": None}, "nothing was requested, so there is nothing to list"
+        # A request that did leave the host and failed stays on the card at what it consumed.
+        again = Reader(failures={(document, 1): ProviderFailure(PROVIDER_CONNECTION_ERROR, True, "synthetic outage", usage=ProviderUsage(40, 0, Decimal("0.00001"), 1))})
+        fence = (await api.get("/api/logical-documents/" + document + "/processing")).json()["fence"]
+        retried = await api.post("/api/logical-documents/" + document + "/retry-extraction", json={"expected_fence": fence, "reason": "Again"},
+                                 headers={"Idempotency-Key": str(uuid.uuid4())})
+        assert retried.status_code == 202, retried.text
+        assert await extract_all(ids["org"], Harness(reader=again), processor=extract_logical) == 1
+        (stage,) = (await api.get("/api/logical-documents/" + document + "/model-usage")).json()["stages"]
+        assert (stage["stage"], stage["calls"]) == ("READING", 1)
+
+
 async def test_both_stages_reserve_settle_and_count_towards_the_monthly_total(migrator_session, scope_seed, store):
     ids = await fixture(migrator_session, scope_seed)
     enable_models(ids["org"])
@@ -271,6 +440,7 @@ async def test_both_stages_reserve_settle_and_count_towards_the_monthly_total(mi
     async with client(ids) as api:
         ref = await receive_original(api, ids, document_pdf([None, FIRST]), pages=2)
         (document,) = (await documents(api, ref)).values()
+        await confirm_partition(api, ref, document)
         seen = []
 
         async def watch(_):
@@ -303,6 +473,7 @@ async def test_an_exhausted_monthly_budget_stops_before_the_next_request_and_ret
     async with client(ids) as api:
         ref = await receive_original(api, ids, document_pdf([None, None]), pages=2)
         (document,) = (await documents(api, ref)).values()
+        await confirm_partition(api, ref, document)
 
         async def limit_reached(count):
             enable_models(ids["org"], monthly_limit_usd=Decimal("0.0000001"))
@@ -322,6 +493,7 @@ async def test_withdrawing_the_opt_in_during_a_run_stops_it_before_the_next_requ
     async with client(ids) as api:
         ref = await receive_original(api, ids, document_pdf([None, None]), pages=2)
         (document,) = (await documents(api, ref)).values()
+        await confirm_partition(api, ref, document)
 
         async def withdrawn(count):
             enable_models(ids["org"], import_enabled=False)
@@ -338,6 +510,7 @@ async def test_a_lost_fence_stops_further_spending_and_records_nothing(migrator_
     async with client(ids) as api:
         ref = await receive_original(api, ids, document_pdf([None, None, None]), pages=3)
         (document,) = (await documents(api, ref)).values()
+        await confirm_partition(api, ref, document)
         taken = []
 
         async def reclaimed(count):
@@ -378,6 +551,7 @@ async def test_more_pages_than_one_voucher_ends_for_review_before_any_request(mi
     async with client(ids) as api:
         ref = await receive_original(api, ids, document_pdf([FIRST] * 11), pages=11)
         (document,) = (await documents(api, ref)).values()
+        await confirm_partition(api, ref, document)
         harness = Harness()
         assert await extract_all(ids["org"], harness, processor=extract_logical) == 1
         status = (await api.get("/api/logical-documents/" + document + "/processing")).json()
@@ -391,9 +565,10 @@ async def test_the_real_child_process_hands_the_selected_pages_over_and_the_work
     enable_models(ids["org"])
     async with client(ids) as api:
         ref = await receive_original(api, ids, document_pdf([FIRST, SECOND]), pages=2)
-        first = await split(api, ref, 1, 1)
+        first, second = await split(api, ref, 1, 1), await split(api, ref, 2, 2)
+        await confirm_partition(api, ref, first, second)
         harness = Harness()
-        assert await extract_all(ids["org"], harness) == 2
-    assert {call.pages for call in harness.extractor.calls} == {(1,), (1, 2)}
+        assert await extract_all(ids["org"], harness) == 3, "the whole is looked at, found to be left out, and parked"
+    assert {call.pages for call in harness.extractor.calls} == {(1,), (2,)}
     header, payload, _, pages = await revision(ids, first)
     assert (header["processor_version"], payload["source_pages"], [page["text"] for page in pages]) == ("intake-model-v1", [1], ["\n".join(FIRST)])

@@ -33,6 +33,7 @@ from tests.intake_model_support import (
     EXTRACTION_MODEL,
     READING_MODEL,
     Harness,
+    confirm_partition,
     document_pdf,
     enable_models,
     extract_all,
@@ -41,11 +42,10 @@ from tests.intake_model_support import (
 )
 from tests.test_financial_scope_boundary import scope_seed as scope_seed, worker_tenant as worker_tenant
 from tests.test_intake_batches import work_sql
-from tests.test_intake_model_extraction import FIRST, SECOND, Reader, documents, receive_original, split
+from tests.test_intake_model_extraction import FIRST, SECOND, Reader, documents, job_state, receive_original, split
 from tests.test_invoice_source_custody import fixture, foreign_fixture, store as store
 from tests.test_scope_payment_reconciliation import read_value
 from tests.test_scoped_account_statements import client, mutate
-from tests.test_source_partitions import command as partition_command
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("tesseract_unusable")]
 
@@ -86,6 +86,7 @@ async def test_a_field_is_located_where_the_model_found_it_only_when_that_verifi
         ref = await receive_original(api, ids, document_pdf([FIRST, SECOND, None, None]), pages=4)
         first, second = await split(api, ref, 1, 2), await split(api, ref, 3, 4)
         whole = (await documents(api, ref))[(1, 4)]
+        await confirm_partition(api, ref, first, second)
         reader = Reader(transcripts={
             (second, 3): [ReadingBlock(kind="TEXT", text="Stadtwerke Test GmbH, Abrechnung Wasser, Seite 3")],
             (second, 4): [ReadingBlock(kind="TEXT", text="Gesamtbetrag  99,00 EUR"), ReadingBlock(kind="TEXT", text="Seite 4")]})
@@ -119,7 +120,8 @@ async def test_a_field_is_located_where_the_model_found_it_only_when_that_verifi
             "gross_amount": ["page_quote", 4, "Gesamtbetrag  99,00 EUR\nSeite 4", "reading_model"],
             "document_number": UNLOCATED, "invoice_date": UNLOCATED, "service_period_from": UNLOCATED,
             "service_period_to": UNLOCATED, "suggested_category_code": UNLOCATED}
-        assert {status for status, *_ in (await stated_evidence(ids, whole)).values()} == {"unlocated"}, "a model that names no source locates nothing"
+        assert (await job_state(ids, whole))["status"] == "awaiting_split", "the unsplit whole is left out of the division and is not read"
+        assert await stated_evidence(ids, whole) == {}
 
         # What the review screen reads: the original's page numbers, the passage and how the page was read.
         listed = (await api.get("/api/document-refs/" + ref["id"] + "/extractions")).json()["items"]
@@ -138,6 +140,7 @@ async def test_a_passage_on_the_page_that_does_not_carry_the_value_locates_nothi
     async with client(ids) as api:
         ref = await receive_original(api, ids, document_pdf([FIRST, SECOND]), pages=2)
         (document,) = (await documents(api, ref)).values()
+        await confirm_partition(api, ref, document)
         extractor = PerDocument({document: synthetic_invoice_output(
             # Real places on page 1 that do not state the values (the three examples of the review of PR #832) ...
             gross_amount=("9999.00", 0.9, 1, "Gesamtbetrag"), document_number=("XYZ-999", 0.9, 1, "Rechnungsnummer"),
@@ -162,15 +165,14 @@ async def test_the_assignment_hints_of_a_page_the_reading_model_read_carry_the_o
     async with client(ids) as api:
         ref = await receive_original(api, ids, document_pdf([FIRST, None]), pages=2)
         child = (await api.get("/api/logical-documents", params={"document_ref_id": ref["id"]})).json()["items"][0]
+        confirmed = await confirm_partition(api, ref, child["id"])
         reader = Reader(transcripts={(child["id"], 2): [ReadingBlock(kind="TEXT", text="Objekt-ID: " + str(ids["property"])),
                                                        ReadingBlock(kind="TEXT", text="Zählernummer: M-123")]})
         assert await extract_all(ids["org"], Harness(reader=reader), processor=extract_logical) == 1
         await mutate(text("INSERT INTO meter(organization_id,property_id,meter_number,meter_type) VALUES(:org,:property,'M-123','STROM')"), ids)
-        partition = await api.post("/api/document-refs/" + ref["id"] + "/partition", **partition_command([child]))
-        assert partition.status_code == 201, partition.text
         newest = (await api.get("/api/document-refs/" + ref["id"] + "/extractions", params={"logical_document_id": child["id"]})).json()["items"][0]
         found = await api.get("/api/logical-documents/" + child["id"] + "/assignment-candidates",
-                              params={"partition_revision_id": partition.json()["id"], "extraction_revision_id": newest["id"]})
+                              params={"partition_revision_id": confirmed["id"], "extraction_revision_id": newest["id"]})
         assert found.status_code == 200, found.text
     (row,) = found.json()["items"]
     assert row["scope_id"] == str(ids["scope"]) and row["requires_manual_review"]
@@ -310,6 +312,7 @@ async def test_whatever_stops_the_models_the_document_is_retained_nothing_is_app
     async with client(ids) as api:
         ref = await receive_original(api, ids, document_pdf([None] * scans), pages=scans)
         (document,) = (await documents(api, ref)).values()
+        await confirm_partition(api, ref, document)
         during = scenario.get("during")
 
         async def acting(_):
@@ -387,6 +390,7 @@ async def test_a_lost_fence_leaves_the_usage_already_incurred_recorded_and_visib
     async with client(ids) as api:
         ref = await receive_original(api, ids, document_pdf([None, None, None]), pages=3)
         (document,) = (await documents(api, ref)).values()
+        await confirm_partition(api, ref, document)
 
         async def reclaimed(_):
             await mutate(text("UPDATE intake_extraction_job SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE organization_id=:org"), ids)
@@ -430,6 +434,7 @@ async def test_the_text_of_an_installation_without_invoices_names_the_inbox_so_i
     async with client(ids) as api:
         ref = await receive_original(api, ids, document_pdf([None, FIRST]), pages=2)
         (document,) = (await documents(api, ref)).values()
+        await confirm_partition(api, ref, document)
         harness = Harness(reader=Reader(), extractor=FakeInvoiceExtractionProvider())
         assert await extract_all(ids["org"], harness, processor=extract_logical) == 1
         status, _ = await state_of(api, document)

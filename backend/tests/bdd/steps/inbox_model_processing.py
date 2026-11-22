@@ -21,7 +21,7 @@ from tests.ai_settings_support import configure_ai
 from tests.bdd.steps.browser_setup import create
 from tests.bdd.steps.inbox import get
 from tests.bdd.steps.invoice_processing import EXTRACTION_USAGE, READING_USAGE, _organization, _settings
-from tests.intake_model_support import Harness, document_pdf
+from tests.intake_model_support import Harness, document_pdf, inbox_adapters
 from tests.test_m5_einvoice import UBL_WITH_IBAN
 
 INSURANCE = ["Mustermann Versicherungen AG", "Rechnungsnummer RE-2026-0042", "Gebaeudeversicherung 2026, Gesamtbetrag 312,00 EUR"]
@@ -80,7 +80,7 @@ def _upload(world, data, filename, mime="application/pdf"):
 def _process(world, monkeypatch, *, pages, reader, extractor):
     """Run the worker ticks of the inbox until it is idle: inspection, delivery of the documents, extraction."""
     from app.workers import intake_extraction, workflow
-    from app.workers.workflow_runner import WorkflowRunner, build_adapters
+    from app.workers.workflow_runner import WorkflowRunner
 
     harness = Harness(reader=reader, extractor=extractor)
     world.data["harness"] = harness
@@ -102,7 +102,7 @@ def _process(world, monkeypatch, *, pages, reader, extractor):
     async def organizations():
         return (organization,)
 
-    runner = WorkflowRunner(organizations, build_adapters(intake_providers=harness))
+    runner = WorkflowRunner(organizations, inbox_adapters(("intake_inspection", "outbox", "intake_extraction"), harness))
     for _ in range(20):
         tick = world.run(runner.run_once())
         if tick.code == "IDLE":
@@ -129,13 +129,31 @@ def _revision(world, document):
     return get(world, f"/api/extraction-revisions/{newest['id']}")
 
 
+def _confirm(world, *documents):
+    """The reviewer confirms how the original divides: these documents, each page in exactly one of them."""
+    ref = world.data["ref"]
+    current = get(world, f"/api/document-refs/{ref['id']}/partition")["current"]
+    response = world.act("POST", f"/api/document-refs/{ref['id']}/partition", headers={
+        "Idempotency-Key": str(uuid.uuid4()), "If-Match": '"' + (current["id"] if current else "none") + '"'},
+        json={"logical_document_ids": [document["id"] for document in documents], "reason": "Checked against the original", "visual_pages_reviewed": True})
+    assert response.status_code == 201, world.describe_response()
+
+
 def _run_insurance_scan(world, monkeypatch, *, extractor=None, reader_usage=READING_USAGE):
     data, transcripts = _insurance_scan_pages()
     _upload(world, data, "versicherung.pdf")
     world.data["sample"] = (data, transcripts)
+    # A multipage upload waits until it is confirmed as one document (or split): the inbox looks at it, then the reviewer decides.
+    _process(world, monkeypatch, pages=2, reader=Reader(transcripts, usage=reader_usage), extractor=Extractor({}))
+    _confirm_whole(world)
     _process(world, monkeypatch, pages=2, reader=Reader(transcripts, usage=reader_usage),
              extractor=extractor or Extractor({1: INSURANCE_PROPOSAL}, usage=EXTRACTION_USAGE))
     world.data["document"] = _sole_document(world)
+
+
+def _confirm_whole(world):
+    (whole,) = _documents(world).values()
+    _confirm(world, whole)
 
 
 @given("the organization has enabled the AI import for the inbox with its own key and both models")
@@ -159,12 +177,12 @@ def inbox_ai_confirmed_earlier(world):
     assert (settings["invoice_confirmation_required"], settings["inbox_confirmation_required"]) == (False, True)
 
 
-@when("the reviewer uploads a two-page building-insurance invoice whose second page is a scan and the inbox processes it")
+@when("the reviewer uploads a two-page building-insurance invoice whose second page is a scan, confirms it as one document and the inbox processes it")
 def upload_and_process(world, monkeypatch):
     _run_insurance_scan(world, monkeypatch)
 
 
-@when("the reviewer uploads a two-page building-insurance invoice whose second page is a scan whose extraction fails at the provider and the inbox processes it")
+@when("the reviewer uploads a two-page building-insurance invoice whose second page is a scan whose extraction fails at the provider, confirms it as one document and the inbox processes it")
 def upload_and_fail(world, monkeypatch):
     failure = ProviderFailure("PROVIDER_TIMEOUT", False, "timed out", usage=ProviderUsage(300, 0, Decimal("0.000225"), 1))
     _run_insurance_scan(world, monkeypatch, extractor=Extractor({1: INSURANCE_PROPOSAL}, failure=failure))
@@ -177,26 +195,53 @@ def upload_four_pages(world):
     world.data["sample"] = (data, {3: [WATER_BILL[0]], 4: [WATER_BILL[1]]})
 
 
-@when(parsers.parse("the reviewer marks pages {a:d} to {b:d} and pages {c:d} to {d:d} as documents and the inbox processes them"))
-def split_and_process(world, monkeypatch, a, b, c, d):
+@when("the inbox processes the upload")
+def process_upload(world, monkeypatch):
     world.data["organization_id"] = _organization(world)
     _, transcripts = world.data["sample"]
+    _process(world, monkeypatch, pages=4, reader=Reader(transcripts, usage=READING_USAGE), extractor=Extractor({1: INSURANCE_PROPOSAL, 3: WATER_PROPOSAL}, usage=EXTRACTION_USAGE))
+    world.data["whole"] = _documents(world)[(1, 4)]
 
-    def models():
-        return Reader(transcripts, usage=READING_USAGE), Extractor({1: INSURANCE_PROPOSAL, 3: WATER_PROPOSAL}, usage=EXTRACTION_USAGE)
 
-    # The original is inspected and delivered as one document first; the reviewer then marks the two vouchers.
-    reader, extractor = models()
-    _process(world, monkeypatch, pages=4, reader=reader, extractor=extractor)
-    _documents(world)
+@when("the inbox processes the documents")
+def process_documents(world, monkeypatch):
+    """The worker ticks after the reviewer has divided the original (on the source page, in the browser twin)."""
+    _, transcripts = world.data["sample"]
+    _process(world, monkeypatch, pages=4, reader=Reader(transcripts, usage=READING_USAGE),
+             extractor=Extractor({1: INSURANCE_PROPOSAL, 3: WATER_PROPOSAL}, usage=EXTRACTION_USAGE))
+    world.data["documents"] = _documents(world)
+
+
+@when(parsers.parse("the reviewer marks pages {a:d} to {b:d} and pages {c:d} to {d:d} as documents, confirms the division and the inbox processes them"))
+def split_and_process(world, monkeypatch, a, b, c, d):
+    _, transcripts = world.data["sample"]
     ref = world.data["ref"]
     for first, last in ((a, b), (c, d)):
         response = world.act("POST", "/api/logical-documents", headers={"Idempotency-Key": str(uuid.uuid4())},
                              json={"document_ref_id": ref["id"], "page_start": first, "page_end": last, "reason": "Two vouchers in one scan"})
         assert response.status_code == 201, world.describe_response()
-    reader, extractor = models()
-    _process(world, monkeypatch, pages=4, reader=reader, extractor=extractor)
+    documents = _documents(world)
+    _confirm(world, documents[(a, b)], documents[(c, d)])
+    _process(world, monkeypatch, pages=4, reader=Reader(transcripts, usage=READING_USAGE),
+             extractor=Extractor({1: INSURANCE_PROPOSAL, 3: WATER_PROPOSAL}, usage=EXTRACTION_USAGE))
     world.data["documents"] = _documents(world)
+
+
+@when("the reviewer uploads a one-page building-insurance invoice and the inbox processes it")
+def upload_one_page(world, monkeypatch):
+    data = document_pdf([INSURANCE])
+    _upload(world, data, "einzelseite.pdf")
+    world.data["sample"] = (data, {})
+    _process(world, monkeypatch, pages=1, reader=Reader({}), extractor=Extractor({1: INSURANCE_PROPOSAL}, usage=EXTRACTION_USAGE))
+    world.data["document"] = _sole_document(world)
+
+
+@when("the reviewer confirms the whole original as one document and the inbox processes it")
+def confirm_whole_and_process(world, monkeypatch):
+    _confirm_whole(world)
+    _, transcripts = world.data["sample"]
+    _process(world, monkeypatch, pages=4, reader=Reader(transcripts, usage=READING_USAGE), extractor=Extractor({1: INSURANCE_PROPOSAL}, usage=EXTRACTION_USAGE))
+    world.data["document"] = world.data["whole"]
 
 
 @when("the reviewer uploads a structured e-invoice and the inbox processes it")
@@ -349,6 +394,41 @@ def proposes_einvoice(world):
 def split_proposal(world, a, b, amount, vendor):
     fields = _revision(world, world.data["documents"][(a, b)])["payload"]
     assert (fields["gross_amount"], fields["vendor_name"]) == (amount.replace(",", "."), vendor)
+
+
+@then("the upload says that it waits for the division and nobody has proposed anything")
+def waits_for_the_split(world):
+    item = get(world, f"/api/intake-batches/{world.data['batch']['id']}")["items"][0]
+    assert (item["status"], item["stage"], item["error_code"]) == ("review", "split", "awaiting_split"), item
+    whole = world.data["whole"]
+    state = get(world, f"/api/logical-documents/{whole['id']}/processing")
+    assert (state["status"], state["error_code"], state["can_retry"]) == ("awaiting_split", "awaiting_split", False), state
+    assert _revision_count(world) == 0
+
+
+def _revision_count(world):
+    ref = world.data["ref"]
+    return len(get(world, f"/api/document-refs/{ref['id']}/extractions")["items"])
+
+
+@then("nobody was asked how the original divides")
+def nobody_asked(world):
+    assert get(world, f"/api/document-refs/{world.data['ref']['id']}/partition")["current"] is None
+
+
+@then("the unsplit whole was never sent and says that it is not part of the division")
+def whole_not_sent(world):
+    harness, whole = world.data["harness"], world.data["whole"]
+    assert whole["id"] not in {call.document_key for call in harness.extractor.calls} | {read.document_key for read in harness.reader.reads}
+    state = get(world, f"/api/logical-documents/{whole['id']}/processing")
+    assert (state["status"], state["error_code"]) == ("awaiting_split", "not_in_split"), state
+
+
+@then("the whole original was sent once, with all four pages, as one document")
+def whole_sent(world):
+    harness = world.data["harness"]
+    assert [call.pages for call in harness.extractor.calls] == [(1, 2, 3, 4)]
+    assert sorted(read.pdf_page for read in harness.reader.reads) == [3, 4]
 
 
 @then("neither document was asked about a page of the other")

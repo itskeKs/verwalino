@@ -18,12 +18,13 @@ from sqlalchemy.exc import DBAPIError
 from app import deployment
 from app.core.intake_extraction import extract_logical
 from tests.conftest import MIGRATOR_SYNC_URL
-from tests.intake_model_support import Harness, enable_models, extract_all
+from tests.intake_model_support import Harness, confirm_partition, document_pdf, enable_models, extract_all
 from tests.invoice_model_support import discard_invoice_model_data
 from tests.test_financial_scope_boundary import scope_seed as scope_seed, worker_tenant as worker_tenant
 from tests.test_intake_batches import work_sql
 from tests.test_intake_extraction import model_result
 from tests.test_intake_extraction_worker import source
+from tests.test_intake_model_extraction import documents, receive_original, split
 from tests.test_invoice_source_custody import fixture, store as store
 from tests.test_scope_payment_reconciliation import read_value
 from tests.test_scoped_account_statements import client, mutate
@@ -143,7 +144,20 @@ async def test_the_downgrade_refuses_to_discard_inbox_usage_or_a_model_read_prop
                     with db.begin_nested():
                         migration.downgrade()
                 discard_invoice_model_data(lambda statement: db.execute(text(statement)))
+                gate = lambda name: db.scalar(text(f"SELECT pg_get_functiondef('public.{name}'::regprocedure)"))
+                assert "split_state" in gate("intake_extraction_context(uuid,uuid,uuid)") and "awaiting_split" in gate("review_source_partition(uuid,uuid,uuid,uuid,uuid[],text,boolean)")
+                assert "awaiting_split" in gate("intake_batch_status(uuid,uuid,integer,integer)")
+                assert "'awaiting_split'" in db.scalar(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='intake_extraction_job_status_check'"))
+                db.execute(text("UPDATE intake_extraction_job SET status='awaiting_split',error_code='awaiting_split'"))
                 migration.downgrade()
+                # The older runtime sends a whole original: a parked job is queued again, nothing else of it is lost.
+                assert db.scalar(text("SELECT string_agg(DISTINCT status||':'||COALESCE(error_code,''),',') FROM intake_extraction_job")) == 'queued:'
+                assert "split_state" not in gate("intake_extraction_context(uuid,uuid,uuid)")
+                assert "awaiting_split" not in gate("review_source_partition(uuid,uuid,uuid,uuid,uuid[],text,boolean)")
+                assert "awaiting_split" not in gate("intake_batch_status(uuid,uuid,integer,integer)") and "held" not in gate("intake_batch_status(uuid,uuid,integer,integer)")
+                assert "awaiting_split" not in db.scalar(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='intake_extraction_job_status_check'"))
+                assert db.scalar(text("SELECT to_regprocedure('public.hold_intake_extraction(uuid,uuid,uuid)')")) is None
+                assert db.scalar(text("SELECT to_regprocedure('public.intake_split_state(uuid,uuid)')")) is None
                 assert 'intake-model-v1' not in definition() and 'vendor_iban' not in definition() and 'reading_model' not in definition()
                 assert "'reading_model'" not in locator() and "'text_layer'" in locator() and "'ocr'" in locator()
                 assert "'intake-local-v1'" in definition() and 'intake-model-v1' not in constraint() and "'invoice-model-v1'" in constraint()
@@ -155,6 +169,8 @@ async def test_the_downgrade_refuses_to_discard_inbox_usage_or_a_model_read_prop
                 assert "'reading_model'" in locator()
                 assert 'intake-model-v1' in definition() and 'vendor_iban' in definition() and "'intake-model-v1'" in constraint()
                 assert db.scalar(text("SELECT to_regprocedure('public.renew_intake_extraction(uuid,uuid,uuid,integer)')")) is not None
+                assert "split_state" in gate("intake_extraction_context(uuid,uuid,uuid)") and "awaiting_split" in gate("intake_batch_status(uuid,uuid,integer,integer)")
+                assert db.scalar(text("SELECT to_regprocedure('public.hold_intake_extraction(uuid,uuid,uuid)')")) is not None
             finally:
                 savepoint.rollback()
     finally:
@@ -181,3 +197,47 @@ async def test_the_ledger_stays_erasable_and_the_inbox_proposal_keeps_the_tenth_
     del answer['payload']['vendor_iban']
     assert await work_sql(ids, 'SELECT complete_intake_extraction(:org,:job,:fence,CAST(:result AS jsonb))',
                           job=uuid.UUID(claim['job_id']), fence=uuid.UUID(claim['fence']), result=json.dumps(answer))
+
+
+HOLD = "SELECT hold_intake_extraction(:org,:job,:fence)"
+
+
+async def test_only_the_worker_role_parks_a_job_and_the_split_state_is_internal(migrator_session, scope_seed, store):
+    ids = await fixture(migrator_session, scope_seed)
+    async with client(ids) as api:
+        ref, child = await source(api, ids, scoped=True)
+    claim = await work_sql(ids, CLAIM)
+    assert claim["split_state"] == "decided", "a single page needs no decision"
+    params = {"job": uuid.UUID(claim["job_id"]), "fence": uuid.UUID(claim["fence"])}
+    with pytest.raises(DBAPIError, match="permission denied|runtime required"):
+        await read_value("SELECT hold_intake_extraction(:org,:job,:fence)", {**ids, **params}, actor_key="clerk")
+    for role in ("clerk", "actor"):
+        with pytest.raises(DBAPIError, match="permission denied"):
+            await read_value("SELECT intake_split_state(:org,:document)", {**ids, "document": uuid.UUID(child["id"])}, actor_key=role)
+    with pytest.raises(DBAPIError, match="permission denied"):
+        await work_sql(ids, "SELECT intake_split_state(:org,:document)", document=uuid.UUID(child["id"]))
+    # A fence that is not the live one parks nothing. A decision made after the claim queues the job again, it is not parked.
+    assert await work_sql(ids, HOLD, job=params["job"], fence=uuid.uuid4()) is False
+    assert await read_value("SELECT status FROM intake_extraction_job WHERE organization_id=:org", ids) == "running"
+    assert await work_sql(ids, HOLD, **params) is True
+    assert await read_value("SELECT status||':'||COALESCE(error_code,'') FROM intake_extraction_job WHERE organization_id=:org", ids) == "queued:"
+    assert await work_sql(ids, HOLD, **params) is False, "the claim is over"
+
+
+async def test_the_renewal_refuses_a_claim_whose_document_the_division_leaves_out(migrator_session, scope_seed, store):
+    ids = await fixture(migrator_session, scope_seed)
+    async with client(ids) as api:
+        ref = await receive_original(api, ids, document_pdf([None, None]), pages=2)
+        (whole,) = (await documents(api, ref)).values()
+        await confirm_partition(api, ref, whole)
+        claim = await work_sql(ids, CLAIM)
+        assert claim["split_state"] == "decided" and claim["logical_document_id"] == whole
+        params = {"job": uuid.UUID(claim["job_id"]), "fence": uuid.UUID(claim["fence"])}
+        assert await work_sql(ids, RENEW, seconds=60, **params) is True
+        # The reviewer divides the original while the document is being read: the whole is not in the latest division.
+        await confirm_partition(api, ref, await split(api, ref, 1, 1), await split(api, ref, 2, 2))
+        assert await work_sql(ids, RENEW, seconds=60, **params) is False, "no decision, no further paid request"
+        # The claim itself is still the live one: the job is parked with the reason that names the division.
+        assert await work_sql(ids, HOLD, **params) is True
+        assert await read_value("SELECT status||':'||error_code FROM intake_extraction_job WHERE organization_id=:org AND logical_document_id=:document",
+                                {**ids, "document": uuid.UUID(whole)}) == "awaiting_split:not_in_split"

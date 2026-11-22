@@ -6,7 +6,7 @@ import { fileDigest, intakeApi, type IntakeBatch, type IntakeItem, type IntakeSt
 import { AWAITS_SETUP, invoiceProcessingMessage } from '../lib/invoiceProcessing';
 
 const labels: Record<IntakeStatus, string> = { waiting: 'Datei fehlt', received: 'Empfangen', processing: 'In Verarbeitung', review: 'Zur Sichtung', confirmed: 'Bestätigt', failed: 'Gesperrt / fehlgeschlagen' };
-const stageLabels = { inspection: 'Dateiprüfung', preparation: 'Dokumentvorbereitung', extraction: 'Auswertung', review: 'Vorschläge verfügbar' };
+const stageLabels = { inspection: 'Dateiprüfung', preparation: 'Dokumentvorbereitung', extraction: 'Auswertung', split: 'Aufteilung ausstehend', review: 'Vorschläge verfügbar' };
 const explanations: Record<string, string> = {
   scanner_unavailable: 'Die Dateiprüfung ist derzeit nicht verfügbar. Die Datei bleibt gesperrt. Nach Behebung kann die Prüfung wiederholt werden.',
   scanner_timeout: 'Die Dateiprüfung hat zu lange gedauert. Ein erneuter Versuch ist möglich.',
@@ -32,6 +32,7 @@ function countsOf(batch: IntakeBatch): Record<IntakeStatus, number> {
 // A file that failed in its extraction is explained from the one map of reasons (the models, their limits and the opt-in
 // of the organization, issue #501); the codes above belong to the inspection of the file.
 const explain = (item: IntakeItem) => !item.error_code ? null : item.stage === 'extraction' ? invoiceProcessingMessage('failed', item.error_code, 'inbox')
+  : item.stage === 'split' ? invoiceProcessingMessage('awaiting_split', item.error_code, 'inbox')
   : explanations[item.error_code] ?? 'Die Verarbeitung konnte nicht abgeschlossen werden. Bitte den Verarbeitungsstand prüfen.';
 
 function ItemActions({ item, batchId, refresh, disabled }: { item: IntakeItem; batchId: string; refresh: () => void; disabled: boolean }) {
@@ -118,7 +119,7 @@ function BatchDetail({ batchId }: { batchId: string }) {
       <section className="grid grid-cols-2 gap-3 md:grid-cols-3" aria-label="Verarbeitungsstand">
         {(Object.keys(labels) as IntakeStatus[]).map(status => <div className="card min-w-0" key={status}><p className="text-2xl font-semibold">{counts[status]}</p><p>{labels[status]}</p></div>)}
       </section>
-      <p>Nach der Dateiprüfung werden die Belege vorbereitet und ausgelesen. „Zur Sichtung“ zeigt ungeprüfte Vorschläge und bestätigt keine Kosten, Zuordnung oder Abrechnung.</p>
+      <p>Nach der Dateiprüfung werden die Belege vorbereitet und ausgelesen; ein Original mit mehreren Seiten erst, wenn Sie unter „Belege und Vorschläge“ bestätigt haben, wie es aufgeteilt ist. „Zur Sichtung“ zeigt ungeprüfte Vorschläge und bestätigt keine Kosten, Zuordnung oder Abrechnung.</p>
       <p>{batch.item_count} Datei(en) · Eingang vom {formatDateTime(batch.created_at)}</p>
       <div className="space-y-3">{batch.items.map(item => <article className="card min-w-0 space-y-3" key={item.id}>
         <div className="flex flex-wrap items-start justify-between gap-2"><h2 className="min-w-0 break-all">{item.filename}</h2><span className="badge">{labels[groupOf(item)]}</span></div>

@@ -123,10 +123,11 @@ async def source_reviews(api,ids,data,pages,ranges,**changes):
             assert reply.status_code==201,reply.text
             children.append(reply.json())
         while await deliver_once(get_worker_session_factory(),ids['org']):pass
-    await extract_all(ids['org'],processor=extract_logical)
+    # An original of more than one page is read only after its division is confirmed.
     reply=await api.post('/api/document-refs/'+ref['id']+'/partition',**partition_command(children))
     assert reply.status_code==201,reply.text
     partition=reply.json();reviews=[]
+    await extract_all(ids['org'],processor=extract_logical)
     for child in children:
         extraction=(await api.get('/api/document-refs/'+ref['id']+'/extractions',params={'logical_document_id':child['id']})).json()['items'][0]
         reply=await api.post('/api/logical-documents/'+child['id']+'/assignment-proposals',**proposal_command(partition,extraction,ids['scope']))

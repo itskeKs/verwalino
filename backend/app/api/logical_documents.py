@@ -76,7 +76,7 @@ async def model_usage(document_id:uuid.UUID,auth:AuthContext=Depends(get_current
     rows=await db.scalar(text('SELECT intake_model_usage(:org,:document)'),{'org':auth.organization_id,'document':document_id})
     if rows is None:raise HTTPException(404,'Logical document inaccessible')
     def amount(value):return None if value is None else Decimal(value)
-    return summarize([SimpleNamespace(stage=row['stage'],model_name=row['model_name'],status=row['status'],usage_complete=row['usage_complete'],
+    return summarize([SimpleNamespace(stage=row['stage'],model_name=row['model_name'],status=row['status'],usage_complete=row['usage_complete'],error_code=row['error_code'],
         input_tokens=row['input_tokens'],output_tokens=row['output_tokens'],cost_usd=amount(row['cost_usd']),
         reserved_input_tokens=row['reserved_input_tokens'],reserved_output_tokens=row['reserved_output_tokens'],
         reserved_cost_usd=amount(row['reserved_cost_usd'])) for row in rows])

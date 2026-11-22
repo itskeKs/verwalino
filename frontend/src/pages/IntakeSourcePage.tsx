@@ -14,7 +14,8 @@ const fieldLabels: Record<string, string> = { vendor_name: 'Aussteller', documen
   service_period_to: 'Leistungszeitraum bis', suggested_category_code: 'Vorgeschlagene Kostenart' };
 const statuses: Record<string, string> = { queued: 'Wartet auf Auswertung', running: 'Auswertung läuft', succeeded: 'Vorschläge verfügbar',
   needs_review: 'Unvollständige Vorschläge', unavailable: 'Auswertung nicht möglich', timeout: 'Zeitüberschreitung', failed: 'Verarbeitung fehlgeschlagen',
-  canceled: 'Verarbeitung abgebrochen', blocked: 'Verarbeitung gesperrt', unsupported: 'Dokument nicht unterstützt' };
+  canceled: 'Verarbeitung abgebrochen', blocked: 'Verarbeitung gesperrt', unsupported: 'Dokument nicht unterstützt',
+  awaiting_split: 'Wartet auf die Aufteilung' };
 // How the page a passage stands on was read: its own text layer, the organization's document reading model, or (results of earlier releases) text recognition.
 const readAs: Record<string, string> = { text_layer: 'PDF-Text', reading_model: 'vom Lesemodell gelesen', ocr: 'Texterkennung (frühere Version)', xml: 'Strukturiertes Feld' };
 const MODEL_RESULT = 'intake-model-v1';

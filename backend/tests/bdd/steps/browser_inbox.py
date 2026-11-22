@@ -110,6 +110,68 @@ def confirmed_first_text(world, invoice_workspace):
     configure_ai(_organization(world), text_version="1", import_enabled=True)
 
 
+WAITS = "Das Original hat mehr als eine Seite und wird erst ausgewertet, wenn Sie bestätigt haben, wie es aufgeteilt ist"
+NOTHING_SENT = "Bis dahin wurde nichts an einen KI-Anbieter übermittelt"
+
+
+@then("the batch page and the source page say in German that the upload waits for the division and that nothing was sent at 1280 and 360 pixels")
+@browser_step
+async def waits_for_the_division(browser_world):
+    page = browser_world.page
+    await _shoot(browser_world, "batch-waits", lambda: _open_batch(browser_world), element=lambda page: page.locator("main"), until=lambda page: page.locator("main article"))
+    await _shoot(browser_world, "source-waits", lambda: _open_source(browser_world), element=lambda page: page.get_by_role("region", name="Geprüfte Seitenaufteilung"),
+                 until=lambda page: _proposals(page).get_by_text("Es liegt noch kein Extraktionsergebnis vor."))
+    for viewport in (DESKTOP, PHONE):
+        await page.set_viewport_size(viewport)
+        await _open_batch(browser_world)
+        item = page.locator("main article")
+        await expect(item.locator(".badge")).to_have_text("Zur Sichtung")
+        await expect(item).to_contain_text("Aufteilung ausstehend · 1 Beleg(e), 0 zur Sichtung")
+        await expect(item).to_contain_text(WAITS)
+        await expect(item).to_contain_text(NOTHING_SENT)
+        await expect(item).to_contain_text("Das Original bleibt erhalten; es wurde nichts übernommen.")
+        counts = page.get_by_role("region", name="Verarbeitungsstand")
+        await expect(counts.locator(".card").filter(has_text="Zur Sichtung")).to_have_text(re.compile(r"^1\s*Zur Sichtung$"))
+        await expect(counts.locator(".card").filter(has_text="Gesperrt / fehlgeschlagen")).to_have_text(re.compile(r"^0\s*Gesperrt / fehlgeschlagen$"))
+        await _fits_the_width(page)
+        section = await _open_source(browser_world)
+        await expect(page.get_by_text("Wartet auf die Aufteilung · Versuch 1 von höchstens 3")).to_be_visible()
+        await expect(section).to_contain_text(WAITS)
+        await expect(section).to_contain_text(NOTHING_SENT)
+        # Nothing to press: waiting is no failure, and the place to act is on the page.
+        await expect(section.get_by_role("button", name="Auswertung erneut anfordern", exact=True)).to_have_count(0)
+        await expect(section.get_by_role("region", name="Verbrauch der KI-Verarbeitung")).to_have_count(0)
+        await expect(page.get_by_role("heading", name="Seiten zu Belegen zusammenstellen")).to_be_visible()
+        await expect(page.get_by_text("Ein Original mit mehreren Seiten wird erst an einen KI-Anbieter übermittelt, wenn Sie die Aufteilung gespeichert haben")).to_be_visible()
+        await _fits_the_width(page)
+    await page.set_viewport_size(DESKTOP)
+
+
+@when(parsers.parse("the reviewer divides the original on the source page into pages {a:d} to {b:d} and pages {c:d} to {d:d} and confirms the division"))
+@browser_step
+async def divide_and_confirm(browser_world, a, b, c, d):
+    """What the user does: marks the two documents, ticks both in the division, gives the reason and saves it."""
+    page = browser_world.page
+    await _open_source(browser_world)
+    ranges = page.locator("details").filter(has_text="Weiteren Seitenbereich anlegen")
+    for first, last in ((a, b), (c, d)):
+        if not await ranges.evaluate("details => details.open"):
+            await ranges.locator("summary").click()
+        await ranges.get_by_label("Erste Seite").fill(str(first))
+        await ranges.get_by_label("Letzte Seite").fill(str(last))
+        await ranges.get_by_label("Grund für den Seitenbereich").fill("Zwei Belege in einem Scan")
+        await ranges.get_by_role("button", name="Seitenbereich anlegen", exact=True).click()
+        await expect(page.get_by_label(f"Seiten {first}–{last} in Aufteilung aufnehmen")).to_be_visible()
+    for first, last in ((a, b), (c, d)):
+        await page.get_by_label(f"Seiten {first}–{last} in Aufteilung aufnehmen").check()
+    await expect(page.get_by_text("Jede sichtbare Seite ist genau einmal enthalten.")).to_be_visible()
+    await page.get_by_label("Begründung der Aufteilung").fill("Zwei Belege, Grenzen am Original geprüft")
+    await page.get_by_label("Alle sichtbaren Seiten im Original geprüft und die Beleggrenzen bewusst gewählt.").check()
+    await page.get_by_role("button", name="Aufteilung speichern", exact=True).click()
+    await expect(page.get_by_text("Aufteilung als Version 1 gespeichert.")).to_be_visible()
+    # The whole is no part of the division the user saved, and the page says so for it once the worker has looked.
+
+
 @then(parsers.parse('the source page proposes {amount} EUR with the number {number} from "{vendor}" for pages {first:d} to {last:d} at 1280 and 360 pixels'))
 @browser_step
 async def proposal_of_the_invoice(browser_world, amount, number, vendor, first, last):

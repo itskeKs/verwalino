@@ -29,8 +29,9 @@ SOURCES = {
 }
 # Stored outside these files: by the database function that cancels an attempt whose initiator lost permission
 # (migration 0035), by the proposal that lacks a required field (``_proposal`` in invoice_pipeline.py), and by the
-# inbox's job functions (migration 0098): an initiator who lost permission, and the third attempt that did not finish.
-ELSEWHERE = {"scope_permission_changed", "missing_fields", "initiator_permission_changed", "attempt_limit"}
+# inbox's job functions (migration 0098): an initiator who lost permission, and the third attempt that did not finish; and by
+# the function that parks a job until a person has decided how its original divides (migration 0198).
+ELSEWHERE = {"scope_permission_changed", "missing_fields", "initiator_permission_changed", "attempt_limit", "awaiting_split", "not_in_split"}
 
 
 def stored_codes() -> set[str]:
@@ -74,3 +75,10 @@ def test_the_inbox_produces_no_code_of_the_text_recognition_it_dropped():
 
 def test_every_stored_reason_has_a_german_explanation():
     assert stored_codes() - explained_codes() == set()
+
+
+def test_the_codes_that_park_a_job_are_the_ones_the_database_function_stores():
+    """``ELSEWHERE`` names them; the function of migration 0198 is where they come from, and no other code is stored there."""
+    migration = (ROOT / "backend" / "migrations" / "versions" / "0198_intake_model_extraction.py").read_text()
+    stored = set(re.findall(r"WHEN '(?:awaiting|excluded)' THEN '([a-z_]+)'", migration))
+    assert stored == {"awaiting_split", "not_in_split"} <= ELSEWHERE
