@@ -67,6 +67,12 @@ def ai_import_with_limit(world, invoice_workspace):
     _settings(world, monthly_limit_usd='0.01')
 
 
+@given('the organization has enabled the AI import with a monthly limit of five cents')
+def ai_import_with_five_cent_limit(world, invoice_workspace):
+    # One page read reserves about three cents: one request fits under the limit, two do not.
+    _settings(world, monthly_limit_usd='0.05')
+
+
 @given('the organization enabled the AI import and confirmed the provider before invoices were covered')
 def ai_import_confirmed_earlier(world, invoice_workspace):
     # What an upgraded installation holds: a key confirmed with the first text, which did not name invoices.
@@ -103,6 +109,20 @@ def upload_and_fail(world):
     world.data['invoice'] = response.json()['id']
     failure = ProviderFailure('PROVIDER_TIMEOUT', False, 'timed out', usage=ProviderUsage(300, 0, Decimal('0.000225'), 1))
     _process(world, reader=FakeDocumentReadingProvider(usage=READING_USAGE), extractor=FakeInvoiceExtractionProvider(failure=failure))
+
+
+@when('the administrator uploads a scanned building-insurance invoice whose provider cannot be reached and the worker processes it three times')
+def upload_and_cannot_reach(world):
+    response = world.act('POST', '/api/invoice-documents/upload', files={'file': ('versicherung.pdf', _scan(), 'application/pdf')})
+    assert response.status_code == 201, world.describe_response()
+    world.data['invoice'] = response.json()['id']
+    # The transport states that no request left the host: the name does not resolve, or the connection is refused.
+    unreachable = ProviderFailure('PROVIDER_CONNECTION_ERROR', True, 'refused', not_sent=True)
+    reader = FakeDocumentReadingProvider(failures={('invoice', 1): unreachable})
+    _process(world, reader=reader)
+    for _ in range(2):
+        assert world.act('POST', f"/api/invoice-documents/{world.data['invoice']}/retry").status_code == 200, world.describe_response()
+        _process(world, reader=reader)
 
 
 @when('the administrator uploads a scanned building-insurance invoice whose IBAN the extraction model misread and the worker processes it')
@@ -164,6 +184,11 @@ def confirm_again(world):
 @then('the invoice says that the processing failed and proposes nothing')
 def processing_failed(world):
     _proposes_nothing(world, 'failed', 'model_extraction_failed')
+
+
+@then('the invoice says that the provider could not be reached and proposes nothing')
+def provider_unreachable(world):
+    _proposes_nothing(world, 'failed', 'provider_unreachable')
 
 
 @then('the invoice says that the monthly budget is exhausted and proposes nothing')

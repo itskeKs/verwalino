@@ -2361,7 +2361,10 @@ before every request, so the four setup reasons (switch off, confirmation, readi
 already being read: their text says „Es wird nichts (mehr) an einen KI-Anbieter übermittelt“ and points to the usage card for
 what was requested before, instead of claiming that nothing was sent. So does a provider, endpoint, key or model that was replaced
 during the run (`ai_settings_changed`): its text says the settings were changed while the invoice was being read, that the
-current settings apply to a new start and that starting again „verursacht erneut Kosten“. „Dokument ansehen“ stays in every state.
+current settings apply to a new start and that starting again „verursacht erneut Kosten“. A provider that could not be reached
+(`provider_unreachable`: the name did not resolve, the address is not permitted or the connection was not made) says so, that the
+request was not sent and caused no costs, and offers to start again once the provider is reachable; it does not say that starting
+again „verursacht erneut Kosten“. „Dokument ansehen“ stays in every state.
 The retry button reads „Verarbeitung erneut starten“ and is also offered after a cancellation caused by a lost permission; a
 refused start (all three attempts used) is explained in German, not with the server's message.
 
@@ -2370,7 +2373,9 @@ sits below the actions and appears once a request was made. It reuses the blocks
 per stage and model („Dokumente einlesen“ with the number of calls, „Informationen extrahieren“) and „Gesamt“, over all attempts
 of the invoice including failed and ended ones. Usage the provider did not report is shown as „Reservierte Eingabetoken“ with
 „Konservative Kostenschätzung“, a model without a price as „kein Preis bekannt“, never as 0,00 USD. It loads again when the
-status changes; if it cannot be loaded the card is replaced by one alert sentence and no amount.
+status changes; if it cannot be loaded the card is replaced by one alert sentence and no amount. A request that never left the
+host (`provider_unreachable`) is not a request: it is neither listed nor counted, so an invoice whose attempts all failed that way
+has no card.
 
 The card „Extrahierte Felder“ of a proposal lists ten rows, each with its value and the certainty of the model or of the parser
 in brackets, and „nicht erkannt“ in grey italics where the invoice states nothing (an unchanged wording for every row). The
@@ -2397,6 +2402,7 @@ run with `VERWALINO_CAPTURE_STATE=before` against the previous frontend the "bef
 | Invoice screen (#500) | Before, 1280 px | Before, 360 px | After, 1280 px | After, 360 px |
 |---|---|---|---|---|
 | Processing failed at the provider: explanation, retry, original kept | [view](docs/assets/design/invoice-processing/invoice-provider-failure-before-1280.png) | [view](docs/assets/design/invoice-processing/invoice-provider-failure-before-360.png) | [view](docs/assets/design/invoice-processing/invoice-provider-failure-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-provider-failure-after-360.png) |
+| Provider could not be reached (#833): explanation that the request was not sent and caused no costs, retry, original kept; no usage card (before: the failure text of the model with „erneut Kosten“ and a card with reserved tokens); captured on the local stack on the test database, with synthetic data and a provider address nobody listens on | [view](docs/assets/design/invoice-processing/invoice-provider-unreachable-before-1280.png) | [view](docs/assets/design/invoice-processing/invoice-provider-unreachable-before-360.png) | [view](docs/assets/design/invoice-processing/invoice-provider-unreachable-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-provider-unreachable-after-360.png) |
 | AI evaluation not set up: explanation, nothing sent | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-before-1280.png) | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-before-360.png) | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-ai-not-set-up-after-360.png) |
 | Scan read by both models: proposal and usage card below the actions | [view](docs/assets/design/invoice-processing/invoice-proposal-before-1280.png) | [view](docs/assets/design/invoice-processing/invoice-proposal-before-360.png) | [view](docs/assets/design/invoice-processing/invoice-proposal-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-proposal-after-360.png) |
 | Card „Extrahierte Felder“ of the scan with the row „IBAN des Rechnungsstellers“ (no such row before; the card itself is not captured before) | none | none | [view](docs/assets/design/invoice-processing/invoice-fields-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-fields-after-360.png) |

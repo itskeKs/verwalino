@@ -5,7 +5,7 @@ import { INVOICE_PROCESSING_MESSAGES, invoiceProcessingMessage, INVOICE_STATUS_L
 // list and the map in step with the codes the backend stores.
 const MODEL_PATH = ["ai_import_disabled", "ai_invoice_confirmation_missing", "ai_document_model_missing", "ai_key_unreadable",
   "ai_settings_changed", "organization_ai_budget_exceeded", "invoice_page_limit", "invoice_text_limit", "invoice_ai_limit", "model_reading_failed",
-  "model_extraction_failed", "model_result_invalid", "lease_lost", "render_timeout", "render_unavailable", "image_pixel_limit"];
+  "model_extraction_failed", "provider_unreachable", "model_result_invalid", "lease_lost", "render_timeout", "render_unavailable", "image_pixel_limit"];
 
 it.each(MODEL_PATH)("explains the reason %s in German with what happened and what to do", code => {
   const text = invoiceProcessingMessage("failed", code);
@@ -24,7 +24,7 @@ it("never shows a raw code, an enum value or English text", () => {
 
 it("says that the original is kept wherever nothing was applied by a model", () => {
   for (const code of MODEL_PATH) expect(INVOICE_PROCESSING_MESSAGES[code], code).toMatch(/Original|Dokument/);
-  for (const code of ["model_reading_failed", "model_extraction_failed", "model_result_invalid", "organization_ai_budget_exceeded"]) {
+  for (const code of ["model_reading_failed", "model_extraction_failed", "provider_unreachable", "model_result_invalid", "organization_ai_budget_exceeded"]) {
     expect(INVOICE_PROCESSING_MESSAGES[code], code).toMatch(/nichts übernommen/);
   }
 });
@@ -36,6 +36,12 @@ it("warns that starting again is paid again only where the models were reached",
   for (const code of ["ai_import_disabled", "ai_invoice_confirmation_missing", "invoice_page_limit"]) {
     expect(INVOICE_PROCESSING_MESSAGES[code], code).not.toMatch(/verursacht/);
   }
+});
+
+it("says that a provider that could not be reached was sent nothing and cost nothing, and that starting again is no cost by itself", () => {
+  const text = INVOICE_PROCESSING_MESSAGES.provider_unreachable;
+  expect(text).toMatch(/konnte nicht erreicht werden.*nicht gesendet.*keine Kosten.*Original bleibt erhalten.*erneut starten/s);
+  expect(text).not.toMatch(/erneut Kosten/);
 });
 
 it("has no explanation while the invoice waits, runs or succeeded, and never a success text for nothing", () => {

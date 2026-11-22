@@ -218,6 +218,7 @@ it.each([
   ["unavailable", "organization_ai_budget_exceeded", /monatliche KI-Budget.*ausgeschöpft.*Verbrauch der KI-Verarbeitung/s],
   ["failed", "model_reading_failed", /Dokumente einlesen.*nichts übernommen.*erneut Kosten/s],
   ["failed", "model_extraction_failed", /Informationen extrahieren.*nichts übernommen.*erneut Kosten/s],
+  ["failed", "provider_unreachable", /Anbieter.*nicht erreicht werden.*nicht gesendet.*keine Kosten.*nichts übernommen.*erneut starten/s],
   ["canceled", "source_no_longer_editable", /freigegeben oder durch eine neue Version ersetzt/],
   ["timeout", "worker_lease_expired", /unterbrochen/],
 ])("explains %s / %s on the invoice, keeps the original downloadable and shows no code", async (status, code, expected) => {
@@ -227,6 +228,13 @@ it.each([
   expect(document.body).not.toHaveTextContent(code);
   expect(screen.getByText("Dokument ansehen")).toHaveAttribute("href", "/api/invoice-documents/doc-out/content");
   expect(screen.queryByText(/Extrahierte Felder/)).not.toBeInTheDocument();
+});
+
+it("shows no usage card for an attempt whose requests never left the host, and offers to start again", async () => {
+  openInvoice(failedInvoice("failed", "provider_unreachable"));
+  await screen.findByText(/nicht erreicht werden/);
+  expect(screen.queryByRole("heading", { name: "Verbrauch der KI-Verarbeitung" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Verarbeitung erneut starten" })).toBeVisible();
 });
 
 it("offers to start again after a cancellation caused by a lost permission, and not after a replaced original", async () => {

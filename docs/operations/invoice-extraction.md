@@ -116,7 +116,12 @@ Every request is reserved before it leaves and settled with its usage in the led
 `invoice_model_call` (migration 0197): in short transactions of its own, under the organization's
 budget lock, with the monthly limit checked at the reservation. Failed requests keep their usage; a
 usage the provider did not report stays at the reservation, so unknown is never booked as zero: only a request
-that provably never left (a failure raised before anything was sent) costs nothing. A worker shutdown while a
+that provably never left costs nothing: a failure raised before anything was sent, or one that failed while the name was resolved, in
+the endpoint guard, while connecting or in the TLS handshake (`ProviderFailure.not_sent`, decided from the phase of the
+request and the HTTP library's error types, never from message text). It is settled at zero (error `PROVIDER_REQUEST_NOT_SENT`),
+the attempt ends with `provider_unreachable`, and neither the usage card nor the monthly total counts it, so retries against an
+unreachable provider never use up the limit; a timeout, a reset or any other failure after the request may have been written
+stays at its reservation. The declaration import gives the reservation of such a request back the same way. A worker shutdown while a
 request is out settles it the same way (error `WORKER_CANCELLED`) and leaves the attempt to be reclaimed after its lease;
 a request lost with a killed worker process stays reserved and counts at its full reservation, with no later settlement. Both stages count towards the same
 monthly total as the declaration import (`organization_ai_monthly_usage`), so no invoice obtains
@@ -135,7 +140,8 @@ neither sees the usage of an invoice nor can read its ledger rows.
 An attempt that ends in a failure can be started again with **Verarbeitung erneut starten** (at
 most three attempts per original). Page transcripts are not stored, so a new attempt reads every
 scanned page again and pays for it again; the invoice's usage card adds up all attempts, including
-failed ones. The explanation of a failure that followed a request says so. The original is never
+failed ones. The explanation of a failure that followed a request says so; an attempt that ended with
+`provider_unreachable` sent nothing, so starting it again costs nothing by itself. The original is never
 changed and no cost is posted.
 
 ## What the invoice screen shows
