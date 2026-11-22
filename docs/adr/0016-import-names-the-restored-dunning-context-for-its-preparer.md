@@ -59,8 +59,9 @@ The setting is a promise of the code, not of a user. A guard that accepts it che
   next reuse is the contact data domain setup (`protect_person_data_setup`: `created_by` of a domain
   and `granted_by` of a grant, [#817](https://github.com/itskeKs/verwalino/issues/817)); it is not
   covered here and needs its own guard under the checks above.
-- A binding of the origin `PROVEN_LEGACY` has no reviewer and the policy takes only `REVIEWED`; that
-  is unchanged.
+- A binding of the origin `PROVEN_LEGACY` names the user who reconciled it as `reviewed_by` (0040),
+  but the policy takes only `REVIEWED`, so an archive with such a binding is still refused; that is
+  unchanged.
 - A placeholder is recognised by that convention (inactive, password `!`), not by a dedicated column.
 - Code that set a setting could attribute a context or a binding to a placeholder, never to an active
   user or another organization, and a binding only from an administrator's session; the one-writer
