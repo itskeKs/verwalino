@@ -432,6 +432,7 @@ async def test_real_sdk_cut_off_answer_keeps_its_usage_and_is_not_repaired(outpu
 
     error = raised.value
     assert error.code == 'PROVIDER_INCOMPLETE'
+    assert error.retryable is False, 'the same allowance cuts the identical request off again: the failure is final'
     assert (error.usage.input_tokens, error.usage.output_tokens, error.usage.attempt_count) == (100, output_tokens, 1)
     assert error.usage_complete is True and error.attempt_count == 1 and not error.not_sent
     assert len(requests) == 1, 'a cut-off answer is not a schema failure and gets no repair request'
@@ -439,6 +440,29 @@ async def test_real_sdk_cut_off_answer_keeps_its_usage_and_is_not_repaired(outpu
     assert (metadata['failure_class'], metadata['request_id'], metadata['stage'], metadata['attempt_no']) == (
         'PROVIDER_INCOMPLETE', 'req_cut_off', 'provider', 1)
     assert metadata['returned_model_id'] == requests[0]['model'] and metadata['output_tokens'] == output_tokens
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('details', [{'reason': 'content_filter'}, None], ids=['another-reason', 'no-details'])
+async def test_real_sdk_an_incomplete_answer_not_cut_at_the_output_limit_stays_retryable(details, text_document_input):
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        response = _cut_off(_sdk_response({}, requests[-1]['model'], output_tokens=3))
+        response['incomplete_details'] = details
+        return httpx2.Response(200, json=response, headers={'x-request-id': 'req_incomplete'})
+
+    async with _sdk_client(respond) as client:
+        provider = OpenAiDeclarationProvider(client=client, token_encoder=FixedTokenEncoder(10))
+        with pytest.raises(ProviderFailure) as raised:
+            await provider.extract_rules([text_document_input], max_output_tokens=10)
+
+    error = raised.value
+    assert error.code == 'PROVIDER_INCOMPLETE' and error.retryable is True
+    assert (error.usage.output_tokens, error.usage_complete, error.attempt_count) == (3, True, 1)
+    assert error.metadata.as_safe_dict()['request_id'] == 'req_incomplete'
+    assert len(requests) == 1
 
 
 @pytest.mark.asyncio
@@ -456,7 +480,7 @@ async def test_real_sdk_cut_off_answer_without_usage_stays_at_the_reservation(te
         with pytest.raises(ProviderFailure) as raised:
             await provider.extract_rules([text_document_input], max_output_tokens=10)
 
-    assert raised.value.code == 'PROVIDER_INCOMPLETE'
+    assert raised.value.code == 'PROVIDER_INCOMPLETE' and raised.value.retryable is False
     assert raised.value.usage is None and raised.value.usage_complete is False and raised.value.attempt_count == 1
     assert len(requests) == 1
 

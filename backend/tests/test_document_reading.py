@@ -268,7 +268,7 @@ async def test_a_page_whose_transcript_the_sdk_cut_off_keeps_its_usage_and_is_re
             await provider.read_page(PAGE, model=READING_MODEL, max_output_tokens=2000)
 
     error = failure.value
-    assert error.code == PROVIDER_INCOMPLETE
+    assert error.code == PROVIDER_INCOMPLETE and error.retryable is False
     assert (error.usage.input_tokens, error.usage.output_tokens, error.usage.attempt_count) == (100, 2000, 1)
     assert error.usage_complete is True and error.attempt_count == 1
     assert len(requests) == 1, 'a cut-off transcript is not repaired'

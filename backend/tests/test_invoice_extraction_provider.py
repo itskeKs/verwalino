@@ -315,7 +315,7 @@ async def test_an_answer_the_sdk_cut_off_keeps_its_usage_costs_no_repair_and_is_
             await provider.extract_invoice([DOCUMENT], categories=CATEGORIES, model=EXTRACTION_MODEL, max_output_tokens=2000)
 
     error = failure.value
-    assert error.code == PROVIDER_INCOMPLETE
+    assert error.code == PROVIDER_INCOMPLETE and error.retryable is False
     assert (error.usage.input_tokens, error.usage.output_tokens, error.usage.attempt_count) == (1200, 2000, 1)
     assert error.usage_complete is True and error.attempt_count == 1
     assert len(requests) == 1, 'a cut-off answer is not repaired'

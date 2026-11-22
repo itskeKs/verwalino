@@ -17,7 +17,7 @@ from app.evals import declaration_knowledge as harness
 from app.core import storage
 from app.evals.recorded_import import RecordedCaptureUnavailable, compare_recorded_reports, load_recorded_report, validate_recorded_report
 from app.models.declaration_candidate import DeclarationCandidate, DeclarationCandidateEvidence, DeclarationCandidateIssue
-from app.models.declaration_import import DeclarationExtractionRun, DeclarationImportPass
+from app.models.declaration_import import DeclarationExtractionRun, DeclarationImport, DeclarationImportPass
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = Path(__file__).parent / 'fixtures/declaration_eval_cases.json'
@@ -143,7 +143,7 @@ async def recorded_run(client_a_admin, configured_ai, seed_data, recorded_store,
         assert state.json()['error_code'] == 'PROVIDER_SCHEMA_FAILURE'
         assert len(requests) == 4  # the page reading, the inventory, the core pass that fails and its one schema repair
     elif getattr(request, 'param', None) == 'cut_off':
-        assert state.json()['status'] == 'RETRY_WAIT', state.text
+        assert state.json()['status'] == 'FAILED', state.text  # final: the same allowance would cut the identical requests again
         assert state.json()['error_code'] == 'PROVIDER_INCOMPLETE'
         assert len(requests) == 3  # the page reading, the inventory and the core pass that is cut off: no repair
     else:
@@ -363,8 +363,11 @@ async def test_sdk_schema_failure_preserves_stage_failure_and_unknown_usage(reco
 
 @pytest.mark.parametrize('recorded_run', ['cut_off'], indirect=True)
 async def test_sdk_cut_off_answer_is_booked_at_its_reported_usage_with_its_request_id(recorded_run, migrator_session):
-    run = await migrator_session.scalar(select(DeclarationExtractionRun).where(DeclarationExtractionRun.import_id == recorded_run))
+    runs = (await migrator_session.scalars(select(DeclarationExtractionRun).where(DeclarationExtractionRun.import_id == recorded_run))).all()
+    run, = runs  # one run: the import is not set to RETRY_WAIT and no later run repeats and pays the identical requests
     assert (run.status, run.error_code) == ('FAILED', 'PROVIDER_INCOMPLETE')
+    item = await migrator_session.scalar(select(DeclarationImport).where(DeclarationImport.id == recorded_run))
+    assert (item.status, item.next_attempt_at, item.output_tokens) == ('FAILED', None, 5 + 5 + 777)  # the usage is booked once
     # The page reading and the inventory report 5 output tokens each, the cut-off core pass 777: not the reservation of
     # the per-call allowance that a call without reported usage is booked at.
     assert run.output_tokens == 5 + 5 + 777

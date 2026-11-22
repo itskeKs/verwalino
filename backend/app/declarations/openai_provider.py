@@ -1546,6 +1546,12 @@ class OpenAiDeclarationProvider:
                 attempt_metadata=(metadata,),
             )
         if getattr(response, "status", "completed") != "completed":
+            # An answer the provider cut off at the output allowance is final: the identical request meets the same
+            # allowance again, so a repeat would only be paid again. Every other incomplete answer stays retryable.
+            # Decided by the structured reason of the native response, never by message text.
+            cut_at_output_limit = (
+                getattr(getattr(response, "incomplete_details", None), "reason", None) == "max_output_tokens"
+            )
             metadata = self._metadata(
                 pass_id=pass_id,
                 attempt_no=attempt_no,
@@ -1560,7 +1566,7 @@ class OpenAiDeclarationProvider:
             )
             raise ProviderFailure(
                 PROVIDER_INCOMPLETE,
-                True,
+                not cut_at_output_limit,
                 "The provider response was incomplete.",
                 usage=usage,
                 attempt_metadata=(metadata,),
