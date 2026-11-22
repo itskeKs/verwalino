@@ -181,16 +181,31 @@ class RecordingByteTokenEncoder:
         return list(value.encode("utf-8"))
 
 
-def _sdk_response(output: object, model: str) -> dict:
+def _sdk_response(output: object, model: str, *, output_tokens: int = 5) -> dict:
     return {
         "id": "resp_synthetic", "object": "response", "created_at": 0,
         "model": model, "status": "completed",
         "output": [{"id": "msg_synthetic", "type": "message", "role": "assistant", "status": "completed",
                     "content": [{"type": "output_text", "text": json.dumps(output), "annotations": []}]}],
-        "usage": {"input_tokens": 100, "output_tokens": 5, "total_tokens": 105,
+        "usage": {"input_tokens": 100, "output_tokens": output_tokens, "total_tokens": 100 + output_tokens,
                   "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
                   "output_tokens_details": {"reasoning_tokens": 0}},
     }
+
+
+def _cut_off(response: dict) -> dict:
+    """The answer the provider stopped at its output allowance: status incomplete, the JSON ends in the middle."""
+    response["status"] = "incomplete"
+    response["incomplete_details"] = {"reason": "max_output_tokens"}
+    response["output"][0]["status"] = "incomplete"
+    response["output"][0]["content"][0]["text"] = '{"rules":['
+    return response
+
+
+def _malformed(response: dict) -> dict:
+    """A completed answer whose text is not the schema's JSON."""
+    response["output"][0]["content"][0]["text"] = '{"rules":['
+    return response
 
 
 def _schema_nodes(value):
@@ -321,7 +336,9 @@ async def test_real_sdk_strict_validation_fails_closed_without_trustworthy_usage
 
     def respond(request):
         requests.append(json.loads(request.content))
-        return httpx2.Response(200, json=_sdk_response(core, requests[-1]['model']))
+        response = _sdk_response(core, requests[-1]['model'])
+        del response['usage']
+        return httpx2.Response(200, json=response)
 
     async with AsyncOpenAI(api_key='synthetic-sdk-key', base_url='https://api.openai.com/v1', max_retries=0,
                            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond))) as client:
@@ -392,6 +409,197 @@ async def test_real_sdk_refusal_keeps_usage_and_never_retries(text_document_inpu
     assert len(requests) == 1
 
 
+def _sdk_client(respond) -> AsyncOpenAI:
+    """The real SDK client over a stubbed transport: no network, no key."""
+    return AsyncOpenAI(api_key='synthetic-sdk-key', base_url='https://api.openai.com/v1', max_retries=0,
+                       http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond)))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('output_tokens', [10, 3], ids=['at-the-allowance', 'below-the-allowance'])
+async def test_real_sdk_cut_off_answer_keeps_its_usage_and_is_not_repaired(output_tokens, text_document_input):
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx2.Response(200, json=_cut_off(_sdk_response({}, requests[-1]['model'], output_tokens=output_tokens)),
+                               headers={'x-request-id': 'req_cut_off'})
+
+    async with _sdk_client(respond) as client:
+        provider = OpenAiDeclarationProvider(client=client, token_encoder=FixedTokenEncoder(10))
+        with pytest.raises(ProviderFailure) as raised:
+            await provider.extract_rules([text_document_input], max_output_tokens=10)
+
+    error = raised.value
+    assert error.code == 'PROVIDER_INCOMPLETE'
+    assert error.retryable is False, 'the same allowance cuts the identical request off again: the failure is final'
+    assert (error.usage.input_tokens, error.usage.output_tokens, error.usage.attempt_count) == (100, output_tokens, 1)
+    assert error.usage_complete is True and error.attempt_count == 1 and not error.not_sent
+    assert len(requests) == 1, 'a cut-off answer is not a schema failure and gets no repair request'
+    metadata = error.metadata.as_safe_dict()
+    assert (metadata['failure_class'], metadata['request_id'], metadata['stage'], metadata['attempt_no']) == (
+        'PROVIDER_INCOMPLETE', 'req_cut_off', 'provider', 1)
+    assert metadata['returned_model_id'] == requests[0]['model'] and metadata['output_tokens'] == output_tokens
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('details', [{'reason': 'content_filter'}, None], ids=['another-reason', 'no-details'])
+async def test_real_sdk_an_incomplete_answer_not_cut_at_the_output_limit_stays_retryable(details, text_document_input):
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        response = _cut_off(_sdk_response({}, requests[-1]['model'], output_tokens=3))
+        response['incomplete_details'] = details
+        return httpx2.Response(200, json=response, headers={'x-request-id': 'req_incomplete'})
+
+    async with _sdk_client(respond) as client:
+        provider = OpenAiDeclarationProvider(client=client, token_encoder=FixedTokenEncoder(10))
+        with pytest.raises(ProviderFailure) as raised:
+            await provider.extract_rules([text_document_input], max_output_tokens=10)
+
+    error = raised.value
+    assert error.code == 'PROVIDER_INCOMPLETE' and error.retryable is True
+    assert (error.usage.output_tokens, error.usage_complete, error.attempt_count) == (3, True, 1)
+    assert error.metadata.as_safe_dict()['request_id'] == 'req_incomplete'
+    assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_real_sdk_cut_off_answer_without_usage_stays_at_the_reservation(text_document_input):
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        response = _cut_off(_sdk_response({}, requests[-1]['model']))
+        del response['usage']
+        return httpx2.Response(200, json=response)
+
+    async with _sdk_client(respond) as client:
+        provider = OpenAiDeclarationProvider(client=client, token_encoder=FixedTokenEncoder(10))
+        with pytest.raises(ProviderFailure) as raised:
+            await provider.extract_rules([text_document_input], max_output_tokens=10)
+
+    assert raised.value.code == 'PROVIDER_INCOMPLETE' and raised.value.retryable is False
+    assert raised.value.usage is None and raised.value.usage_complete is False and raised.value.attempt_count == 1
+    assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_real_sdk_completed_malformed_answer_is_repaired_once_within_the_remaining_allowance(text_document_input):
+    output = RuleExtractionOutput(rules=[])
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        if len(requests) == 1:
+            return httpx2.Response(200, json=_malformed(_sdk_response({}, requests[-1]['model'], output_tokens=4)))
+        return httpx2.Response(200, json=_sdk_response(output.model_dump(mode='json'), requests[-1]['model']))
+
+    async with _sdk_client(respond) as client:
+        provider = OpenAiDeclarationProvider(client=client, token_encoder=FixedTokenEncoder(10))
+        result = await provider.extract_rules([text_document_input], max_output_tokens=10)
+
+    assert len(requests) == 2
+    assert (requests[0]['max_output_tokens'], requests[1]['max_output_tokens']) == (10, 6), 'the repair gets what the first leg left'
+    assert 'Schema-only repair' in requests[1]['input'][0]['content'][0]['text']
+    assert result.output.model_dump() == output.model_dump()
+    assert (result.usage.input_tokens, result.usage.output_tokens, result.usage.attempt_count) == (200, 9, 2)
+    assert result.usage_complete is True and len(result.attempt_metadata) == 2
+
+
+@pytest.mark.asyncio
+async def test_real_sdk_repair_that_is_malformed_again_ends_after_two_requests(text_document_input):
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx2.Response(200, json=_malformed(_sdk_response({}, requests[-1]['model'], output_tokens=4)))
+
+    async with _sdk_client(respond) as client:
+        provider = OpenAiDeclarationProvider(client=client, token_encoder=FixedTokenEncoder(10))
+        with pytest.raises(ProviderFailure) as raised:
+            await provider.extract_rules([text_document_input], max_output_tokens=10)
+
+    assert len(requests) == 2
+    assert raised.value.code == 'PROVIDER_SCHEMA_FAILURE'
+    assert (raised.value.usage.input_tokens, raised.value.usage.output_tokens, raised.value.attempt_count) == (200, 8, 2)
+    assert raised.value.usage_complete is True
+
+
+@pytest.mark.asyncio
+async def test_real_sdk_completed_malformed_answer_that_used_the_allowance_is_not_repaired(text_document_input):
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx2.Response(200, json=_malformed(_sdk_response({}, requests[-1]['model'], output_tokens=10)))
+
+    async with _sdk_client(respond) as client:
+        provider = OpenAiDeclarationProvider(client=client, token_encoder=FixedTokenEncoder(10))
+        with pytest.raises(ProviderFailure) as raised:
+            await provider.extract_rules([text_document_input], max_output_tokens=10)
+
+    assert raised.value.code == 'PROVIDER_SCHEMA_FAILURE'
+    assert (raised.value.usage.input_tokens, raised.value.usage.output_tokens) == (100, 10)
+    assert raised.value.usage_complete is True and raised.value.attempt_count == 1
+    assert len(requests) == 1, 'a repair would spend a second full output allowance'
+
+
+@pytest.mark.asyncio
+async def test_real_sdk_completed_malformed_answer_without_usage_is_not_repaired(text_document_input):
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        response = _malformed(_sdk_response({}, requests[-1]['model']))
+        del response['usage']
+        return httpx2.Response(200, json=response)
+
+    async with _sdk_client(respond) as client:
+        provider = OpenAiDeclarationProvider(client=client, token_encoder=FixedTokenEncoder(10))
+        with pytest.raises(ProviderFailure) as raised:
+            await provider.extract_rules([text_document_input], max_output_tokens=10)
+
+    assert raised.value.code == 'PROVIDER_SCHEMA_FAILURE'
+    assert raised.value.usage is None and raised.value.usage_complete is False and raised.value.attempt_count == 1
+    assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('model', ['gpt-5.6-luna', 'gpt-5.4-mini'])
+@pytest.mark.parametrize('method,output_type,output', [
+    ('inventory', DocumentInventoryOutput, DocumentInventoryOutput(documents=[
+        {'document_key': 'declaration-main', 'document_type': 'DECLARATION', 'title': 'Synthetic'}])),
+    ('extract_rules', RuleExtractionOutput, RuleExtractionOutput(rules=[])),
+], ids=['inventory', 'rules'])
+async def test_real_sdk_request_body_is_the_one_the_sdk_parse_method_sent(model, method, output_type, output, text_document_input):
+    bodies = []
+
+    def respond(request):
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(200, json=_sdk_response(output.model_dump(mode='json'), model))
+
+    async with _sdk_client(respond) as client:
+        provider = OpenAiDeclarationProvider(client=client, primary_model=model, escalation_model=model,
+                                             token_encoder=FixedTokenEncoder(10))
+        await getattr(provider, method)([text_document_input], max_output_tokens=10)
+        sent, = bodies
+        bodies.clear()
+        # What this provider sent before the change: the SDK's parse method with the same fields of the request.
+        await client.responses.parse(
+            model=sent['model'], input=sent['input'], text_format=openai_provider._sdk_output_type(output_type),
+            store=sent['store'], service_tier=sent['service_tier'], max_output_tokens=sent['max_output_tokens'], timeout=60,
+            **{key: sent[key] for key in ('prompt_cache_key', 'prompt_cache_options', 'reasoning') if key in sent},
+        )
+        parsed, = bodies
+
+    assert sent == parsed
+    assert sent['store'] is False and sent['service_tier'] == 'default' and sent['max_output_tokens'] == 10
+    assert sent['text']['format']['type'] == 'json_schema' and sent['text']['format']['strict'] is True
+    assert ('prompt_cache_key' in sent) is (model == 'gpt-5.6-luna')
+
+
 def test_wire_conversion_preserves_original_local_discriminators_and_defaults():
     original = CoreExtractionOutput.model_json_schema()
     OpenAiDeclarationProvider._sdk_text_format(CoreExtractionOutput)
@@ -410,7 +618,7 @@ async def test_real_sdk_parse_failure_logs_only_schema_defined_locations(fake_de
 
     def respond(request):
         calls.append(request)
-        return httpx2.Response(200, json=_sdk_response(core, 'gpt-5.6-luna'))
+        return httpx2.Response(200, json=_sdk_response(core, 'gpt-5.6-luna', output_tokens=10))
 
     with caplog.at_level(logging.WARNING, logger='app.declarations.observability'):
         async with AsyncOpenAI(api_key='synthetic-sdk-key', base_url='https://api.openai.com/v1', max_retries=0,
@@ -434,7 +642,7 @@ async def test_real_sdk_parse_failure_logs_only_schema_defined_locations(fake_de
     ]
     assert sorted(data['errors'], key=json.dumps) == sorted(expected, key=json.dumps)
     assert raised.value.code == 'PROVIDER_SCHEMA_FAILURE'
-    assert raised.value.usage is None and raised.value.usage_complete is False
+    assert raised.value.usage.output_tokens == 10 and raised.value.usage_complete is True
     assert len(calls) == 1
     assert len(raised.value.metadata.as_safe_dict()) == 23
     await _assert_metadata_persists(migrator_session, seed_data, raised.value.metadata)
@@ -448,7 +656,7 @@ async def test_real_sdk_fixed_core_guard_diagnostic_is_actionable(fake_declarati
 
     def respond(request):
         calls.append(request)
-        return httpx2.Response(200, json=_sdk_response(core, 'gpt-5.6-luna'))
+        return httpx2.Response(200, json=_sdk_response(core, 'gpt-5.6-luna', output_tokens=10))
 
     with caplog.at_level(logging.WARNING, logger='app.declarations.observability'):
         async with AsyncOpenAI(api_key='synthetic-sdk-key', base_url='https://api.openai.com/v1', max_retries=0,
@@ -473,7 +681,7 @@ async def test_real_sdk_rejects_unsupported_subject_field_pairs_unchanged(subjec
 
     def respond(request):
         calls.append(request)
-        return httpx2.Response(200, json=_sdk_response(core, 'gpt-5.6-luna'))
+        return httpx2.Response(200, json=_sdk_response(core, 'gpt-5.6-luna', output_tokens=10))
 
     with caplog.at_level(logging.WARNING, logger='app.declarations.observability'):
         async with AsyncOpenAI(api_key='synthetic-sdk-key', base_url='https://api.openai.com/v1', max_retries=0,
@@ -485,7 +693,7 @@ async def test_real_sdk_rejects_unsupported_subject_field_pairs_unchanged(subjec
     data = json.loads(record.getMessage().removeprefix('event=DECLARATION_SCHEMA_VALIDATION data='))
     assert data['errors'] == [{'code': 'fact_core_field_unsupported', 'location': ['facts', 0], 'location_truncated': False}]
     assert raised.value.code == 'PROVIDER_SCHEMA_FAILURE'
-    assert raised.value.usage is None and raised.value.usage_complete is False
+    assert raised.value.usage.output_tokens == 10 and raised.value.usage_complete is True
     assert len(calls) == raised.value.attempt_count == 1
     metadata = raised.value.metadata.as_safe_dict()
     assert len(metadata) == 23 and metadata['failure_class'] == 'PROVIDER_SCHEMA_FAILURE'
@@ -506,7 +714,7 @@ async def test_diagnostic_logging_failure_preserves_sdk_failure_and_usage_guard(
 
     def respond(request):
         requests.append(request)
-        return httpx2.Response(200, json=_sdk_response(core, 'gpt-5.6-luna'))
+        return httpx2.Response(200, json=_sdk_response(core, 'gpt-5.6-luna', output_tokens=10))
 
     async with AsyncOpenAI(api_key='synthetic-sdk-key', base_url='https://api.openai.com/v1', max_retries=0,
                            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond))) as client:
@@ -515,7 +723,7 @@ async def test_diagnostic_logging_failure_preserves_sdk_failure_and_usage_guard(
 
     assert diagnostic_calls == [True]
     assert raised.value.code == 'PROVIDER_SCHEMA_FAILURE'
-    assert raised.value.usage is None and raised.value.usage_complete is False
+    assert raised.value.usage.output_tokens == 10 and raised.value.usage_complete is True
     assert len(requests) == 1
     assert 'private-' not in str(raised.value)
 

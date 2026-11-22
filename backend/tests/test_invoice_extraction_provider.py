@@ -3,7 +3,9 @@ import json
 from decimal import Decimal
 
 import httpx
+import httpx2
 import pytest
+from openai import AsyncOpenAI
 from pydantic import SecretStr, ValidationError
 
 from app.declarations.fake_provider import FakeInvoiceExtractionProvider, synthetic_invoice_output
@@ -15,6 +17,7 @@ from app.declarations.provider import (
     InvoiceCategory,
     PageInput,
     ProviderFailure,
+    PROVIDER_INCOMPLETE,
     PROVIDER_SCHEMA_FAILURE,
 )
 from app.declarations.provider_runtime import ProviderClient, create_extraction_provider
@@ -284,6 +287,42 @@ async def test_a_malformed_answer_ends_in_a_typed_error_that_keeps_the_reported_
     assert transport.count() == 2, 'one bounded schema-only repair'
     assert (error.usage.input_tokens, error.usage.output_tokens, error.usage.attempt_count) == (2400, 180, 2)
     assert error.usage_complete is True
+
+
+@pytest.mark.asyncio
+async def test_an_answer_the_sdk_cut_off_keeps_its_usage_costs_no_repair_and_is_booked_as_reported():
+    """Through the real SDK client: the extraction model stopped at its output allowance in the middle of the JSON."""
+    from app.declarations.invoice_pipeline import _failed_amounts
+    from app.declarations.pipeline import _Reservation
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx2.Response(200, headers={'x-request-id': 'req_cut_off'}, json={
+            'id': 'resp_invoice', 'object': 'response', 'created_at': 0, 'model': EXTRACTION_MODEL, 'status': 'incomplete',
+            'incomplete_details': {'reason': 'max_output_tokens'},
+            'output': [{'id': 'msg_invoice', 'type': 'message', 'role': 'assistant', 'status': 'incomplete',
+                        'content': [{'type': 'output_text', 'text': '{"vendor_name":{"value":"Mustermann Vers', 'annotations': []}]}],
+            'usage': {'input_tokens': 1200, 'output_tokens': 2000, 'total_tokens': 3200,
+                      'input_tokens_details': {'cached_tokens': 0, 'cache_write_tokens': 0},
+                      'output_tokens_details': {'reasoning_tokens': 0}}})
+
+    async with AsyncOpenAI(api_key='synthetic-sdk-key', base_url='https://api.openai.com/v1', max_retries=0,
+                           http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond))) as client:
+        provider = OpenAiDeclarationProvider(client=client, primary_model=EXTRACTION_MODEL, escalation_model=EXTRACTION_MODEL,
+                                             token_encoder=_Encoder())
+        with pytest.raises(ProviderFailure) as failure:
+            await provider.extract_invoice([DOCUMENT], categories=CATEGORIES, model=EXTRACTION_MODEL, max_output_tokens=2000)
+
+    error = failure.value
+    assert error.code == PROVIDER_INCOMPLETE and error.retryable is False
+    assert (error.usage.input_tokens, error.usage.output_tokens, error.usage.attempt_count) == (1200, 2000, 1)
+    assert error.usage_complete is True and error.attempt_count == 1
+    assert len(requests) == 1, 'a cut-off answer is not repaired'
+    assert (error.metadata.pass_id, error.metadata.request_id, error.metadata.failure_class) == (INVOICE_PASS_ID, 'req_cut_off', PROVIDER_INCOMPLETE)
+    # The ledger of the invoice and inbox stages books the reported usage of the failed request, not its reservation.
+    booked = _failed_amounts(error, _Reservation(input_tokens=9000, output_tokens=2000, cost_usd=Decimal('0.5')))
+    assert booked == (1200, 2000, error.usage.cost_usd, True)
 
 
 @pytest.mark.asyncio
