@@ -1019,7 +1019,8 @@ The source receives the released migrations and synthetic records; both owned
 databases are dropped on exit. The shared database is neither reset nor seeded.
 Ordinary test runs skip it with a reason; it also skips when Docker is missing.
 
-The portable stack starts the declaration worker with no configured AI credentials. Administrators enable declaration import and Q&A per organization in Einstellungen. SMTP and the ordinary invoice worker remain disabled by default. The optional [inbox worker](#inbox-worker) processes
+The portable stack starts the declaration worker with no configured AI credentials. Administrators enable declaration import and Q&A per organization in Einstellungen. SMTP stays disabled by default. The declaration worker also processes invoices, after the organization's own opt-in
+([invoice processing in the portable stack](#invoice-processing-in-the-portable-stack)). The optional [inbox worker](#inbox-worker) processes
 intake documents locally; it requires scanner signatures and, for scans, German
 OCR. The T10 worker is configured in the local production Compose file. The
 first tag publication and native arm64 image installation,
@@ -1614,8 +1615,9 @@ and volumes `pgdata_staging`/`documents_staging`. Its app and hosted Caddy share
 The declaration worker uses the staging worker database credentials and shares
 the app's image digest, session secret and documents volume. It joins the private backend and its own
 project-scoped `egress` network for provider access, never the proxy network, and
-publishes no ports. Invoice extraction remains disabled
-(`HV_INVOICE_EXTRACTION_ENABLED: "false"`).
+publishes no ports. The declaration worker also processes invoices, under the same
+`HV_INVOICE_EXTRACTION_ENABLED` switch as `staging-app` (default on), so staging processes invoices after its next deploy
+([invoice processing in the portable stack](#invoice-processing-in-the-portable-stack)).
 Staging runs hosted mode and restricts every SMTP submission (including document mail and signup confirmations)
 to the single required `CANARY_EMAIL` via `HV_MAIL_ALLOWLIST`, checked at the shared submission boundary
 before any SMTP connection. Empty/malformed allow-lists block all submissions; refusals log no address.
@@ -2164,10 +2166,9 @@ The `invoice-worker` service in `docker-compose.prod.yml` belongs to the owner's
 local production configuration and is covered by
 `tests/test_invoice_extraction_worker.py`. It adds no migration of its own (the ledger of its model
 requests is revision 0197).
-**The portable stack, including the hosted server, does not start this worker; automatic invoice
-extraction is disabled there** (`HV_INVOICE_EXTRACTION_ENABLED: "false"`), so an invoice uploaded to a
-portable installation is saved and waits for manual entry. Structured invoices and the models are therefore
-processed only where this service runs.
+**The portable stack, including the hosted server, and staging do not start this worker: there the declaration worker
+processes invoices** ([below](#invoice-processing-in-the-portable-stack)). In this file the declaration worker `worker`
+has `HV_INVOICE_EXTRACTION_ENABLED` fixed to `false`, so this service is the only process that claims invoices here.
 
 The service uses the same immutable app image and existing `documents` volume,
 mounted **read-only**. It receives `HV_DATABASE_URL_WORKER` (`app_worker`),
@@ -2220,6 +2221,38 @@ model; reading an unstructured PDF does and is covered by the offline-provider t
 ([invoice_model_processing.feature](features/journeys/invoice_model_processing.feature)). The script blocks
 external requests and non-login/upload writes. No
 extraction override, API/SQL fixture write or saved report is used by the check.
+
+## Invoice processing in the portable stack
+
+The portable stack (`infra/docker-compose.yml`: self-hosted installations and the hosted server) and staging
+(`infra/docker-compose.staging.yml`) start no invoice worker. Their `declaration-worker` also processes invoices: after
+each step of the declaration import it claims and processes at most one waiting invoice, with the code, leases, bounds
+and metering of the [invoice worker](#invoice-worker-t10). No new service, network or key: the worker already had the
+worker database role, the documents volume, the session secret, the PDF renderer and the provider route, and keeps its
+limits (768 MiB, one CPU). Which process processes invoices is decided once, in `core/invoice_claimant.py`
+([invoice extraction](docs/operations/invoice-extraction.md#worker-and-deployment)).
+
+The one switch is `HV_INVOICE_EXTRACTION_ENABLED`, **on** by default; the app and the declaration worker read the same
+value. To switch invoice processing off, export `HV_INVOICE_EXTRACTION_ENABLED=false` in the shell that runs
+`scripts/self-host.sh` (it is not a `.env.selfhost` key, like `HV_RELEASE_ID`; export it on every run that recreates the
+services, `start` and `update`; the staging Compose file reads the same variable from the environment it is run with). Then nothing is claimed, an uploaded invoice
+says the automatic processing is switched off, and the settings card names no invoices.
+
+What an operator who upgrades needs to know:
+
+- Nothing is sent because of the upgrade. An unstructured PDF reaches an organization's provider only after that
+  organization's own opt-in: its AI import switch („Teilungserklärungen importieren und Rechnungen auswerten“), key,
+  models and the provider confirmation with the text that names invoices (text version 2).
+- An organization that confirmed the earlier text (version 1, declarations only) keeps its declaration import; its
+  invoices stay on the host (`ai_invoice_confirmation_missing`) until an administrator confirms once more in
+  Einstellungen. Structured invoices (XRechnung, ZUGFeRD) are read locally and never sent, and now also get a proposal
+  here.
+- Invoices uploaded before the upgrade keep the status they have (processing switched off); they are not queued
+  retroactively. **Verarbeitung erneut starten** on the invoice page queues one.
+- Without the opt-in a PDF with a text layer ends without a proposal (`ai_import_disabled`) and the amounts are entered
+  by hand; nothing is read by a local pattern matcher any more.
+- An invoice and a declaration import never run at the same time in one worker; each delays the other by at most its own
+  duration (an invoice is bounded to 10 pages and 120 seconds of local work).
 
 ## Optional document SMTP (T47; no deployment authorization)
 

@@ -192,7 +192,7 @@ it("asks again for invoices when the stored confirmation predates them, and leav
   expect(screen.queryByText(/galt, bevor Rechnungen ausgewertet wurden/)).not.toBeInTheDocument();
 });
 
-// Where this installation does not process invoices (HV_INVOICE_EXTRACTION_ENABLED=false, the portable stack) the card
+// Where this installation does not process invoices (the operator's HV_INVOICE_EXTRACTION_ENABLED=false) the card
 // is about the declaration import alone: it says nothing about invoices being evaluated or sent.
 const withoutInvoices = { ...settings, invoice_processing_enabled: false };
 

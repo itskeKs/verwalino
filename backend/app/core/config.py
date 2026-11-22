@@ -88,6 +88,8 @@ class Settings(BaseSettings):
     document_storage_root: str = "/tmp/hv-documents"
 
     # --- Ordinary invoice worker (independent of declaration providers) ---
+    # Per process: the API reads it as "this installation processes invoices", a worker as "this process claims them";
+    # which worker does is decided once, in core/invoice_claimant.py, and stated per service in the Compose files.
     financial_computation_enabled: bool = True
     invoice_extraction_enabled: bool = True
     invoice_queue_limit: int = Field(100, ge=1, le=1000)

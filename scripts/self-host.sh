@@ -113,6 +113,8 @@ HV_SUPPORT_URL selects the manual report link (export it; not a private config k
 HV_DIAGNOSTICS_DIR is an API process setting for the per-host error buffer; see DEPLOY.md.
 HV_ERROR_TRACKING_DSN and HV_ERROR_TRACKING_ENVIRONMENT opt in the app and the workers (export them; not private config keys); see DEPLOY.md.
 Export HV_RELEASE_ID to label tracker releases (otherwise app version 0.1.0).
+The declaration-worker also processes invoices, with the organization's own models and only after its opt-in;
+export HV_INVOICE_EXTRACTION_ENABLED=false to switch that off for the app and the worker (not a private config key); see DEPLOY.md.
 Optional inbox-worker (profile inbox, ClamAV signatures): see DEPLOY.md.
 Start, stop and update also stop an existing inbox-worker; restart it after app readiness.
 VERWALINO_CONFIG selects the private config file (default: .env.selfhost).

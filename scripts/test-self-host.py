@@ -2576,6 +2576,12 @@ class StackContractTests(unittest.TestCase):
         self.assertEqual(worker['environment']['HV_SESSION_SECRET'], self.stack['services']['app']['environment']['HV_SESSION_SECRET'])
         self.assertEqual(worker['networks'], {'backend':{'gw_priority':0}, 'egress':{'gw_priority':1}})
         self.assertFalse(self.stack['networks']['egress']['internal'])
+        # The declaration worker also processes invoices (issue #814): one operator switch for it and the app, and no
+        # further service for it, so the worker keeps its limits.
+        self.assertEqual(worker['environment']['HV_INVOICE_EXTRACTION_ENABLED'],
+                         self.stack['services']['app']['environment']['HV_INVOICE_EXTRACTION_ENABLED'])
+        self.assertEqual(worker['mem_limit'], '768m')
+        self.assertNotIn('invoice-worker', self.stack['services'])
         self.assertNotIn('HV_OPENAI_API_KEY', worker['environment'])
         self.assertEqual(worker['cap_drop'], ['ALL'])
 
@@ -2585,6 +2591,7 @@ class StackContractTests(unittest.TestCase):
         self.assertEqual(worker["image"], self.stack["services"]["app"]["image"])
         self.assertEqual(worker["restart"], "unless-stopped")
         self.assertEqual(worker["environment"]["HV_WORKER_KIND"], "workflow_runner")
+        self.assertEqual(worker["environment"]["HV_INVOICE_EXTRACTION_ENABLED"], "false")
         self.assertIn("app_worker:", worker["environment"]["HV_DATABASE_URL_WORKER"])
         self.assertNotIn("HV_DATABASE_URL", worker["environment"])
         self.assertNotIn("HV_DATABASE_URL_REVIEW", worker["environment"])
@@ -2616,7 +2623,7 @@ class StackContractTests(unittest.TestCase):
         self.assertNotIn("HV_OPENAI_API_KEY", env)
         self.assertEqual({key: value for key, value in env.items() if key.startswith("HV_SMTP_")},
                          {key: "${" + key + ":-" + value + "}" for key, value in SMTP_DEFAULTS.items()})
-        self.assertEqual(env['HV_INVOICE_EXTRACTION_ENABLED'], 'false')
+        self.assertEqual(env['HV_INVOICE_EXTRACTION_ENABLED'], '${HV_INVOICE_EXTRACTION_ENABLED:-true}')
         for key in ('HV_DECLARATION_IMPORT_ENABLED', 'HV_DECLARATION_QA_ENABLED'):
             self.assertNotIn(key, env)
         self.assertEqual(env["FORWARDED_ALLOW_IPS"], "${VERWALINO_PROXY_SUBNET:?use self-host.sh}")

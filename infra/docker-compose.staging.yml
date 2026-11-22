@@ -80,7 +80,7 @@ services:
       HV_MAIL_ALLOWLIST: ${CANARY_EMAIL:?set the only permitted staging recipient}
       HV_DOCUMENT_STORAGE_ROOT: /data/documents
       HV_ENABLE_API_DOCS: "false"
-      HV_INVOICE_EXTRACTION_ENABLED: "false"
+      HV_INVOICE_EXTRACTION_ENABLED: ${HV_INVOICE_EXTRACTION_ENABLED:-true}
       WEB_CONCURRENCY: "2"
       FORWARDED_ALLOW_IPS: ${VERWALINO_PROXY_SUBNET:?use the dedicated staging proxy subnet}
     volumes:
@@ -120,6 +120,8 @@ services:
       HV_DATABASE_URL_WORKER: postgresql+asyncpg://app_worker:${APP_WORKER_PASSWORD:?missing staging secret}@db:5432/hausverwaltung
       HV_SESSION_SECRET: ${SESSION_SECRET:?missing staging secret}
       HV_DOCUMENT_STORAGE_ROOT: /data/documents
+      # No invoice worker here: the declaration worker also claims and processes the invoices (issue #814).
+      HV_INVOICE_EXTRACTION_ENABLED: ${HV_INVOICE_EXTRACTION_ENABLED:-true}
     volumes: [documents_staging:/data/documents]
     entrypoint: ["/usr/local/bin/worker-entrypoint.sh"]
     command: []

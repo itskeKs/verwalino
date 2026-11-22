@@ -27,7 +27,7 @@ imports run in the declaration worker, using
 the same image digest, staging documents and independent worker database credentials
 and session secret. The worker joins the private backend and its own project-scoped
 `egress` network for provider access, never the proxy network; it publishes no ports.
-Invoice extraction remains disabled (`HV_INVOICE_EXTRACTION_ENABLED: "false"`).
+The declaration worker also processes invoices, under the same `HV_INVOICE_EXTRACTION_ENABLED` switch as the app (default on).
 Both databases are named `hausverwaltung` **inside separate
 containers**; this is not the legacy Compose project of that name.
 

@@ -2310,7 +2310,7 @@ key field states that the organization chose and contracted the provider itself
 of this installation to transmit documents and extracted text to that provider; the
 wording is provisional until the reviewed AV-Vertrag of #26 and names „Dokumente (Teilungserklärungen und Rechnungen)“
 since text version 2 (#500) where the installation processes invoices (`invoice_processing_enabled`); where it does not
-(`HV_INVOICE_EXTRACTION_ENABLED=false`, the portable stack) it names only „Dokumente“, the refusal message likewise, and
+(the operator's `HV_INVOICE_EXTRACTION_ENABLED=false`) it names only „Dokumente“, the refusal message likewise, and
 the confirmation is recorded as text version 1, so it does not cover invoices if processing is switched on later. Saving without the tick
 is refused with a German message at the field (structured code
 `ORGANIZATION_AI_CONFIRMATION_REQUIRED`) and no key is stored. A key stored before
@@ -2402,7 +2402,7 @@ run with `VERWALINO_CAPTURE_STATE=before` against the previous frontend the "bef
 | Card „Extrahierte Felder“ of the scan with the row „IBAN des Rechnungsstellers“ (no such row before; the card itself is not captured before) | none | none | [view](docs/assets/design/invoice-processing/invoice-fields-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-fields-after-360.png) |
 | Card „Verbrauch der KI-Verarbeitung“ (no such card before) | none | none | [view](docs/assets/design/invoice-processing/invoice-usage-after-1280.png) | [view](docs/assets/design/invoice-processing/invoice-usage-after-360.png) |
 | AI settings card of an installation that processes invoices: one switch for declarations and invoices, invoice paragraph | [view](docs/assets/design/invoice-processing/settings-card-before-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-before-360.png) | [view](docs/assets/design/invoice-processing/settings-card-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-after-360.png) |
-| AI settings card of an installation that processes no invoices (the local stack, as the portable one): declarations only; the before files are the card above, which named invoices there | [view](docs/assets/design/invoice-processing/settings-card-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-after-360.png) | [view](docs/assets/design/invoice-processing/settings-card-no-invoices-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-no-invoices-after-360.png) |
+| AI settings card of an installation that processes no invoices (the local stack, as an installation whose operator switched invoice processing off): declarations only; the before files are the card above, which named invoices there | [view](docs/assets/design/invoice-processing/settings-card-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-after-360.png) | [view](docs/assets/design/invoice-processing/settings-card-no-invoices-after-1280.png) | [view](docs/assets/design/invoice-processing/settings-card-no-invoices-after-360.png) |
 
 ### Declaration import: consumption per stage and failure explanations
 
