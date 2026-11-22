@@ -262,10 +262,19 @@ stable key contains only model, pass, and prompt, schema and
 harness version/hash. Mini receives **no** explicit caching. Its cache-write multiplier is the documented `1.25` constant in `core/ai_models.py`, not an environment setting.
 
 Costs are calculated conservatively from ordinary input, cached input,
-cache write and output tokens. Invalid partitions, negative
-counters or unsupported cache writes for Mini fail closed to
-`PROVIDER_USAGE_INVALID`; a cheaper estimate does not justify a loss of
-quality.
+cache write and output tokens. Invalid partitions (cached plus cache-write
+tokens above the input tokens) and negative or non-integer counters fail
+closed to `OPENAI_USAGE_INVALID`, for a priced and an unpriced model alike.
+A priced model without a documented cache-write rate (Mini) that reports cache
+writes fails closed to `OPENAI_CACHE_WRITE_UNSUPPORTED`, because its writes
+would count at zero. A model without a price (no entry in `core/ai_models.py`;
+the settings card says „kein Preis bekannt“) is metered with zero rates, so its
+cost stays unknown and there is no estimate that cache writes could
+under-state: a response of such a model that reports cache writes is accepted
+and no cost is booked, as for every other call of an unpriced model. The pass
+ledger stores its input, cached, cache-write and output tokens as reported; the
+invoice and inbox ledger (`invoice_model_call`) stores its input and output
+tokens. A cheaper estimate does not justify a loss of quality.
 
 An organization administrator enters the OpenAI key in **Einstellungen**. The key
 is encrypted at rest using the deployment session secret, never returned by the
