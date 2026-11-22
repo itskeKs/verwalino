@@ -33,6 +33,14 @@ Feature: Organization export import
     And the archive is imported into an empty organization
     Then the imported task list shows both tasks with their titles, due dates and status and the first one linked to the imported property
 
+  Scenario: A rent payment a clerk booked on a scope-classified bank account is restored with the clerk as its reviewer
+    Given a separate organization has a rent payment that a clerk booked on a scope-classified bank account for export
+    When its administrator downloads the organization archive
+    And the archive is imported into an empty organization after its source organization was deleted
+    Then the imported organization has equal entity counts and normalized content
+    And the imported payments list shows the clerk's payment of 700.00 on 15.03.2026 and the tenant account shows the archived totals
+    And the restored binding of that payment names the clerk's account, which cannot sign in, as its reviewer
+
   Scenario: An organization whose owner contact has a data domain is restored with its label
     Given a separate organization has an owner contact with a data domain for export
     When its administrator downloads the organization archive

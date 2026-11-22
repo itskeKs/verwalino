@@ -263,24 +263,28 @@ carries a generated column, whatever its value, imports the same way.
 **Importing accounting scopes and attachments: when it works and when it is refused.**
 Scopes, scope bindings, scope grants and attachments keep the archived account
 as creator, reviewer, grantor or uploader. The import runs as the importing
-administrator and the database accepts these rows only when that archived
-account is the importing administrator's own account (insert policies
-`scope_insert` and `attachment_insert` bind the actor column to the session
-user). This is the same limit as on earlier releases. In practice:
+administrator and the database accepts the rows of scopes, scope grants and
+attachments only when that archived account is the importing administrator's
+own account (insert policies `scope_insert` and `attachment_insert` bind the
+actor column to the session user). This is the same limit as on earlier
+releases. A scope binding is the exception: its reviewer may be another
+archived account (see "Who is the reviewer of a restored scope binding"
+below). In practice:
 
 - It works when the source organization is gone (deleted, or the archive is
   restored on another installation), the importing administrator signs in with
   the address of the archived administrator, and that administrator is the only
   account that created the scopes, reviewed the bindings, gave the grants and
-  uploaded the attachments. Deleting an
+  uploaded the attachments (a binding another account reviewed does not
+  matter, see below). Deleting an
   organization rewrites all its account addresses to `<id>@deleted.invalid`,
   which frees that address, and the address match above maps the archived
   administrator to the importing administrator. Evidence keeps its original
   actors; the importing administrator receives no extra grant.
 - It is refused when any of these rows names another archived account, even
-  after the source organization is gone: a scope grant given, a binding
-  reviewed or an attachment uploaded by a second administrator or a clerk, or
-  by an administrator whose address the importing administrator does not carry.
+  after the source organization is gone: a scope created, a scope grant given
+  or an attachment uploaded by a second administrator or a clerk, or by an
+  administrator whose address the importing administrator does not carry.
   Such an account is an inactive placeholder after the import, so its first row
   cannot be inserted.
 - It is refused while the source organization still holds the archived
@@ -296,6 +300,28 @@ organization stay as they were. To restore an archive whose scopes were created
 by the archived administrator, delete the source organization first and import
 as the administrator who carries the archived address. Cloning an organization with its scopes beside
 the living original is not supported (owner decision on issue #134).
+
+**Who is the reviewer of a restored scope binding.** The archived reviewer stays
+the reviewer. `accounting_scope_binding.reviewed_by` is the account the import
+maps the archived reviewer to: the importing administrator's own account when the
+archived reviewer carried that sign-in address, otherwise the inactive placeholder
+account of the clerk or second administrator who reviewed it (it keeps the archived
+name, has no credentials and cannot sign in). This covers a payment that a clerk
+booked on a classified bank account (the database records the clerk as reviewer of
+the payment's binding) and an account that a second administrator classified. The
+importing administrator is never recorded as the reviewer of a classification they
+did not review, and no new column records the original reviewer. Normally the insert
+policy `scope_insert` binds the reviewer of a new binding to the signed-in user. For
+the one row an import is restoring it accepts another reviewer: the import names
+that binding and its archived reviewer in the transaction-local setting
+`app.organization_import_scope_binding` around that one insert, and the policy
+accepts it only for an inactive account of the same organization whose password is
+the unusable `!` the import writes for an archived user (a colleague deactivated in
+the user list keeps their password and is no placeholder), and only while the signed-in
+user is an active administrator of the organization. The organization, the importing
+administrator's live `prepare` grant on the scope (restored from the archive before the
+binding) and the origin `REVIEWED` are still required, and a binding stays immutable
+([ADR 0016](../adr/0016-import-names-the-restored-dunning-context-for-its-preparer.md)).
 
 **Contact data domains.** A contact's data domain (`person_data_domain`) is
 evidence of an administrator's act and has the same limit. The trigger
