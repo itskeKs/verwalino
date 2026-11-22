@@ -139,7 +139,11 @@ class Settings(BaseSettings):
     #   25 MiB per PDF bounds a large scan before the page limit: 200 pages in high resolution can exceed it.
     declaration_max_input_tokens: int = 2_500_000
     declaration_max_output_tokens: int = 500_000
-    declaration_provider_max_output_tokens_per_call: int = 12_000
+    # Output tokens one request may use (reading, the extraction passes, reconciliation, recheck); what the import has
+    # left of its output limit bounds the last one. At about 90 output tokens per second (measured on staging) an answer
+    # of 24,000 tokens takes about 270 seconds, longer than the default request timeout of 60 seconds: see
+    # docs/operations/declaration-imports.md.
+    declaration_provider_max_output_tokens_per_call: int = 24_000
     declaration_max_candidates: int = 5_000
     # --- Declaration import / background worker ---
     declaration_worker_id: str = "declaration-worker"

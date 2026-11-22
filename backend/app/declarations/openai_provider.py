@@ -545,8 +545,8 @@ class OpenAiDeclarationProvider:
     ) -> ProviderCallResult[PageTranscript]:
         """Reading stage: one rendered page per request, copied into a typed transcript.
 
-        One page, because the per-call output ceiling (``declaration_provider_max_output_tokens_per_call``) is
-        far below what a stack of dense pages transcribes to, a malformed page costs one page and not a
+        One page, because a stack of dense pages can transcribe to more than the per-call output ceiling
+        (``declaration_provider_max_output_tokens_per_call``), a malformed page costs one page and not a
         batch, and a failed page can be read again alone. The page identity comes from the caller, never from
         the model. ``model`` must be the model this provider is configured for: no other model is asked.
         """

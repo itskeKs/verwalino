@@ -2023,6 +2023,21 @@ async def test_nonpositive_output_cap_fails_before_sdk_call(
 
 
 @pytest.mark.asyncio
+async def test_metered_answer_above_twelve_thousand_tokens_is_accepted_within_the_default_allowance(
+    text_document_input: DocumentInput,
+) -> None:
+    default = Settings.model_fields["declaration_provider_max_output_tokens_per_call"].default
+    client = MockClient([MockResponse(RuleExtractionOutput(rules=[]), _usage(output_tokens=12_001))])
+    provider = _provider(client, configured_settings=Settings(declaration_provider_max_output_tokens_per_call=default))
+
+    result = await provider.extract_rules([text_document_input], max_output_tokens=24_000)
+
+    assert client.responses.calls[0]["max_output_tokens"] == 24_000
+    assert result.usage.output_tokens == 12_001
+    assert result.usage_complete is True
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "kwargs, output_tokens, code",
     [
