@@ -52,7 +52,8 @@ decide them.
   importer did not perform (a reviewer, a preparer: #716, #694) would state something untrue
   about that act; whether the importer may stand there, or another way is needed, is that
   issue's decision. [ADR 0016](0016-import-names-the-restored-dunning-context-for-its-preparer.md)
-  decides it for the preparer of a dunning context (#694): the archived preparer stays.
+  decides it for the preparer of a dunning context (#694) and the reviewer of a scope binding
+  (#716): the archived preparer or reviewer stays.
 - One acting user must satisfy every rule on the row and on its chain. A rule that needs two
   different users (for example a preparer and a separate approver) cannot be met by writing
   the importer into both columns.
