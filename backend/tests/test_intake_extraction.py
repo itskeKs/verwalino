@@ -13,6 +13,7 @@ from app.core.intake_extraction import (
     MODEL_VERSION,
     UNSTRUCTURED,
     extract_logical,
+    model_evidence,
     outcome,
     run_isolated_extraction,
     unlocated_evidence,
@@ -243,7 +244,6 @@ def test_a_model_result_is_valid_with_its_own_pages_and_only_unlocated_evidence(
 
 @pytest.mark.parametrize('mutation',[
     lambda r:r['evidence']['gross_amount'].update(page_number=2),
-    lambda r:r['evidence']['gross_amount'].update(locator_status='page_quote',page_number=1,quotation='Seite 1 of a synthetic voucher',method='reading_model'),
     lambda r:r['evidence']['gross_amount'].update(xml_path='./ID'),
     lambda r:r.update(content_sha256='0'*64),
     lambda r:r.update(processor_version='intake-model-v2'),
@@ -292,3 +292,89 @@ def test_a_handover_of_an_image_carries_no_text_and_xml_has_none():
     assert not valid_inspection(result,data,'image/png',1,1,1)
     from tests.test_m5_einvoice import UBL
     assert not valid_inspection({**result,'pages':[]},UBL,'application/xml',None,None,None)
+
+
+# ---- where a model says it found a value (issue #501) ---------------------------------------------------------
+
+PAGES=[{'number':3,'text':'Mustermann Versicherungen AG\nRechnungsnummer   RE-2026-0042','method':'text_layer'},
+       {'number':4,'text':'Gebaeudeversicherung 2026,\nGesamtbetrag 312,00 EUR\n','method':'reading_model'}]
+PAYLOAD={'vendor_name':'Mustermann Versicherungen AG','document_number':'RE-2026-0042','gross_amount':'312.00','invoice_date':None,
+         'vat_amount':None,'vat_rate':None,'service_period_from':None,'service_period_to':None,'suggested_category_code':None}
+
+
+def evidence_of(**sources):
+    return model_evidence(PAYLOAD,sources,PAGES)
+
+
+def test_a_source_that_stands_on_the_named_page_is_located_with_that_pages_own_method():
+    evidence=evidence_of(vendor_name=(3,'Mustermann Versicherungen AG'),gross_amount=(4,'Gesamtbetrag 312,00 EUR'))
+    assert evidence['vendor_name']=={'locator_status':'page_quote','page_number':3,'quotation':'Mustermann Versicherungen AG','xml_path':None,'method':'text_layer'}
+    assert evidence['gross_amount']['method']=='reading_model' and evidence['gross_amount']['page_number']==4
+    assert set(evidence)=={'vendor_name','document_number','gross_amount'}, 'a field that is not stated has no evidence'
+
+
+def test_whitespace_is_compared_the_same_way_on_both_sides_and_the_passage_is_recorded_as_the_page_has_it():
+    evidence=evidence_of(document_number=(3,'Rechnungsnummer RE-2026-0042'),gross_amount=(4,'  Gebaeudeversicherung   2026, Gesamtbetrag\n312,00 EUR  '))
+    assert evidence['document_number']['quotation']=='Rechnungsnummer   RE-2026-0042', 'the page\'s own spacing, so that it stands in its text'
+    assert evidence['gross_amount']['quotation']=='Gebaeudeversicherung 2026,\nGesamtbetrag 312,00 EUR'
+    for locator in (evidence['document_number'],evidence['gross_amount']):
+        assert locator['quotation'] in next(page['text'] for page in PAGES if page['number']==locator['page_number'])
+
+
+@pytest.mark.parametrize('source',[
+    (None,'Mustermann Versicherungen AG'),(3,None),(3,''),(3,'   '),(None,None),
+    (1,'Mustermann Versicherungen AG'),(2,'Mustermann Versicherungen AG'),(5,'Mustermann Versicherungen AG'),(0,'Mustermann Versicherungen AG'),
+    (4,'Mustermann Versicherungen AG'),
+    (3,'mustermann versicherungen ag'),(3,'Mustermann Versicherungen AG GmbH'),(3,'Gesamtbetrag 312,00 EUR'),
+    (True,'Mustermann Versicherungen AG'),('3','Mustermann Versicherungen AG'),(3.0,'Mustermann Versicherungen AG'),(3,7),
+],ids=lambda source:repr(source))
+def test_a_source_that_does_not_verify_is_unlocated_and_never_guessed(source):
+    locator=evidence_of(vendor_name=source)['vendor_name']
+    assert locator=={'locator_status':'unlocated','page_number':None,'quotation':None,'xml_path':None,'method':'unlocated'}
+
+
+def test_a_passage_that_is_longer_than_the_database_allows_is_unlocated():
+    pages=[{'number':1,'text':'start'+' '*5000+'end','method':'text_layer'}]
+    assert model_evidence({**PAYLOAD,'vendor_name':'x'},{'vendor_name':(1,'start end')},pages)['vendor_name']['locator_status']=='unlocated'
+
+
+def located_model_result(data,**locator):
+    result=copy.deepcopy(model_result(data))
+    result['evidence']['gross_amount'].update(locator_status='page_quote',page_number=1,quotation='Seite 1 of a synthetic voucher',method='reading_model',**locator)
+    return result
+
+
+def test_a_model_result_may_carry_located_evidence_that_stands_in_its_own_pages():
+    data=document(LINES)
+    result=located_model_result(data)
+    assert valid_result(result,data,'application/pdf',1,1,1)
+    result['evidence']['gross_amount'].update(quotation='of a synthetic')
+    assert valid_result(result,data,'application/pdf',1,1,1), 'any passage of the page text'
+
+
+@pytest.mark.parametrize('mutation',[
+    lambda r:r['evidence']['gross_amount'].update(page_number=2),
+    lambda r:r['evidence']['gross_amount'].update(page_number=True),
+    lambda r:r['evidence']['gross_amount'].update(page_number=None),
+    lambda r:r['evidence']['gross_amount'].update(method='text_layer'),
+    lambda r:r['evidence']['gross_amount'].update(method='ocr'),
+    lambda r:r['evidence']['gross_amount'].update(quotation='Seite 2 of a synthetic voucher'),
+    lambda r:r['evidence']['gross_amount'].update(quotation=''),
+    lambda r:r['evidence']['gross_amount'].update(quotation=None),
+    lambda r:r['evidence']['gross_amount'].update(quotation='Seite 1 of a  synthetic voucher'),
+    lambda r:r['evidence']['gross_amount'].update(xml_path='./ID'),
+    lambda r:r['evidence']['gross_amount'].pop('method'),
+    lambda r:r.update(processor_version='intake-local-v1'),
+],ids=['other-page','bool-page','no-page','other-method','ocr-method','not-in-the-page','empty','none','respaced','xml-path','missing-key','local-version'])
+def test_a_located_locator_that_does_not_verify_against_the_result_is_rejected(mutation):
+    data=document(LINES)
+    result=located_model_result(data)
+    mutation(result)
+    assert not valid_result(result,data,'application/pdf',1,1,1)
+
+
+def test_xml_and_a_structured_pdf_never_carry_a_located_locator():
+    from tests.test_m5_einvoice import UBL
+    parsed=extract_logical(UBL,'application/xml',None,None,None)
+    parsed['evidence']['gross_amount'].update(locator_status='page_quote',page_number=1,quotation='1',method='text_layer')
+    assert not valid_result(parsed,UBL,'application/xml',None,None,None)

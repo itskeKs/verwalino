@@ -297,16 +297,27 @@ def transcript_text(blocks: "Sequence[ReadingBlock]") -> str:
 
 # ---- invoice extraction stage (issue #500, ADR 0017) -------------------------------------------
 
-INVOICE_SCHEMA_VERSION = "invoice-1"
+INVOICE_SCHEMA_VERSION = "invoice-2"
 # The value formats the review boundary of an invoice proposal accepts (``core/extraction_evidence.py``): a decimal
 # number with a dot and at most 16 integer and 6 fractional digits, and an ISO date.
 _INVOICE_AMOUNT = r"^-?(0|[1-9][0-9]{0,15})(\.[0-9]{1,6})?$"
 _INVOICE_DATE = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
 
 
+# Where the model found a stated value (issue #501): the number of the page it was given, and a short passage copied from
+# that page's text. The worker checks both against the pages of the one document before it records a location; the
+# invoice path ignores them. A value that is not stated has neither, and an answer that leaves them out states no
+# source, which records the field as unlocated and never fails the proposal. The strict wire schema lists every property
+# as required whatever the default. (No docstrings below: they would become descriptions of the wire schema.)
+_SOURCE_PAGE = Field(default=None, ge=1, le=200)
+_SOURCE_QUOTE = Field(default=None, min_length=1, max_length=300)
+
+
 class InvoiceTextField(StrictModel):
     value: str | None = Field(min_length=1, max_length=4_000)
     confidence: float = Field(ge=0, le=1)
+    source_page: int | None = _SOURCE_PAGE
+    source_quote: str | None = _SOURCE_QUOTE
 
     @field_validator("value")
     @classmethod
@@ -319,6 +330,8 @@ class InvoiceTextField(StrictModel):
 class InvoiceDateField(StrictModel):
     value: str | None = Field(pattern=_INVOICE_DATE)
     confidence: float = Field(ge=0, le=1)
+    source_page: int | None = _SOURCE_PAGE
+    source_quote: str | None = _SOURCE_QUOTE
 
     @field_validator("value")
     @classmethod
@@ -331,6 +344,8 @@ class InvoiceDateField(StrictModel):
 class InvoiceAmountField(StrictModel):
     value: str | None = Field(pattern=_INVOICE_AMOUNT)
     confidence: float = Field(ge=0, le=1)
+    source_page: int | None = _SOURCE_PAGE
+    source_quote: str | None = _SOURCE_QUOTE
 
 
 # The vendor's IBAN as the invoice prints it. A wrong IBAN is worse than none: a value that is not a valid IBAN
@@ -340,6 +355,8 @@ class InvoiceAmountField(StrictModel):
 class InvoiceIbanField(StrictModel):
     value: str | None
     confidence: float = Field(ge=0, le=1)
+    source_page: int | None = _SOURCE_PAGE
+    source_quote: str | None = _SOURCE_QUOTE
 
     @field_validator("value")
     @classmethod

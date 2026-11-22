@@ -50,7 +50,7 @@ async def model_outcome(session_factory,org_id,claim,data,inspected,providers):
         try:effective=await effective_ai_settings(db,org_id)
         except AiKeyUnreadableError:return refusal('unavailable',INVOICE_AI_KEY_UNREADABLE)
         categories=[InvoiceCategory(item.code,item.label) for item in await CostCategoryRepository(db).list_active()]
-    blocker=invoice_import_blocker(effective,needs_reading=pages_need_reading(pages))
+    blocker=invoice_import_blocker(effective,needs_reading=pages_need_reading(pages),inbox=True)
     if blocker is not None:return refusal('unavailable',blocker)
     if len(pages)>INVOICE_MAX_PAGES:return refusal('needs_review',INVOICE_PAGE_LIMIT)
     owned=providers(effective)

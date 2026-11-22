@@ -1,5 +1,7 @@
 """Unreviewed logical sources retain their container's original authorization."""
 import uuid
+from decimal import Decimal
+from types import SimpleNamespace
 from fastapi import APIRouter,Depends,Header,HTTPException
 from pydantic import BaseModel,ConfigDict,Field,model_validator
 from sqlalchemy import text
@@ -7,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.tenant import AuthContext,get_current_user
 from app.core.live_principal import get_live_member_db,get_live_writer_db
 from app.services.intake_service import IntakeService
+from app.services.invoice_model_usage import InvoiceModelUsageOut,summarize
 
 router=APIRouter(prefix='/api/logical-documents',tags=['logical_documents'])
 FIELDS='id,document_ref_id,content_sha256,page_start,page_end,verified_page_count,review_state,origin,reason,created_at'
@@ -62,6 +65,21 @@ async def processing(document_id:uuid.UUID,auth:AuthContext=Depends(get_current_
     status=await db.scalar(text('SELECT intake_extraction_status(:org,:document)'),{'org':auth.organization_id,'document':document_id})
     if status is None:raise HTTPException(404,'Logical document inaccessible')
     return status
+
+
+@router.get('/{document_id}/model-usage',response_model=InvoiceModelUsageOut)
+async def model_usage(document_id:uuid.UUID,auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_member_db)):
+    """What the model-assisted extraction of this logical document has cost so far, over all its attempts (issue #501).
+
+    The ledger rows come from ``intake_model_usage``, which answers only for those who may read the original: for anyone
+    else, and for another organization's document, there is no such document. The summary is the one of the invoices."""
+    rows=await db.scalar(text('SELECT intake_model_usage(:org,:document)'),{'org':auth.organization_id,'document':document_id})
+    if rows is None:raise HTTPException(404,'Logical document inaccessible')
+    def amount(value):return None if value is None else Decimal(value)
+    return summarize([SimpleNamespace(stage=row['stage'],model_name=row['model_name'],status=row['status'],usage_complete=row['usage_complete'],
+        input_tokens=row['input_tokens'],output_tokens=row['output_tokens'],cost_usd=amount(row['cost_usd']),
+        reserved_input_tokens=row['reserved_input_tokens'],reserved_output_tokens=row['reserved_output_tokens'],
+        reserved_cost_usd=amount(row['reserved_cost_usd'])) for row in rows])
 
 
 class ExtractionRetry(BaseModel):

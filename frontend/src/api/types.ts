@@ -2034,6 +2034,8 @@ export interface OrganizationAiSettings {
   invoice_processing_enabled: boolean;
   /** A stored key whose confirmation does not name invoices (none, or one of an earlier text), where invoices are processed: they stay on the host. */
   invoice_confirmation_required: boolean;
+  /** The same for the documents of the inbox (text version 3): a confirmation that names invoices but not the inbox keeps the invoices and asks once more for the inbox; no key is entered again. */
+  inbox_confirmation_required: boolean;
 }
 export interface AiModel { id: string; evaluated: boolean; price_known: boolean }
-export type OrganizationAiSettingsBody = Omit<OrganizationAiSettings, 'key_set' | 'price_known' | 'document_price_known' | 'confirmation' | 'confirmation_required' | 'invoice_processing_enabled' | 'invoice_confirmation_required'> & { api_key?: string | null; confirmation?: boolean };
+export type OrganizationAiSettingsBody = Omit<OrganizationAiSettings, 'key_set' | 'price_known' | 'document_price_known' | 'confirmation' | 'confirmation_required' | 'invoice_processing_enabled' | 'invoice_confirmation_required' | 'inbox_confirmation_required'> & { api_key?: string | null; confirmation?: boolean };

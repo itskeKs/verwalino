@@ -55,6 +55,9 @@ class AiSettingsOut(BaseModel):
     # A stored key whose confirmation does not name invoices (none, or one of an earlier text), where invoices are
     # processed: they stay on the host until the current text is confirmed.
     invoice_confirmation_required: bool = False
+    # The same for the documents of the inbox (text version 3 or later): the confirmation of an organization that
+    # confirmed the text with invoices keeps its invoices, and its inbox documents stay on the host until it confirms again.
+    inbox_confirmation_required: bool = False
 
 
 class AiModelOut(BaseModel):

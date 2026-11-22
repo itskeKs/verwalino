@@ -109,7 +109,28 @@ def test_the_prompt_names_every_field_the_boundary_and_the_category_list():
         assert name in INVOICE_EXTRACTION_PROMPT, name
     assert 'untrusted' in INVOICE_EXTRACTION_PROMPT and 'allowed_category_codes' in INVOICE_EXTRACTION_PROMPT
     assert 'null' in INVOICE_EXTRACTION_PROMPT and 'Never calculate' in INVOICE_EXTRACTION_PROMPT
-    assert (INVOICE_PROMPT_VERSION, INVOICE_SCHEMA_VERSION, INVOICE_PASS_ID) == ('invoice-v1', 'invoice-1', 'extract_invoice')
+    assert (INVOICE_PROMPT_VERSION, INVOICE_SCHEMA_VERSION, INVOICE_PASS_ID) == ('invoice-v2', 'invoice-2', 'extract_invoice')
+    assert 'source_page' in INVOICE_EXTRACTION_PROMPT and 'source_quote' in INVOICE_EXTRACTION_PROMPT and 'character for character' in INVOICE_EXTRACTION_PROMPT
+
+
+def test_every_field_says_where_it_was_found_and_an_answer_without_a_source_states_none():
+    from openai.lib._pydantic import to_strict_json_schema
+    wire = to_strict_json_schema(InvoiceExtractionOutput)
+    for kind in ('InvoiceTextField', 'InvoiceDateField', 'InvoiceAmountField', 'InvoiceIbanField'):
+        assert wire['$defs'][kind]['required'] == ['value', 'confidence', 'source_page', 'source_quote'], kind
+        assert set(wire['$defs'][kind]['properties']) == {'value', 'confidence', 'source_page', 'source_quote'}
+    stated = {**ANSWER, 'gross_amount': {'value': '312.00', 'confidence': 0.9, 'source_page': 2, 'source_quote': 'Gesamtbetrag 312,00 EUR'}}
+    parsed = InvoiceExtractionOutput.model_validate(stated)
+    assert (parsed.gross_amount.source_page, parsed.gross_amount.source_quote) == (2, 'Gesamtbetrag 312,00 EUR')
+    bare = InvoiceExtractionOutput.model_validate({**ANSWER, 'gross_amount': {'value': '312.00', 'confidence': 0.9}})
+    assert (bare.gross_amount.source_page, bare.gross_amount.source_quote) == (None, None), 'a missing source is no failure'
+
+
+@pytest.mark.parametrize('source', [{'source_page': 0}, {'source_page': 201}, {'source_quote': ''}, {'source_quote': 'x' * 301}, {'source_quote': 5}],
+                         ids=lambda source: str(source)[:30])
+def test_a_source_that_the_schema_refuses_is_refused(source):
+    with pytest.raises(ValidationError):
+        InvoiceExtractionOutput.model_validate({**ANSWER, 'gross_amount': {'value': '312.00', 'confidence': 0.9, **source}})
 
 
 # ---- one transport per provider; the same contract ----------------------------------------------------------

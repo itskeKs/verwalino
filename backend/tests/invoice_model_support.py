@@ -20,6 +20,8 @@ DISCARD = (
     " (SELECT id FROM public.extraction_revision WHERE processor_version='invoice-model-v1')",
     "DELETE FROM public.extraction_revision WHERE processor_version='invoice-model-v1'",
     "UPDATE public.extraction_revision SET processor_version='intake-local-v1' WHERE processor_version='intake-model-v1'",
+    # The location a model stated on a page it read is no location of a locally read proposal.
+    "UPDATE public.field_evidence SET locator_status='unlocated', page_number=NULL, quotation=NULL, xml_path=NULL, method='unlocated' WHERE method='reading_model'",
     "ALTER TABLE public.extraction_revision ENABLE TRIGGER USER",
     "ALTER TABLE public.field_evidence ENABLE TRIGGER USER",
     "UPDATE public.invoice_processing_attempt SET processor_version='invoice-local-v1' WHERE processor_version='invoice-model-v1'",

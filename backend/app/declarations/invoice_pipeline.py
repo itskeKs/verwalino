@@ -12,8 +12,9 @@ with the usage it consumed (``invoice_model_call``, migration 0197), in short tr
 requests run outside any transaction. The calls of one extraction attempt are bounded by the constants below.
 
 ``InvoiceModelPipeline`` is the one core of both callers. The inbox path (``declarations/intake_pipeline.py``) differs
-in five small hooks only: how the live claim is renewed, which attempt a ledger row belongs to, how a page is rendered,
-the document's identity inside the requests and the shape of the outcome it returns.
+in a few small hooks only: how the live claim is renewed, which attempt a ledger row belongs to, how a page is rendered,
+the document's identity inside the requests, the confirmation a destination needs and the shape of the outcome it
+returns.
 """
 
 from __future__ import annotations
@@ -173,6 +174,9 @@ def _render_failure(code: str) -> InvoiceModelFailure:
 
 class InvoiceModelPipeline:
     """Read the pages of one claimed invoice attempt, extract its fields and meter every request."""
+
+    # Whether the confirmation must name inbox documents (the inbox path); an invoice needs the text that names invoices.
+    _inbox = False
 
     def __init__(
         self,
@@ -421,7 +425,7 @@ class InvoiceModelPipeline:
             effective = await effective_ai_settings(session, self._org_id)
         except AiKeyUnreadableError:
             return INVOICE_AI_KEY_UNREADABLE
-        if (blocker := invoice_import_blocker(effective, needs_reading=self._needs_reading)) is not None:
+        if (blocker := invoice_import_blocker(effective, needs_reading=self._needs_reading, inbox=self._inbox)) is not None:
             return blocker
         if _destination(effective) != _destination(self._effective):
             return INVOICE_AI_SETTINGS_CHANGED

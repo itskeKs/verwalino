@@ -126,8 +126,15 @@ async def test_the_downgrade_refuses_to_discard_inbox_usage_or_a_model_read_prop
             try:
                 definition = lambda: db.scalar(text("SELECT pg_get_functiondef('public.complete_intake_extraction(uuid,uuid,uuid,jsonb)'::regprocedure)"))
                 constraint = lambda: db.scalar(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='extraction_revision_typed_attempt'"))
+                locator = lambda: db.scalar(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='field_evidence_locator'"))
                 assert 'intake-model-v1' in definition() and 'vendor_iban' in definition() and 'reading_model' in definition()
                 assert "'intake-model-v1'" in constraint() and "'invoice-model-v1'" in constraint()
+                assert "'reading_model'" in locator() and "'xml'" in locator() and "'unlocated'" in locator(), 'a model-read page can carry a located field'
+                located_by_a_model = """INSERT INTO field_evidence(organization_id,extraction_revision_id,field_name,value_type,value,confidence,locator_status,page_number,quotation,xml_path,method)
+                    SELECT organization_id,id,'gross_amount','decimal','1',0.5,'page_quote',1,'1',NULL,'%s' FROM extraction_revision WHERE processor_version='intake-model-v1' LIMIT 1"""
+                with pytest.raises(DBAPIError, match='field_evidence_locator'):
+                    with db.begin_nested():
+                        db.execute(text(located_by_a_model % 'vision'))
                 with pytest.raises(DBAPIError, match='Inbox model call records require this release'):
                     with db.begin_nested():
                         migration.downgrade()
@@ -138,12 +145,14 @@ async def test_the_downgrade_refuses_to_discard_inbox_usage_or_a_model_read_prop
                 discard_invoice_model_data(lambda statement: db.execute(text(statement)))
                 migration.downgrade()
                 assert 'intake-model-v1' not in definition() and 'vendor_iban' not in definition() and 'reading_model' not in definition()
+                assert "'reading_model'" not in locator() and "'text_layer'" in locator() and "'ocr'" in locator()
                 assert "'intake-local-v1'" in definition() and 'intake-model-v1' not in constraint() and "'invoice-model-v1'" in constraint()
                 assert db.scalar(text("SELECT count(*) FROM information_schema.columns WHERE table_name='invoice_model_call' AND column_name='intake_attempt_id'")) == 0
                 assert db.scalar(text("SELECT is_nullable FROM information_schema.columns WHERE table_name='invoice_model_call' AND column_name='attempt_id'")) == 'NO'
                 assert db.scalar(text("SELECT to_regprocedure('public.renew_intake_extraction(uuid,uuid,uuid,integer)')")) is None
                 assert db.scalar(text("SELECT to_regprocedure('public.intake_model_usage(uuid,uuid)')")) is None
                 migration.upgrade()
+                assert "'reading_model'" in locator()
                 assert 'intake-model-v1' in definition() and 'vendor_iban' in definition() and "'intake-model-v1'" in constraint()
                 assert db.scalar(text("SELECT to_regprocedure('public.renew_intake_extraction(uuid,uuid,uuid,integer)')")) is not None
             finally:

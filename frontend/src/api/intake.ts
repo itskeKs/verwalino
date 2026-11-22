@@ -1,4 +1,5 @@
 import { api, uploadFormData } from './client';
+import type { InvoiceModelUsage } from './types';
 
 export interface IntakeManifestItem {
   client_item_key: string; filename: string; mime_type: string;
@@ -41,6 +42,7 @@ export interface ExtractionStatus {
 }
 export interface FieldEvidence {
   field_name: string; value: string; confidence: number | string | null; locator_status: 'unlocated' | 'page_quote' | 'xml_path';
+  /** The original's page number; the passage stands in that page's text. `method` is how the page was read: text_layer, reading_model (the document reading model) or ocr (earlier releases). */
   page_number: number | null; quotation: string | null; xml_path: string | null; method: string;
 }
 export interface ExtractionRevision {
@@ -53,6 +55,8 @@ export const extractionApi = {
   history: (ref: string, child: string, signal?: AbortSignal) => api.get<{ items: Pick<ExtractionRevision, 'id'>[] }>(
     `/api/document-refs/${ref}/extractions?logical_document_id=${encodeURIComponent(child)}`, { signal }),
   revision: (id: string, signal?: AbortSignal) => api.get<ExtractionRevision>(`/api/extraction-revisions/${id}`, { signal }),
+  /** What the model-assisted extraction of this document has cost so far, over all its attempts (issue #501). */
+  usage: (id: string, signal?: AbortSignal) => api.get<InvoiceModelUsage>(`/api/logical-documents/${id}/model-usage`, { signal }),
   retry: (id: string, body: { expected_fence: string; reason: string }, key: string) => api.post(`/api/logical-documents/${id}/retry-extraction`, body, { headers: { 'Idempotency-Key': key } }),
 };
 

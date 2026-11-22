@@ -6,7 +6,7 @@ invoices (XRechnung XML, a PDF with valid embedded ZUGFeRD/Factur-X data) are pa
 never reach a model. XML locators use ElementTree paths relative to the exact hashed original root. An unstructured
 PDF, PNG or JPEG yields the text layers of its selected pages, which the worker reads with the models
 (``declarations/intake_pipeline.py``); there is no text recognition and no pattern matching on text on this path.
-A field the models propose has no locator: its evidence is unlocated.
+A field the models propose is located only where the page and passage they name verify against the page text (``model_evidence``).
 """
 from __future__ import annotations
 
@@ -53,8 +53,50 @@ def unlocated():
 
 def unlocated_evidence(payload):
     """Evidence of every stated field of a proposal that no locator in the original proves: structured PDF data
-    (the embedded XML is not the hashed original) and what a model proposed."""
+    (the embedded XML is not the hashed original) and a model's field whose stated source does not verify."""
     return {key:unlocated() for key in FIELD_TYPES if payload[key] is not None}
+
+
+# What a model states about a value: the page it found it on and a passage copied from that page's text. Only a source
+# that verifies against the pages of this one logical document is recorded, at page level; the rest stays unlocated.
+PAGE_QUOTE='page_quote'
+MAX_QUOTATION=4000
+
+
+def located(number,quotation,method):
+    return {'locator_status':PAGE_QUOTE,'page_number':number,'quotation':quotation,'xml_path':None,'method':method}
+
+
+def squashed(text):
+    """The text with every run of whitespace as one space and without outer whitespace, and for each character of
+    that the index of the character it stands for in the original."""
+    out=[];index=[];gap=True
+    for position,char in enumerate(text):
+        if char.isspace():
+            if not gap:out.append(' ');index.append(position);gap=True
+        else:out.append(char);index.append(position);gap=False
+    if out and out[-1]==' ':out.pop();index.pop()
+    return ''.join(out),index
+
+
+def model_evidence(payload,sources,pages):
+    """Evidence of every stated field of a model's proposal: located at page level when the page the model names is one
+    of this document's selected pages and its passage occurs in that page's text (whitespace compared the same way on
+    both sides), unlocated otherwise. The value is kept either way; a location is never guessed, and a page of another
+    document of the same original is not one of ``pages``. The passage is recorded as it stands in the page's text."""
+    texts={page['number']:(page,)+squashed(page['text']) for page in pages}
+    evidence={}
+    for key in FIELD_TYPES:
+        if payload[key] is None:continue
+        evidence[key]=unlocated()
+        number,quote=sources.get(key,(None,None))
+        if type(number) is not int or number not in texts or not isinstance(quote,str):continue
+        page,flat,index=texts[number];wanted=' '.join(quote.split())
+        start=flat.find(wanted) if wanted else -1
+        if start<0:continue
+        passage=page['text'][index[start]:index[start+len(wanted)-1]+1]
+        if 1<=len(passage)<=MAX_QUOTATION:evidence[key]=located(number,passage,page['method'])
+    return evidence
 
 
 # Paths mirror the structured parser's ordered fallbacks. Evidence is emitted
@@ -224,8 +266,15 @@ def valid_result(answer,data,mime,start,end,count):
             elif locator['locator_status']=='xml_path':
                 if mime!='application/xml' or locator['method']!='xml' or locator['page_number'] is not None:return False
                 if not isinstance(locator['xml_path'],str) or not locator['xml_path'].startswith('./') or len(locator['xml_path'])>16000:return False
+            elif locator['locator_status']==PAGE_QUOTE:
+                # Only a model's proposal is located, on a page of this document, with that page's own method and a
+                # passage that stands in its text.
+                if mime=='application/xml' or version!=MODEL_VERSION or locator['xml_path'] is not None:return False
+                if type(locator['page_number']) is not int or locator['page_number'] not in wanted:return False
+                page=pages[wanted.index(locator['page_number'])]
+                if locator['method']!=page['method'] or not isinstance(locator['quotation'],str) or locator['quotation'] not in page['text']:return False
             else:return False
-            if locator['locator_status']!='unlocated' and (not isinstance(locator['quotation'],str) or not 1<=len(locator['quotation'])<=4000):return False
+            if locator['locator_status']!='unlocated' and (not isinstance(locator['quotation'],str) or not 1<=len(locator['quotation'])<=MAX_QUOTATION):return False
         encoded=json.dumps(answer,ensure_ascii=False).encode('utf-8')
         return len(encoded)<=5*1024*1024 and b'\\u0000' not in encoded
     except (TypeError,ValueError,OverflowError,UnicodeError,RecursionError,KeyError):return False

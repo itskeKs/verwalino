@@ -138,7 +138,7 @@ function RangeCreator({ refId, documents, pages, disabled, onDenied, onCreated, 
     } finally { if (alive.current) { setBusy(false); onBusy(false); } }
   }
   return <details className="space-y-3"><summary className="cursor-pointer">Weiteren Seitenbereich anlegen</summary>
-    <p>Seiten beziehen sich auf ihre Reihenfolge im Original. Ein neuer Bereich bleibt ein ungeprüfter Vorschlag und wird für die Texterkennung vorgemerkt.</p>
+    <p>Seiten beziehen sich auf ihre Reihenfolge im Original. Ein neuer Bereich bleibt ein ungeprüfter Vorschlag und wird für die Auswertung vorgemerkt.</p>
     <fieldset disabled={disabled || busy || submitted} className="space-y-3">
       <div className="grid grid-cols-2 gap-3"><label>Erste Seite<input className={inputClass} type="number" min={1} max={pages} value={start} onChange={event => setStart(event.target.value)} /></label>
         <label>Letzte Seite<input className={inputClass} type="number" min={1} max={pages} value={end} onChange={event => setEnd(event.target.value)} /></label></div>

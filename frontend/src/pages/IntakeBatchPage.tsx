@@ -3,9 +3,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ApiError } from '../api/client';
 import { fileDigest, intakeApi, type IntakeBatch, type IntakeItem, type IntakeStatus } from '../api/intake';
+import { invoiceProcessingMessage } from '../lib/invoiceProcessing';
 
 const labels: Record<IntakeStatus, string> = { waiting: 'Datei fehlt', received: 'Empfangen', processing: 'In Verarbeitung', review: 'Zur Sichtung', confirmed: 'Bestätigt', failed: 'Gesperrt / fehlgeschlagen' };
-const stageLabels = { inspection: 'Dateiprüfung', preparation: 'Dokumentvorbereitung', extraction: 'Texterkennung', review: 'Vorschläge verfügbar' };
+const stageLabels = { inspection: 'Dateiprüfung', preparation: 'Dokumentvorbereitung', extraction: 'Auswertung', review: 'Vorschläge verfügbar' };
 const explanations: Record<string, string> = {
   scanner_unavailable: 'Die Dateiprüfung ist derzeit nicht verfügbar. Die Datei bleibt gesperrt. Nach Behebung kann die Prüfung wiederholt werden.',
   scanner_timeout: 'Die Dateiprüfung hat zu lange gedauert. Ein erneuter Versuch ist möglich.',
@@ -18,11 +19,11 @@ const explanations: Record<string, string> = {
   attempt_limit: 'Die Höchstzahl der Prüfversuche ist erreicht. Bitte die Ursache klären, bevor Sie einen neuen Eingang anlegen.',
   storage_integrity_mismatch: 'Das gespeicherte Original konnte nicht unverändert bestätigt werden. Bitte die Administration informieren.',
   stored_original_unavailable: 'Das gespeicherte Original ist derzeit nicht verfügbar.',
-  ocr_unavailable: 'Die lokale Texterkennung ist derzeit nicht verfügbar. Ein erneuter Auftrag ist in der Belegansicht möglich.',
-  ocr_timeout: 'Die Texterkennung hat zu lange gedauert. Bitte den Verarbeitungsstand in der Belegansicht prüfen.',
-  extraction_timeout: 'Die Texterkennung wurde wegen Zeitüberschreitung beendet.',
-  processor_failed: 'Die Texterkennung konnte kein gültiges Ergebnis liefern. Bitte die Belegansicht öffnen.',
 };
+// A file that failed in its extraction is explained from the one map of reasons (the models, their limits and the opt-in
+// of the organization, issue #501); the codes above belong to the inspection of the file.
+const explain = (item: IntakeItem) => !item.error_code ? null : item.stage === 'extraction' ? invoiceProcessingMessage('failed', item.error_code, 'inbox')
+  : explanations[item.error_code] ?? 'Die Verarbeitung konnte nicht abgeschlossen werden. Bitte den Verarbeitungsstand prüfen.';
 
 function ItemActions({ item, batchId, refresh, disabled }: { item: IntakeItem; batchId: string; refresh: () => void; disabled: boolean }) {
   const [file, setFile] = useState<File | null>(null);
@@ -113,7 +114,7 @@ function BatchDetail({ batchId }: { batchId: string }) {
         <div className="flex flex-wrap items-start justify-between gap-2"><h2 className="min-w-0 break-all">{item.filename}</h2><span className="badge">{labels[item.status]}</span></div>
         <p className="text-sm">{(item.content_byte_size / 1024).toLocaleString('de-DE', { maximumFractionDigits: 1 })} KiB · {item.mime_type}</p>
         {item.stage && <p>{stageLabels[item.stage]}{item.logical_counts?.total > 0 && ` · ${item.logical_counts.total} Beleg(e), ${item.logical_counts.review} zur Sichtung`}</p>}
-        {item.error_code && <p>{explanations[item.error_code] ?? 'Die Verarbeitung konnte nicht abgeschlossen werden. Bitte den Verarbeitungsstand prüfen.'}</p>}
+        {explain(item) && <p className="break-words max-w-prose">{explain(item)}</p>}
         {!busy && !error && item.document_ref_id && <Link className="btn" to={`/posteingang/belege/${item.document_ref_id}`}>Belege und Vorschläge ansehen</Link>}
         <ItemActions key={`${item.id}:${item.fence ?? 'waiting'}`} item={item} batchId={batchId} refresh={refresh} disabled={busy || !!error} />
       </article>)}</div>

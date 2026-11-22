@@ -25,7 +25,7 @@ it('allows every listed model, explains unknown prices and clears a saved key', 
   expect(within(screen.getByLabelText('Dokumente einlesen')).getByRole('option',{name:'evaluated-model · geprüft'})).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText('Informationen extrahieren'),{target:{value:'future-model-with-a-long-name-2026-11-07'}});
   expect(screen.getByText(/Für das Modell „Informationen extrahieren“ ist kein Preis bekannt/)).toBeVisible();
-  fireEvent.click(screen.getByLabelText('Teilungserklärungen importieren und Rechnungen auswerten'));
+  fireEvent.click(screen.getByLabelText('Teilungserklärungen importieren sowie Rechnungen und Dokumente im Posteingang auswerten'));
   fireEvent.click(screen.getByLabelText('Fragen zum Objektwissen'));
   fireEvent.change(screen.getByLabelText('Monatliches Limit in USD (optional)'),{target:{value:'12.50'}});
   fireEvent.click(screen.getByRole('button',{name:'KI-Einstellungen speichern'}));

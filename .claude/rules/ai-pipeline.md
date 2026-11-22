@@ -49,14 +49,20 @@ paths:
   transaction, within the documented per-invoice bounds (constants there, not settings); the path has no
   Tesseract step. The confirmation text that names invoices governs transmission, so an organization that
   confirmed an older text keeps its invoices on the host until it confirms again. A retry reads and pays
-  again: page transcripts of an invoice are not stored.
+  again: page transcripts of an invoice are not stored. The extraction answer states for each value the page and
+  a passage it was found on (`source_page`, `source_quote` of the fields in `declarations/schemas.py`); the invoice
+  path ignores them.
 - The inbox worker (`workers/intake_extraction.py`) does the same for the selected pages of one logical
   document of an unstructured PDF, PNG or JPEG: `declarations/intake_pipeline.py` is `InvoiceModelPipeline`
-  with five hooks (renewing the claim's fence, the ledger row's attempt, rendering, the document key, the
-  outcome shape), so reading, extraction, bounds, opt-in re-check and metering exist once. Only the pages of that
-  logical document reach a provider, with the original's page numbers; ledger rows carry `intake_attempt_id`;
-  proposals are `intake-model-v1` with unlocated evidence. XML and a PDF with valid embedded ZUGFeRD data are parsed
-  by the local stage (`core/intake_extraction.py`) and never reach a model; the inbox has no Tesseract step either.
+  with a few hooks (renewing the claim's fence, the ledger row's attempt, rendering, the document key, the
+  confirmation the destination needs, the outcome shape), so reading, extraction, bounds, opt-in re-check and
+  metering exist once. Only the pages of that logical document reach a provider, with the original's page numbers;
+  ledger rows carry `intake_attempt_id`; proposals are `intake-model-v1`. A field is located at page level only
+  where the page and passage the model names are one of that document's selected pages and occur in its read text
+  (`model_evidence`); otherwise it stays unlocated, never a guessed place. An inbox document is sent only under a
+  confirmation text that names inbox documents (version 3); an earlier text keeps what it covered. XML and a PDF
+  with valid embedded ZUGFeRD data are parsed by the local stage (`core/intake_extraction.py`) and never reach a
+  model; the inbox has no Tesseract step either.
 - A stage that calls a model meters it in the shared ledger by the model that made the call (reserve
   before, settle after, keep the usage of failed calls) and records it in the pass ledger with its
   `pass_id`; a view of per-stage usage reads that ledger and the run row in one aggregation

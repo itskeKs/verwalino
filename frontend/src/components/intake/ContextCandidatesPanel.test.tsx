@@ -36,3 +36,11 @@ it('clears denied evidence without invoking or overwriting the parent draft', as
   await screen.findByText(/Ihre manuelle Eingabe bleibt erhalten/);
   expect(screen.queryByText(/Seite 2/)).not.toBeInTheDocument(); expect(props.onPick).not.toHaveBeenCalled();
 });
+it('says that the model read the page a labelled value stands on, and keeps the text recognition of earlier releases named', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => json({ ...value, unmatched_evidence: [{ ...evidence, quotation: 'Zählernummer: 77', page_number: 3, method: 'reading_model' as const }],
+    items: [{ ...value.items[0], evidence: [{ ...evidence, method: 'reading_model' as const }, { ...evidence, quotation: 'Objekt-ID: property', page_number: 4, method: 'ocr' as const }] }] })));
+  render(<ContextCandidatesPanel {...props} />);
+  expect(await screen.findByText(/Seite 2 · vom Lesemodell gelesen: „Objekt-ID: property“/)).toBeInTheDocument();
+  expect(screen.getByText(/Seite 3 · vom Lesemodell gelesen: „Zählernummer: 77“/)).toBeInTheDocument();
+  expect(screen.getByText(/Seite 4 · Texterkennung \(frühere Version\): „Objekt-ID: property“/)).toBeInTheDocument();
+});

@@ -215,10 +215,11 @@ async def test_a_structured_original_is_parsed_locally_and_makes_no_provider_cal
 @pytest.mark.parametrize("setup,code", [
     (None, "ai_import_disabled"),
     ({"import_enabled": False}, "ai_import_disabled"),
-    ({"text_version": "1"}, "ai_invoice_confirmation_missing"),
+    ({"text_version": "1"}, "ai_inbox_confirmation_missing"),
+    ({"text_version": "2"}, "ai_inbox_confirmation_missing"),
     ({"document_model": None}, "ai_document_model_missing"),
     ({"key": "unreadable"}, "ai_key_unreadable"),
-], ids=["no-settings", "switch-off", "confirmation-without-invoices", "no-reading-model", "unreadable-key"])
+], ids=["no-settings", "switch-off", "confirmation-without-invoices", "confirmation-without-the-inbox", "no-reading-model", "unreadable-key"])
 async def test_without_the_opt_in_nothing_is_sent_and_the_document_is_retained_for_the_manual_workflow(migrator_session, scope_seed, store, setup, code):
     ids = await fixture(migrator_session, scope_seed)
     if setup is not None:

@@ -235,23 +235,26 @@ class FakeDocumentReadingProvider:
 
 def synthetic_invoice_output(**values: object) -> InvoiceExtractionOutput:
     """A complete synthetic invoice proposal: a building insurance premium of 312,00 EUR; ``values`` replace fields
-    given as ``field=(value, confidence)``."""
-    fields: dict[str, object] = {
-        "vendor_name": InvoiceTextField(value="Mustermann Versicherungen AG", confidence=0.95),
-        "invoice_date": InvoiceDateField(value="2026-01-15", confidence=0.97),
-        "document_number": InvoiceTextField(value="RE-2026-0042", confidence=0.9),
-        "gross_amount": InvoiceAmountField(value="312.00", confidence=0.98),
-        "vat_amount": InvoiceAmountField(value=None, confidence=0),
-        "vat_rate": InvoiceAmountField(value=None, confidence=0),
-        "service_period_from": InvoiceDateField(value="2026-01-01", confidence=0.9),
-        "service_period_to": InvoiceDateField(value="2026-12-31", confidence=0.9),
-        "suggested_category_code": InvoiceTextField(value="GEBAEUDEVERSICHERUNG", confidence=0.8),
-        "vendor_iban": InvoiceIbanField(value="DE89 3704 0044 0532 0130 00", confidence=0.9),
+    given as ``field=(value, confidence)`` or ``field=(value, confidence, source_page, source_quote)``. The default
+    fields state no source."""
+    def stated(kind: type, value: object, confidence: float, source_page: int | None = None, source_quote: str | None = None):
+        return kind(value=value, confidence=confidence, source_page=source_page, source_quote=source_quote)
+
+    fields: dict[str, tuple] = {
+        "vendor_name": (InvoiceTextField, "Mustermann Versicherungen AG", 0.95),
+        "invoice_date": (InvoiceDateField, "2026-01-15", 0.97),
+        "document_number": (InvoiceTextField, "RE-2026-0042", 0.9),
+        "gross_amount": (InvoiceAmountField, "312.00", 0.98),
+        "vat_amount": (InvoiceAmountField, None, 0),
+        "vat_rate": (InvoiceAmountField, None, 0),
+        "service_period_from": (InvoiceDateField, "2026-01-01", 0.9),
+        "service_period_to": (InvoiceDateField, "2026-12-31", 0.9),
+        "suggested_category_code": (InvoiceTextField, "GEBAEUDEVERSICHERUNG", 0.8),
+        "vendor_iban": (InvoiceIbanField, "DE89 3704 0044 0532 0130 00", 0.9),
     }
-    for name, (value, confidence) in values.items():
-        kind = type(fields[name])
-        fields[name] = kind(value=value, confidence=confidence)
-    return InvoiceExtractionOutput(**fields)
+    for name, replacement in values.items():
+        fields[name] = (fields[name][0], *replacement)
+    return InvoiceExtractionOutput(**{name: stated(*parts) for name, parts in fields.items()})
 
 
 @dataclass(frozen=True)

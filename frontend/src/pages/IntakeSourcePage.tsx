@@ -2,16 +2,37 @@ import { formatDateTime } from "../lib/format";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { AssignmentPanel } from '../components/intake/AssignmentPanel';
+import { IntakeModelUsage } from '../components/intake/IntakeModelUsage';
 import { SourcePartitionPanel } from '../components/intake/SourcePartitionPanel';
 import { ApiError } from '../api/client';
-import { extractionApi, type ExtractionRevision, type ExtractionStatus, type LogicalDocument } from '../api/intake';
+import { extractionApi, type ExtractionRevision, type ExtractionStatus, type FieldEvidence, type LogicalDocument } from '../api/intake';
+import { invoiceProcessingMessage } from '../lib/invoiceProcessing';
 
 const fieldLabels: Record<string, string> = { vendor_name: 'Aussteller', document_number: 'Belegnummer', invoice_date: 'Rechnungsdatum',
   gross_amount: 'Bruttobetrag', vat_amount: 'Umsatzsteuerbetrag', vat_rate: 'Umsatzsteuersatz', service_period_from: 'Leistungszeitraum von',
   service_period_to: 'Leistungszeitraum bis', suggested_category_code: 'Vorgeschlagene Kostenart' };
-const statuses: Record<string, string> = { queued: 'Wartet auf Texterkennung', running: 'Texterkennung läuft', succeeded: 'Vorschläge verfügbar',
-  needs_review: 'Unvollständige Vorschläge', unavailable: 'Texterkennung nicht verfügbar', timeout: 'Zeitüberschreitung', failed: 'Verarbeitung fehlgeschlagen',
+const statuses: Record<string, string> = { queued: 'Wartet auf Auswertung', running: 'Auswertung läuft', succeeded: 'Vorschläge verfügbar',
+  needs_review: 'Unvollständige Vorschläge', unavailable: 'Auswertung nicht möglich', timeout: 'Zeitüberschreitung', failed: 'Verarbeitung fehlgeschlagen',
   canceled: 'Verarbeitung abgebrochen', blocked: 'Verarbeitung gesperrt', unsupported: 'Dokument nicht unterstützt' };
+// How the page a passage stands on was read: its own text layer, the organization's document reading model, or (results of earlier releases) text recognition.
+const readAs: Record<string, string> = { text_layer: 'PDF-Text', reading_model: 'vom Lesemodell gelesen', ocr: 'Texterkennung (frühere Version)', xml: 'Strukturiertes Feld' };
+const MODEL_RESULT = 'intake-model-v1';
+
+/** What happened to an attempt and what the user can do, from the one map of reasons; nothing while nothing went wrong. */
+function Outcome({ status, code }: { status: string; code: string | null }) {
+  const message = invoiceProcessingMessage(status, code, 'inbox');
+  return message ? <p className="break-words max-w-prose">{message}</p> : null;
+}
+
+function Location({ field, byModel }: { field: FieldEvidence; byModel: boolean }) {
+  // A model names the page and the passage it found a value on; only what stands on that page of this document is a Fundstelle.
+  if (field.locator_status === 'unlocated') return <p>{byModel ? 'Keine Fundstelle bestätigt: Das Modell hat keine Seite und Textstelle genannt, die sich in diesem Beleg nachweisen lässt.' : 'Keine eindeutige Fundstelle ermittelt.'}</p>;
+  return <>
+    <p>{field.page_number !== null ? `Fundstelle auf Seite ${field.page_number}` : 'Fundstelle im XML'} · {readAs[field.method] ?? 'PDF-Text'}</p>
+    <blockquote className="border-l-2 border-input pl-3 whitespace-pre-wrap break-words">{field.quotation}</blockquote>
+    {field.xml_path && <details><summary className="cursor-pointer">XML-Fundstelle anzeigen</summary><code className="block break-all text-sm">{field.xml_path}</code></details>}
+  </>;
+}
 const inputClass = 'w-full rounded-md border border-input bg-background px-3 py-2 disabled:opacity-60';
 const denied = (failure: unknown) => failure instanceof ApiError && [401, 403, 404].includes(failure.status);
 const range = (document: LogicalDocument) => document.page_start === null ? 'Gesamtes XML-Dokument'
@@ -52,6 +73,10 @@ function Proposals({ document, onDenied, parentBusy, parentGeneration, focusExtr
     return () => controller.abort();
   }, [document.id, document.document_ref_id, generation, parentGeneration, onDenied, focusExtraction]);
   const active = view?.status.status === 'queued' || view?.status.status === 'running';
+  // What happened and what to do, from the one map of reasons. The newest attempt shows its own reason with its result below;
+  // the state of the document is explained here when no attempt shows it (a run that is not finished, or no attempt of its own).
+  const newest = view?.revisions[0];
+  const showStatusReason = !!view && !(newest && newest.status === view.status.status && newest.error_code === view.status.error_code);
   useEffect(() => {
     if (!active || busy || parentBusy || sending || error) return;
     const timer = window.setTimeout(refresh, 3000); return () => window.clearTimeout(timer);
@@ -76,23 +101,22 @@ function Proposals({ document, onDenied, parentBusy, parentGeneration, focusExtr
     {view && <>
       {focusExtraction && <p>Der Extraktionsstand dieses Klärungsfalls ist in der Historie markiert. Neue Vorschläge verwenden weiterhin die neueste Grundlage.</p>}
       <p>{statuses[view.status.status] ?? 'Verarbeitungsstand unbekannt'} · Versuch {view.status.attempt_number} von höchstens 3</p>
+      {showStatusReason && <Outcome status={view.status.status} code={view.status.error_code} />}
+      <IntakeModelUsage logicalId={document.id} state={`${view.status.status}:${view.status.attempt_number}`} />
       {!view.revisions.length && <p>Es liegt noch kein Extraktionsergebnis vor.</p>}
       {view.status.can_retry && <fieldset disabled={busy || parentBusy || sending} className="card min-w-0 space-y-2">
-        <label htmlFor="extraction-retry-reason">Grund für die erneute Texterkennung</label>
+        <label htmlFor="extraction-retry-reason">Grund für die erneute Auswertung</label>
         <input id="extraction-retry-reason" className={inputClass} maxLength={1000} value={reason} disabled={submitted} onChange={event => setReason(event.target.value)} />
-        <button className="btn" disabled={!reason.trim()} onClick={() => void retry()}>{submitted ? 'Denselben Auftrag wiederholen' : 'Texterkennung erneut anfordern'}</button>
+        <button className="btn" disabled={!reason.trim()} onClick={() => void retry()}>{submitted ? 'Denselben Auftrag wiederholen' : 'Auswertung erneut anfordern'}</button>
       </fieldset>}
       {view.revisions.map((revision, index) => <details key={revision.id} className="card min-w-0 space-y-3" open={revision.id === focusExtraction || (!focusExtraction && index === 0)}>
         <summary className="cursor-pointer">{revision.id === focusExtraction ? 'Grundlage des Klärungsfalls · ' : ''}{index === 0 ? 'Neuester Versuch' : 'Früherer Versuch'} · {statuses[revision.status] ?? revision.status} · {formatDateTime(revision.created_at)}</summary>
+        <Outcome status={revision.status} code={revision.error_code} />
         {!revision.fields.length && <p>Dieser Versuch enthält keine Feldvorschläge. Frühere Ergebnisse bleiben in der Historie erhalten.</p>}
         <div className="grid min-w-0 gap-4 lg:grid-cols-2">{revision.fields.map(field => <article key={field.field_name} className="min-w-0 rounded-md border border-input p-3 space-y-2">
           <h3>{fieldLabels[field.field_name] ?? field.field_name}</h3><p className="break-words font-semibold">{field.value}</p>
           {field.confidence !== null && <p className="text-sm">Extraktionssicherheit: {Math.round(Number(field.confidence) * 100)} % · ungeprüft</p>}
-          {field.locator_status === 'unlocated' ? <p>Keine eindeutige Fundstelle ermittelt.</p> : <>
-            <p>{field.page_number !== null ? `Fundstelle auf Seite ${field.page_number}` : 'Fundstelle im XML'} · {field.method === 'ocr' ? 'Texterkennung' : field.method === 'xml' ? 'Strukturiertes Feld' : 'PDF-Text'}</p>
-            <blockquote className="border-l-2 border-input pl-3 whitespace-pre-wrap break-words">{field.quotation}</blockquote>
-            {field.xml_path && <details><summary className="cursor-pointer">XML-Fundstelle anzeigen</summary><code className="block break-all text-sm">{field.xml_path}</code></details>}
-          </>}
+          <Location field={field} byModel={revision.processor_version === MODEL_RESULT} />
         </article>)}</div>
       </details>)}
     </>}

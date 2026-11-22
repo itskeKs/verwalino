@@ -22,13 +22,17 @@ part of the issue has to change the schema:
   and a certainty of that key, the page method ``reading_model`` beside ``text_layer`` and ``ocr``, and a page whose
   text is empty (a blank page reads to nothing). The key set of the evidence stays the nine fields. The CHECK
   ``extraction_revision_typed_attempt`` accepts both processor versions for an inbox attempt.
+* ``field_evidence`` accepts the method ``reading_model`` for a located field (``page_quote``): the model that read a page
+  states where it found a value (page and passage), the worker verifies both against the pages of that one logical
+  document before it records the location, and the function above already requires the passage to occur in the stored text
+  of that page and the method to be the page's own.
 
 No row is read or rewritten and nothing is sent anywhere because of the upgrade: whether an organization's inbox
 documents reach a provider stays governed by its own AI import switch, confirmation, key and models.
 
-``downgrade()`` refuses while a ledger row of an inbox attempt or an ``intake-model-v1`` proposal exists, so that
-neither is discarded silently: the older runtime cannot read a model-read proposal and a dropped ledger row would
-reopen the monthly limit. It restores the older function text; the ``vendor_iban`` key of a stored proposal stays
+``downgrade()`` refuses while a ledger row of an inbox attempt, an ``intake-model-v1`` proposal or located evidence of a
+model-read page exists, so that none is discarded silently: the older runtime cannot read a model-read proposal and a
+dropped ledger row would reopen the monthly limit. It restores the older function text; the ``vendor_iban`` key of a stored proposal stays
 where it is.
 
 Revision ID: 0198
@@ -63,6 +67,15 @@ _COMPLETE_CHANGES = (
     (_VERSION_BEFORE, _VERSION_AFTER), (_KEYS_BEFORE, _KEYS_AFTER), (_CONFIDENCES_BEFORE, _CONFIDENCES_AFTER),
     (_METHOD_BEFORE, _METHOD_AFTER), (_LENGTH_BEFORE, _LENGTH_AFTER), (_RECORDED_BEFORE, _RECORDED_AFTER),
 )
+_LOCATOR_UNLOCATED = "(locator_status='unlocated' AND page_number IS NULL AND quotation IS NULL AND xml_path IS NULL AND method='unlocated')"
+_LOCATOR_XML = "(locator_status='xml_path' AND page_number IS NULL AND quotation IS NOT NULL AND length(quotation) BETWEEN 1 AND 4000 AND xml_path IS NOT NULL AND length(xml_path) BETWEEN 3 AND 16000 AND method='xml')"
+
+
+def _locator_page(methods):
+    return ("(locator_status='page_quote' AND page_number IS NOT NULL AND page_number BETWEEN 1 AND 200 AND quotation IS NOT NULL "
+            f"AND length(quotation) BETWEEN 1 AND 4000 AND xml_path IS NULL AND method IN ({methods}))")
+
+
 _TYPED_INVOICE = "(invoice_attempt_id IS NOT NULL AND intake_attempt_id IS NULL AND logical_document_id IS NULL AND processor_version IN ('invoice-local-v1','invoice-model-v1'))"
 _TYPED_INTAKE_BEFORE = "(invoice_attempt_id IS NULL AND intake_attempt_id IS NOT NULL AND logical_document_id IS NOT NULL AND processor_version='intake-local-v1')"
 _TYPED_INTAKE_AFTER = "(invoice_attempt_id IS NULL AND intake_attempt_id IS NOT NULL AND logical_document_id IS NOT NULL AND processor_version IN ('intake-local-v1','intake-model-v1'))"
@@ -81,6 +94,11 @@ def _replace_definition(function, before, after):
 def _typed_attempt(intake_condition):
     op.execute('ALTER TABLE public.extraction_revision DROP CONSTRAINT extraction_revision_typed_attempt')
     op.execute(f"ALTER TABLE public.extraction_revision ADD CONSTRAINT extraction_revision_typed_attempt CHECK ({_TYPED_INVOICE} OR {intake_condition})")
+
+
+def _evidence_locator(methods):
+    op.execute('ALTER TABLE public.field_evidence DROP CONSTRAINT field_evidence_locator')
+    op.execute(f"ALTER TABLE public.field_evidence ADD CONSTRAINT field_evidence_locator CHECK ({_LOCATOR_UNLOCATED} OR {_locator_page(methods)} OR {_LOCATOR_XML})")
 
 
 def upgrade():
@@ -132,14 +150,17 @@ def upgrade():
     for before, after in _COMPLETE_CHANGES:
         _replace_definition(_COMPLETE, before, after)
     _typed_attempt(_TYPED_INTAKE_AFTER)
+    _evidence_locator("'text_layer','ocr','reading_model'")
 
 
 def downgrade():
-    op.execute('LOCK TABLE public.invoice_model_call, public.intake_extraction_attempt, public.extraction_revision IN ACCESS EXCLUSIVE MODE NOWAIT')
+    op.execute('LOCK TABLE public.invoice_model_call, public.intake_extraction_attempt, public.extraction_revision, public.field_evidence IN ACCESS EXCLUSIVE MODE NOWAIT')
     op.execute("""DO $$ BEGIN IF EXISTS(SELECT 1 FROM public.invoice_model_call WHERE intake_attempt_id IS NOT NULL)
       THEN RAISE EXCEPTION 'Inbox model call records require this release'; END IF; END $$""")
     op.execute("""DO $$ BEGIN IF EXISTS(SELECT 1 FROM public.extraction_revision WHERE processor_version='intake-model-v1')
+      OR EXISTS(SELECT 1 FROM public.field_evidence WHERE method='reading_model')
       THEN RAISE EXCEPTION 'Model-read inbox proposals require this release'; END IF; END $$""")
+    _evidence_locator("'text_layer','ocr'")
     _typed_attempt(_TYPED_INTAKE_BEFORE)
     for before, after in reversed(_COMPLETE_CHANGES):
         _replace_definition(_COMPLETE, after, before)

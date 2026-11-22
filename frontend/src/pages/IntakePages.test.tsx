@@ -121,3 +121,35 @@ it('suppresses cached download links when fresh status is unavailable', async ()
   expect(screen.getByText('invoice.pdf')).toBeInTheDocument();
   expect(screen.queryByRole('link', { name: 'Original herunterladen' })).not.toBeInTheDocument();
 });
+
+// ---- how an extraction that ended is explained on the batch page (issue #501) -------------------------------------------
+
+const extracting = (code: string, over = {}) => ({ ...item, stage: 'extraction', document_ref_id: 'ref-1', logical_counts: { total: 1, processing: 0, review: 0, failed: 1 }, error_code: code, can_retry: false, ...over });
+
+it.each([
+  ['ai_import_disabled', /Die automatische Auswertung per KI ist für Ihre Organisation nicht eingerichtet.*Es wird nichts \(mehr\) an einen KI-Anbieter übermittelt/s],
+  ['organization_ai_budget_exceeded', /monatliche KI-Budget Ihrer Organisation ist ausgeschöpft.*nicht gesendet/s],
+  ['model_reading_failed', /Das Modell unter „Dokumente einlesen“ hat eine Seite nicht eingelesen.*Das Original bleibt erhalten; es wurde nichts übernommen/s],
+  ['render_unavailable', /Eine Seite des Belegs konnte nicht zum Einlesen aufbereitet werden/],
+  ['processor_failed', /Die Auswertung ist fehlgeschlagen\. Das Original bleibt erhalten/],
+  ['attempt_limit', /dreimal versucht und nicht abgeschlossen/],
+])('explains the extraction code %s in German from the one map of reasons', async (code, expected) => {
+  vi.stubGlobal('fetch', vi.fn(async () => json({ ...state, items: [extracting(code)] }))); page('/posteingang/batch-1');
+  expect(await screen.findByText(expected)).toBeInTheDocument();
+  expect(screen.getByText(/^Auswertung · 1 Beleg\(e\)/)).toBeInTheDocument();
+  expect(document.body).not.toHaveTextContent(new RegExp(code));
+});
+
+it('names no text recognition any more and keeps the explanation of a result that an earlier release stored', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => json({ ...state, items: [extracting('ocr_unavailable')] }))); page('/posteingang/batch-1');
+  expect(await screen.findByText(/Die frühere Texterkennung konnte diesen Beleg nicht auswerten\. Das Original bleibt erhalten/)).toBeInTheDocument();
+  expect(document.body).not.toHaveTextContent(/derzeit nicht verfügbar|lokale Texterkennung/);
+});
+
+it('keeps the explanations of the inspection of a file, and a general sentence for a code nothing explains', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => json({ ...state, items: [{ ...extracting('scanner_detected'), stage: 'inspection' }, { ...extracting('a_code_nobody_mapped'), id: 'item-2', stage: 'extraction' }] })));
+  page('/posteingang/batch-1');
+  expect(await screen.findByText('Die Sicherheitsprüfung hat die Datei zurückgewiesen. Das Original bleibt gesperrt.')).toBeInTheDocument();
+  expect(screen.getByText(/Die Auswertung konnte nicht abgeschlossen werden\. Das Original bleibt erhalten/)).toBeInTheDocument();
+  expect(document.body).not.toHaveTextContent(/a_code_nobody_mapped/);
+});
