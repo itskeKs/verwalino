@@ -120,6 +120,12 @@ async def recorded_run(client_a_admin, configured_ai, seed_data, recorded_store,
         payload = outputs[wire['text']['format']['name']].model_dump(mode='json')
         if getattr(request, 'param', None) == 'schema_failure' and wire['text']['format']['name'] == 'CoreExtractionOutput':
             payload['facts'][0]['field'] = 'synthetic_unsupported_core_field'
+        if (getattr(request, 'param', None) == 'reasoning_rejected' and wire['text']['format']['name'] == 'CoreExtractionOutput'
+                and 'reasoning' in wire and not any(r.get('reasoning_rejected') for r in requests[:-1])):
+            # The provider does not take the reasoning parameter of the core pass: its 400 names the field.
+            wire['reasoning_rejected'] = True
+            return httpx2.Response(400, json={'error': {'message': 'synthetic', 'type': 'invalid_request_error',
+                                                        'param': 'reasoning.effort', 'code': 'unsupported_value'}})
         if getattr(request, 'param', None) == 'cut_off' and wire['text']['format']['name'] == 'CoreExtractionOutput':
             # The provider stopped the core pass in the middle of its JSON and reports what it produced.
             return httpx2.Response(200, headers={'x-request-id': 'req_cut_off'},
@@ -142,6 +148,11 @@ async def recorded_run(client_a_admin, configured_ai, seed_data, recorded_store,
         assert state.json()['status'] == 'FAILED', state.text
         assert state.json()['error_code'] == 'PROVIDER_SCHEMA_FAILURE'
         assert len(requests) == 4  # the page reading, the inventory, the core pass that fails and its one schema repair
+    elif getattr(request, 'param', None) == 'reasoning_rejected':
+        assert state.json()['status'] == 'NEEDS_REVIEW', state.text
+        # The page reading, the inventory, the rejected core request, the core request without the parameter, the rules, the reconciliation.
+        assert [(wire['text']['format']['name'], 'reasoning' in wire) for wire in requests][2:4] == [
+            ('CoreExtractionOutput', True), ('CoreExtractionOutput', False)]
     elif getattr(request, 'param', None) == 'cut_off':
         assert state.json()['status'] == 'FAILED', state.text  # final: the same allowance would cut the identical requests again
         assert state.json()['error_code'] == 'PROVIDER_INCOMPLETE'
@@ -359,6 +370,23 @@ async def test_sdk_schema_failure_preserves_stage_failure_and_unknown_usage(reco
     assert outcome(report, 'final_output', 'core_facts') == 'NOT_REACHED'
     assert report['accounting']['usage_status'] == 'UNKNOWN'
     assert 'synthetic_unsupported_core_field' not in json.dumps(report)
+
+
+@pytest.mark.parametrize('recorded_run', ['reasoning_rejected'], indirect=True)
+async def test_sdk_rejection_of_the_reasoning_parameter_costs_one_more_request_and_no_booking(recorded_run, migrator_session):
+    run = await migrator_session.scalar(select(DeclarationExtractionRun).where(DeclarationExtractionRun.import_id == recorded_run))
+    passes = (await migrator_session.scalars(select(DeclarationImportPass).where(
+        DeclarationImportPass.declaration_extraction_run_id == run.id).order_by(DeclarationImportPass.created_at))).all()
+    rows = [row.safe_metadata for row in passes]
+    # One ledger row per answered request: the rejected one reported no usage and has no row of its own.
+    assert [row['pass_id'] for row in rows].count('extract_core') == 1
+    assert all(row['failure_class'] is None for row in rows)
+    core, = [row for row in rows if row['pass_id'] == 'extract_core']
+    assert core['reasoning_effort'] == 'default'
+    assert [row['attempt_no'] for row in rows] == list(range(1, len(rows) + 1)), 'the rejected request left no attempt of its own'
+    assert {row['reasoning_effort'] for row in rows if row['pass_id'] != 'extract_core'} <= {'medium', 'none'}
+    # The run is booked at the usage the answered requests reported, once.
+    assert run.input_tokens == sum(row['input_tokens'] for row in rows) and run.output_tokens == sum(row['output_tokens'] for row in rows)
 
 
 @pytest.mark.parametrize('recorded_run', ['cut_off'], indirect=True)

@@ -128,10 +128,10 @@ async def test_arbitrary_listed_model_uses_provider_defaults_and_persistable_unp
     provider = OpenAiDeclarationProvider(client=client, primary_model='future-model', escalation_model='future-model', token_encoder=FixedTokenEncoder(10))
     result = await provider.inventory([text_document_input], max_output_tokens=10)
     call = client.responses.calls[0]
-    assert 'reasoning' not in call
+    assert call['reasoning'] == {'effort': 'low'}
     assert call['service_tier'] == 'default'
     assert result.usage.cost_usd == 0
-    assert result.metadata.reasoning_effort == 'default'
+    assert result.metadata.reasoning_effort == 'low'
     await _assert_metadata_persists(migrator_session, seed_data, result.metadata)
 
 
@@ -598,6 +598,188 @@ async def test_real_sdk_request_body_is_the_one_the_sdk_parse_method_sent(model,
     assert sent['store'] is False and sent['service_tier'] == 'default' and sent['max_output_tokens'] == 10
     assert sent['text']['format']['type'] == 'json_schema' and sent['text']['format']['strict'] is True
     assert ('prompt_cache_key' in sent) is (model == 'gpt-5.6-luna')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('model,effort', [
+    ('gpt-6.2-sol', 'low'), ('future-model', 'low'), ('gpt-5.6-luna', 'medium'), ('gpt-5.4-mini', 'none'),
+], ids=['unknown-sol', 'unknown-future', 'luna-keeps-medium', 'mini-keeps-none'])
+async def test_real_sdk_request_carries_the_reasoning_effort_of_the_model_and_a_low_one_for_an_unknown_model(model, effort, text_document_input):
+    bodies = []
+
+    def respond(request):
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(200, json=_sdk_response(RuleExtractionOutput(rules=[]).model_dump(mode='json'), model))
+
+    async with _sdk_client(respond) as client:
+        provider = OpenAiDeclarationProvider(client=client, primary_model=model, escalation_model=model, token_encoder=FixedTokenEncoder(10))
+        result = await provider.extract_rules([text_document_input], max_output_tokens=10)
+
+    body, = bodies
+    assert body['reasoning'] == {'effort': effort}
+    assert result.metadata.reasoning_effort == effort
+    assert ('prompt_cache_key' in body) is (model == 'gpt-5.6-luna')
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_reasoning_effort_of_the_provider_still_wins_over_the_default(text_document_input):
+    bodies = []
+
+    def respond(request):
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(200, json=_sdk_response(RuleExtractionOutput(rules=[]).model_dump(mode='json'), 'gpt-6.2-sol'))
+
+    async with _sdk_client(respond) as client:
+        provider = OpenAiDeclarationProvider(client=client, primary_model='gpt-6.2-sol', escalation_model='gpt-6.2-sol',
+                                             reasoning_effort='high', token_encoder=FixedTokenEncoder(10))
+        result = await provider.extract_rules([text_document_input], max_output_tokens=10)
+
+    assert bodies[0]['reasoning'] == {'effort': 'high'} and result.metadata.reasoning_effort == 'high'
+
+
+def _rejection(param='reasoning.effort', code='unsupported_parameter', *, status=400, message='Unsupported parameter: synthetic.'):
+    """The provider's error object, as the SDK reads it: ``param`` names the field of the request at fault."""
+    return httpx2.Response(status, headers={'x-request-id': 'req_rejected'}, json={'error': {
+        'message': message, 'type': 'invalid_request_error', 'param': param, 'code': code}})
+
+
+async def _extract_rules_after(responses, text_document_input, *, model='gpt-6.2-sol', method='extract_rules'):
+    """Run one logical call against the real SDK client; ``responses`` answers the requests in order."""
+    bodies = []
+
+    def respond(request):
+        bodies.append(json.loads(request.content))
+        answer = responses[len(bodies) - 1]
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer(bodies[-1]['model']) if callable(answer) else answer
+
+    async with _sdk_client(respond) as client:
+        provider = OpenAiDeclarationProvider(client=client, primary_model=model, escalation_model=model, token_encoder=FixedTokenEncoder(10))
+        try:
+            return bodies, await getattr(provider, method)([text_document_input], max_output_tokens=10), None
+        except ProviderFailure as failure:
+            return bodies, None, failure
+
+
+def _answered(model):
+    return httpx2.Response(200, json=_sdk_response(RuleExtractionOutput(rules=[]).model_dump(mode='json'), model))
+
+
+# The structured fields that say the reasoning parameter or its value is not supported: the ``param`` names the
+# reasoning field and the ``code`` says it is unsupported, unknown or invalid.
+@pytest.mark.asyncio
+@pytest.mark.parametrize('param', ['reasoning.effort', 'reasoning'])
+@pytest.mark.parametrize('code', ['unsupported_parameter', 'unsupported_value', 'invalid_value', 'unknown_parameter'])
+async def test_a_rejection_that_names_the_reasoning_parameter_is_answered_by_one_request_without_it(param, code, text_document_input):
+    bodies, result, failure = await _extract_rules_after([_rejection(param, code), _answered], text_document_input)
+
+    assert failure is None
+    assert len(bodies) == 2
+    assert bodies[0]['reasoning'] == {'effort': 'low'}
+    assert 'reasoning' not in bodies[1]
+    assert bodies[1] == {key: value for key, value in bodies[0].items() if key != 'reasoning'}, 'only the parameter is dropped'
+    assert result.output.model_dump() == RuleExtractionOutput(rules=[]).model_dump()
+    # The rejected request was not processed and reports no usage: the call is settled at the answered request.
+    assert (result.usage.input_tokens, result.usage.output_tokens, result.usage.attempt_count) == (100, 5, 1)
+    assert result.usage_complete is True and len(result.attempt_metadata) == 1
+    metadata = result.metadata.as_safe_dict()
+    assert (metadata['reasoning_effort'], metadata['attempt_no'], metadata['retry_count'], metadata['stage']) == ('default', 1, 0, 'provider')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('fields', [
+    {'param': 'max_output_tokens', 'code': 'unsupported_parameter'},
+    {'param': 'text.format', 'code': 'invalid_value'},
+    {'param': None, 'code': 'unsupported_parameter'},
+    {'param': 'reasoning.effort', 'code': 'context_length_exceeded'},
+    {'param': 'reasoning.effort', 'code': None},
+    {'param': 'reasoning_effort', 'code': 'unsupported_parameter'},
+    {'param': None, 'code': None, 'message': "Unsupported parameter: 'reasoning.effort' is not supported with this model."},
+    {'status': 422, 'param': 'reasoning.effort', 'code': 'unsupported_parameter'},
+], ids=['other-parameter', 'other-field', 'no-param', 'other-code', 'no-code', 'chat-style-name', 'message-text-only', 'status-422'])
+async def test_any_other_rejection_is_final_and_sends_no_second_request(fields, text_document_input):
+    bodies, result, failure = await _extract_rules_after([_rejection(**fields), _answered], text_document_input)
+
+    assert result is None and len(bodies) == 1
+    assert (failure.code, failure.retryable) == ('OPENAI_REQUEST_FAILED', False)
+    assert failure.usage is None and len(failure.attempt_metadata) == 1
+    assert failure.metadata.reasoning_effort == 'low', 'the one request carried the effort'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('second', [_rejection(), _rejection('max_output_tokens', 'invalid_value')], ids=['names-the-reasoning-again', 'another-rejection'])
+async def test_a_second_rejection_is_final_and_is_the_second_requests_failure(second, text_document_input):
+    bodies, result, failure = await _extract_rules_after([_rejection(), second, _answered], text_document_input)
+
+    assert result is None and len(bodies) == 2, 'one more request, never a third'
+    assert 'reasoning' not in bodies[1]
+    assert (failure.code, failure.retryable, failure.usage) == ('OPENAI_REQUEST_FAILED', False, None)
+    assert failure.metadata.reasoning_effort == 'default' and len(failure.attempt_metadata) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failure_of_the_second_request_is_classified_as_any_other_failure(text_document_input):
+    server_error = httpx2.Response(500, json={'error': {'message': 'synthetic', 'type': 'server_error', 'param': None, 'code': None}})
+    bodies, result, failure = await _extract_rules_after([_rejection(), server_error], text_document_input)
+
+    assert result is None and len(bodies) == 2
+    assert (failure.code, failure.retryable) == ('PROVIDER_SERVER_ERROR', True)
+    assert failure.metadata.reasoning_effort == 'default'
+
+
+@pytest.mark.asyncio
+async def test_a_second_request_that_never_left_the_host_is_not_a_logical_call_that_never_left(text_document_input):
+    """The rejected first request reached the provider, so the logical call was sent although the second one was not."""
+    refused = httpx2.ConnectError('refused', request=httpx2.Request('POST', 'https://api.openai.com/v1/responses'))
+    bodies, result, failure = await _extract_rules_after([_rejection(), refused], text_document_input)
+
+    assert result is None and len(bodies) == 2
+    assert failure.code == 'PROVIDER_CONNECTION_ERROR' and failure.not_sent is False
+    # The same failure of a first request that never left the host stays "not sent".
+    bodies, result, failure = await _extract_rules_after([refused], text_document_input)
+    assert len(bodies) == 1 and failure.code == 'PROVIDER_CONNECTION_ERROR' and failure.not_sent is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('model,effort', [('gpt-5.6-luna', 'medium'), ('gpt-5.4-mini', 'none')])
+async def test_a_known_model_is_retried_only_when_the_same_structured_rule_applies(model, effort, text_document_input):
+    bodies, result, failure = await _extract_rules_after([_rejection('max_output_tokens', 'unsupported_parameter'), _answered], text_document_input, model=model)
+    assert result is None and len(bodies) == 1 and failure.code == 'OPENAI_REQUEST_FAILED'
+    assert failure.metadata.reasoning_effort == effort
+
+    bodies, result, failure = await _extract_rules_after([_rejection('reasoning.effort', 'unsupported_value'), _answered], text_document_input, model=model)
+    assert failure is None and len(bodies) == 2
+    assert bodies[0]['reasoning'] == {'effort': effort} and 'reasoning' not in bodies[1]
+    assert bodies[1] == {key: value for key, value in bodies[0].items() if key != 'reasoning'}, 'the cache key and the rest stay'
+    assert result.metadata.reasoning_effort == 'default'
+
+
+@pytest.mark.asyncio
+async def test_a_schema_repair_after_the_fallback_does_not_send_the_rejected_parameter_again(text_document_input):
+    def malformed(model):
+        return httpx2.Response(200, json=_malformed(_sdk_response({}, model, output_tokens=4)))
+
+    bodies, result, failure = await _extract_rules_after([_rejection(), malformed, _answered], text_document_input)
+
+    assert failure is None
+    assert len(bodies) == 3, 'the rejected request, the answered one and the one repair'
+    assert bodies[0]['reasoning'] == {'effort': 'low'} and 'reasoning' not in bodies[1] and 'reasoning' not in bodies[2]
+    assert 'Schema-only repair' in bodies[2]['input'][0]['content'][0]['text']
+    assert (result.usage.input_tokens, result.usage.output_tokens, result.usage.attempt_count) == (200, 9, 2)
+    assert [item.reasoning_effort for item in result.attempt_metadata] == ['default', 'default']
+
+
+@pytest.mark.asyncio
+async def test_the_first_attempt_that_was_not_rejected_keeps_its_effort_for_the_repair(text_document_input):
+    def malformed(model):
+        return httpx2.Response(200, json=_malformed(_sdk_response({}, model, output_tokens=4)))
+
+    bodies, result, failure = await _extract_rules_after([malformed, _answered], text_document_input)
+
+    assert failure is None and len(bodies) == 2
+    assert bodies[0]['reasoning'] == bodies[1]['reasoning'] == {'effort': 'low'}
+    assert [item.reasoning_effort for item in result.attempt_metadata] == ['low', 'low']
 
 
 def test_wire_conversion_preserves_original_local_discriminators_and_defaults():
