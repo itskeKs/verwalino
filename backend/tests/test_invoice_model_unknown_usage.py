@@ -22,12 +22,13 @@ from app.declarations.openai_provider import OpenAiDeclarationProvider
 from app.declarations.pipeline import _Reservation
 from app.declarations.provider import DocumentInput, PageInput, ProviderFailure, ProviderUsage
 from app.declarations.provider_runtime import ProviderClient, create_extraction_provider
+from app.declarations.schemas import InvoiceExtractionOutput, PageReadingOutput
 from app.models.invoice_model_call import REQUEST_NOT_SENT
 from app.services.ai_settings_service import EffectiveAiSettings
 from app.workers.invoice_extraction import process_once
 from tests.invoice_model_support import no_invoice_model_data as no_invoice_model_data
 from tests.local_provider_endpoints import UNRESOLVABLE, closed_port, listening, not_tls, provider_for, resolve_without_network
-from tests.test_invoice_extraction_provider import _Encoder, _SdkResponse
+from tests.test_invoice_extraction_provider import ANSWER as INVOICE_ANSWER, _Encoder, _SdkResponse
 from tests.test_invoice_model_extraction import (
     Harness,
     ai,
@@ -347,3 +348,59 @@ async def test_a_repair_request_that_cannot_connect_after_a_reported_first_leg_s
     assert (row.status, row.usage_complete, row.error_code) == ("SETTLED", False, "PROVIDER_CONNECTION_ERROR")
     assert (row.input_tokens, row.output_tokens, row.cost_usd) == (row.reserved_input_tokens, row.reserved_output_tokens, row.reserved_cost_usd)
     assert row.reserved_input_tokens >= MALFORMED_USAGE[0] and await monthly(org) == row.reserved_cost_usd
+
+
+# ---- a model without a price that reports cache writes (issue #839) ----------------------------------------------------
+
+def cache_writing_provider(model, parsed, tokens):
+    """The real OpenAI provider over an SDK that answers once, reporting ``tokens`` of which a quarter were read from the
+    prompt cache and half were written to it: what a newer model reports of itself."""
+    cached, written = tokens[0] // 4, tokens[0] // 2
+
+    async def parse(**kwargs):
+        usage = SimpleNamespace(input_tokens=tokens[0], output_tokens=tokens[1], total_tokens=sum(tokens),
+                                input_tokens_details=SimpleNamespace(cached_tokens=cached, cache_write_tokens=written))
+        return SimpleNamespace(output_parsed=parsed, usage=usage, status="completed", refusal=None, model=model,
+                               _request_id="req_unpriced", output=[])
+
+    async def close():
+        return None
+
+    client = SimpleNamespace(responses=SimpleNamespace(parse=parse), close=close)
+    return OpenAiDeclarationProvider(client=client, primary_model=model, escalation_model=model, token_encoder=_Encoder())
+
+
+@pytest.mark.asyncio
+async def test_two_unpriced_models_that_report_cache_writes_finish_the_invoice_booked_as_reported_at_no_cost(worker_tenant):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    # The monthly limit is not enforced for a model without a price, and nothing of these calls counts towards it.
+    ai(org, model="gpt-6.2-sol", document_model="gpt-6-luna", monthly_limit_usd=Decimal("0.01"))
+    page = {"blocks": [{"kind": "TEXT", "text": "Mustermann Versicherungen AG Rechnung RE-2026-0042 Gesamtbetrag 312,00 EUR", "rows": None}]}
+    harness = Harness(
+        reader=cache_writing_provider("gpt-6-luna", PageReadingOutput.model_validate(page), (100, 5)),
+        extractor=cache_writing_provider("gpt-6.2-sol", InvoiceExtractionOutput.model_validate(INVOICE_ANSWER), (1200, 90)))
+    doc = await upload(api, scan_pdf())
+    await process(org, harness)
+
+    document, attempts = await state(api, doc)
+    assert [(a["status"], a["error_code"]) for a in attempts] == [("succeeded", None)]
+    assert document["processing_status"] == "succeeded" and document["extraction_payload"]["gross_amount"] == "312.00"
+    # Each call is stored with the tokens it reported and a cost of zero, which is no price: the reservation of a request
+    # at an unknown price is zero too.
+    reading, extraction = await ledger(org)
+    assert (reading.stage, reading.model_name, reading.status, reading.usage_complete, reading.error_code) == (
+        "read_page", "gpt-6-luna", "SETTLED", True, None)
+    assert (reading.input_tokens, reading.output_tokens, reading.cost_usd, reading.reserved_cost_usd) == (100, 5, Decimal("0"), Decimal("0"))
+    assert (extraction.stage, extraction.model_name, extraction.status, extraction.usage_complete, extraction.error_code) == (
+        "extract_invoice", "gpt-6.2-sol", "SETTLED", True, None)
+    assert (extraction.input_tokens, extraction.output_tokens, extraction.cost_usd, extraction.reserved_cost_usd) == (
+        1200, 90, Decimal("0"), Decimal("0"))
+    assert await monthly(org) == 0
+    # The usage card shows the reported tokens of both stages and no price at all, never 0 USD.
+    shown = await usage(api, doc)
+    assert [(stage["stage"], stage["model"], stage["usage_status"], stage["reported_input_tokens"], stage["reported_output_tokens"],
+             stage["estimated_cost_usd"]) for stage in shown["stages"]] == [
+        ("READING", "gpt-6-luna", "REPORTED", 100, 5, None), ("EXTRACTION", "gpt-6.2-sol", "REPORTED", 1200, 90, None)]
+    assert (shown["total"]["usage_status"], shown["total"]["input_tokens"], shown["total"]["output_tokens"],
+            shown["total"]["estimated_cost_usd"]) == ("REPORTED", 1300, 95, None)

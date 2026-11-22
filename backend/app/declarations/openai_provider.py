@@ -1723,7 +1723,11 @@ class OpenAiDeclarationProvider:
             or cached_input_tokens + cache_write_input_tokens > input_tokens
         ):
             raise ProviderFailure("OPENAI_USAGE_INVALID", False, "OpenAI response usage is invalid.")
-        if cache_write_input_tokens and rates.cache_write_multiplier is None:
+        # A model without a price is metered with zero rates (``_configured_rates``): its cost stays unknown, so there is no
+        # estimate that cache writes could under-state, and its paid answer is kept as reported. A priced model without a
+        # documented cache-write rate would price them at zero and stays refused.
+        unpriced = not (rates.input_usd_per_million or rates.output_usd_per_million or rates.cached_input_usd_per_million)
+        if cache_write_input_tokens and rates.cache_write_multiplier is None and not unpriced:
             raise ProviderFailure(
                 "OPENAI_CACHE_WRITE_UNSUPPORTED",
                 False,

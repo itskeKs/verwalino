@@ -36,18 +36,23 @@ from openai.lib._parsing._responses import type_to_text_format_param
 
 import app.declarations.openai_provider as openai_provider
 from app.core.config import Settings
-from app.declarations.fake_provider import FakeDeclarationProvider
+from app.declarations.fake_provider import FakeDeclarationProvider, synthetic_invoice_output
 from app.declarations.openai_provider import OpenAiDeclarationProvider
 from app.declarations.provider import (
     DocumentInput,
+    InvoiceCategory,
+    PageImage,
     PageInput,
     ProviderCallResult,
     ProviderFailure,
     ProviderReservationEstimate,
+    ProviderUsage,
 )
 from app.declarations.schemas import (
     CoreExtractionOutput,
     DocumentInventoryOutput,
+    PageReadingOutput,
+    ReadingBlock,
     ReconciliationOutput,
     RuleExtractionOutput,
     TargetedRecheckOutput,
@@ -580,6 +585,214 @@ def test_usage_cost_rejects_mini_cache_write_tokens() -> None:
         )
 
     assert exc_info.value.code == "OPENAI_CACHE_WRITE_UNSUPPORTED"
+
+
+# ---- a model without a price: cache writes are stored as reported and the cost stays unknown (issue #839) ------------
+#
+# Newer models write to the prompt cache on their own and report it. A priced model without a documented cache-write
+# rate would be under-estimated (the writes would count at zero), so it stays refused; a model without any price has no
+# estimate to protect, and its paid answer is accepted with the cost unknown, like every other call of such a model.
+
+UNPRICED_MODEL = "gpt-6.2-sol"  # no entry in the price table
+# 100 input tokens of which 30 were read from the cache and 50 written to it; the other 20 are ordinary input.
+WRITES_CACHE = dict(input_tokens=100, output_tokens=20, cached_tokens=30, cache_write_tokens=50)
+_READING_PAGE = PageImage("scan-1", 7, "image/png", _png_buffer.getvalue())
+_INVOICE_PAGES = (DocumentInput("invoice", (PageInput("invoice", 1, "Rechnung RE-2026-0042, Gesamtbetrag 312,00 EUR", 1.0),)),)
+_INVOICE_CATEGORIES = (InvoiceCategory("GEBAEUDEVERSICHERUNG", "Gebäudeversicherung"),)
+_INVENTORY = DocumentInventoryOutput(documents=[{"document_key": "declaration-main", "document_type": "DECLARATION", "title": "Synthetic"}])
+
+# What each journey asks of a model: the reading stage of the declaration import and of the invoice and inbox path (one
+# method), the extraction stage of the declaration import, and the extraction stage of the invoice and inbox path.
+CALLS = {
+    "read_page": (
+        PageReadingOutput(blocks=[ReadingBlock(kind="TEXT", text="Teilungserklärung, Seite 7")]),
+        lambda provider, model: provider.read_page(_READING_PAGE, model=model, max_output_tokens=50)),
+    "inventory": (
+        _INVENTORY,
+        lambda provider, model: provider.inventory(
+            [DocumentInput("declaration-main", (PageInput("declaration-main", 1, "Teilungserklärung", 1.0),))], max_output_tokens=50)),
+    "extract_invoice": (
+        synthetic_invoice_output(),
+        lambda provider, model: provider.extract_invoice(_INVOICE_PAGES, categories=_INVOICE_CATEGORIES, model=model, max_output_tokens=50)),
+}
+
+
+def _provider_of(model: str, outcomes: list[object]) -> OpenAiDeclarationProvider:
+    return OpenAiDeclarationProvider(
+        client=MockClient(outcomes), primary_model=model, escalation_model=model, token_encoder=LocalTokenEncoder())
+
+
+@pytest.mark.parametrize("call", sorted(CALLS))
+async def test_a_response_of_an_unpriced_model_that_reports_cache_writes_is_accepted_as_reported_at_an_unknown_cost(call):
+    output, make = CALLS[call]
+    provider = _provider_of(UNPRICED_MODEL, [MockResponse(output, _usage(**WRITES_CACHE), model=UNPRICED_MODEL)])
+
+    result = await make(provider, UNPRICED_MODEL)
+
+    # Tokens as reported; the cost is the zero of a call at no known price, which the run budget and the usage
+    # cards show as "kein Preis bekannt" because they read the price of the model, never a booked zero.
+    assert result.usage == ProviderUsage(100, 20, Decimal("0"), 1, 30, 50)
+    assert result.usage_complete is True
+    meta = result.metadata
+    assert meta.failure_class is None
+    assert (meta.input_tokens, meta.cached_input_tokens, meta.cache_write_input_tokens, meta.output_tokens, meta.estimated_cost_usd) == (
+        100, 30, 50, 20, Decimal("0"))
+    assert len(provider._client.responses.calls) == 1
+
+
+@pytest.mark.parametrize("call", sorted(CALLS))
+async def test_a_response_of_a_priced_model_without_a_cache_write_rate_is_still_refused_through_every_call(call):
+    output, make = CALLS[call]
+    provider = _provider_of("gpt-5.4-mini", [MockResponse(output, _usage(**WRITES_CACHE), model="gpt-5.4-mini")])
+
+    with pytest.raises(ProviderFailure) as exc_info:
+        await make(provider, "gpt-5.4-mini")
+
+    # No usage is stored for a refused answer: its reservation stands, which is the conservative booking.
+    assert exc_info.value.code == "OPENAI_CACHE_WRITE_UNSUPPORTED"
+    assert exc_info.value.usage is None
+    assert exc_info.value.metadata.failure_class == "OPENAI_CACHE_WRITE_UNSUPPORTED"
+
+
+@pytest.mark.parametrize("model", [UNPRICED_MODEL, "gpt-5.6-luna", "gpt-5.4-mini"])
+@pytest.mark.parametrize("usage", [
+    _usage(input_tokens=10, cached_tokens=8, cache_write_tokens=3),
+    _usage(input_tokens=10, cached_tokens=11, cache_write_tokens=0),
+    _usage(input_tokens=10, cached_tokens=0, cache_write_tokens=11),
+    _usage(input_tokens=-1),
+    _usage(output_tokens=-1),
+    _usage(cached_tokens=-1),
+    _usage(input_tokens=10, cached_tokens=11, cache_write_tokens=-1),
+    _usage(input_tokens=10.5),
+    _usage(output_tokens="20"),
+    _usage(cached_tokens=1.0),
+    _usage(cached_tokens=True),
+    _usage(cache_write_tokens=None),
+    _usage(cache_write_tokens="1"),
+    _usage(cache_write_tokens=1.5),
+    _usage(cache_write_tokens=True),
+], ids=["cached+written>input", "cached>input", "written>input", "negative-input", "negative-output", "negative-cached",
+        "negative-written", "float-input", "string-output", "float-cached", "bool-cached", "none-written", "string-written",
+        "float-written", "bool-written"])
+def test_inconsistent_usage_is_invalid_for_a_priced_and_an_unpriced_model_alike(model, usage):
+    with pytest.raises(ProviderFailure) as exc_info:
+        _provider_of(model, [])._validated_usage(usage, model, max_output_tokens=10_000)
+
+    assert exc_info.value.code == "OPENAI_USAGE_INVALID"
+
+
+@pytest.mark.parametrize("model", [UNPRICED_MODEL, "gpt-5.6-luna", "gpt-5.4-mini"])
+def test_missing_usage_is_missing_for_a_priced_and_an_unpriced_model_alike(model):
+    with pytest.raises(ProviderFailure) as exc_info:
+        _provider_of(model, [])._validated_usage(None, model, max_output_tokens=10)
+
+    assert exc_info.value.code == "OPENAI_USAGE_MISSING"
+
+
+def test_usage_that_exceeds_the_cache_write_partition_stays_invalid_when_an_unpriced_model_reports_writes():
+    # The acceptance of cache writes is no acceptance of any count: the partition is checked before the price is asked.
+    with pytest.raises(ProviderFailure) as exc_info:
+        _provider_of(UNPRICED_MODEL, [])._validated_usage(
+            _usage(input_tokens=100, cached_tokens=60, cache_write_tokens=41), UNPRICED_MODEL, max_output_tokens=10)
+
+    assert exc_info.value.code == "OPENAI_USAGE_INVALID"
+
+
+def test_the_whole_input_may_be_written_to_the_cache_by_an_unpriced_model():
+    usage = _provider_of(UNPRICED_MODEL, [])._validated_usage(
+        _usage(input_tokens=100, cached_tokens=40, cache_write_tokens=60), UNPRICED_MODEL, max_output_tokens=20)
+
+    assert usage == ProviderUsage(100, 20, Decimal("0"), 1, 40, 60)
+
+
+def test_a_caller_supplied_price_without_a_cache_write_rate_keeps_the_refusal():
+    # The comparison harness of the evaluations gives a model that is not in the price table caller-supplied rates; they
+    # are a price, so its cache writes would be under-estimated and stay refused.
+    from app.declarations.openai_provider import _Rates
+    provider = _provider_of(UNPRICED_MODEL, [])
+    provider._rates[UNPRICED_MODEL] = _Rates(Decimal("1"), Decimal("4"), Decimal("0.1"), None)
+
+    with pytest.raises(ProviderFailure) as exc_info:
+        provider._validated_usage(_usage(**WRITES_CACHE), UNPRICED_MODEL, max_output_tokens=50)
+
+    assert exc_info.value.code == "OPENAI_CACHE_WRITE_UNSUPPORTED"
+
+
+async def test_an_import_with_two_unpriced_models_that_wrote_to_the_cache_is_stored_as_reported_and_shows_no_price(
+    migrator_session, seed_data,
+):
+    """The two stages of the owner's run (issue #839): a reading call and an extraction call, each reporting cache writes,
+    metered by the real pipeline ledger and stored in the pass ledger and the run row, then shown by the run budget."""
+    import uuid
+
+    from sqlalchemy import text
+
+    from app.api.declaration_imports import _run_out
+    from app.core.config import settings
+    from app.declarations.pipeline import DeclarationPipeline, _Ledger
+    from app.repositories.declaration_import_repo import DeclarationImportRepository
+
+    reading_model, extraction_model = "gpt-6-luna", UNPRICED_MODEL
+    document = DocumentInput("declaration-main", (PageInput("declaration-main", 1, "Teilungserklärung", 1.0),))
+    reader, extractor = _provider_of(reading_model, []), _provider_of(extraction_model, [])
+    reading_input = reader.estimate_reservation("read_page", page=_READING_PAGE, max_output_tokens=50).attempt_input_tokens[0]
+    extraction_input = extractor.estimate_reservation("inventory", documents=[document], max_output_tokens=50).attempt_input_tokens[0]
+    for provider, model, output, tokens in ((reader, reading_model, CALLS["read_page"][0], reading_input),
+                                            (extractor, extraction_model, _INVENTORY, extraction_input)):
+        usage = _usage(input_tokens=tokens, output_tokens=5, cached_tokens=tokens // 4, cache_write_tokens=tokens // 2)
+        provider._client.responses.outcomes.append(MockResponse(output, usage, model=model))
+
+    pipeline = object.__new__(DeclarationPipeline)
+    pipeline._settings = settings.model_copy(update={"declaration_provider_max_output_tokens_per_call": 50})
+    pipeline._provider, pipeline._reading_provider, pipeline._reading_model = extractor, reader, reading_model
+
+    async def checkpoint(_ledger, **_kwargs):
+        return None
+
+    pipeline._checkpoint = checkpoint
+    ledger = _Ledger(0, 0, Decimal("0"), 0, 500_000, 60_000, Decimal("1"), pipeline._settings, model=extraction_model)
+    await pipeline._read_one(ledger, SimpleNamespace(exclude_wait=lambda _seconds: None), _READING_PAGE, uuid.uuid4())
+    assert await pipeline._call("inventory", (document,), ledger, DocumentInventoryOutput) == _INVENTORY
+
+    # The run goes on and books what was reported; nothing is booked as a cost.
+    assert (ledger.run_input_tokens, ledger.run_output_tokens, ledger.run_cost_usd) == (reading_input + extraction_input, 10, Decimal("0"))
+    assert len(ledger.pass_entries) == 2
+
+    savepoint = await migrator_session.begin_nested()
+    try:
+        import_id, run_id = uuid.uuid4(), uuid.uuid4()
+        params = {"org": seed_data["org_a_id"], "actor": seed_data["user_a_admin_id"], "job": import_id, "run": run_id,
+                  "model": extraction_model, "reading": reading_model, "input": ledger.run_input_tokens,
+                  "output": ledger.run_output_tokens, "cost": ledger.run_cost_usd}
+        await migrator_session.execute(text(
+            "INSERT INTO declaration_import(id,organization_id,mode,status,initiated_by,max_cost_usd)"
+            " VALUES(:job,:org,'NEW_PROPERTY','PREFLIGHT',:actor,1)"), params)
+        await migrator_session.execute(text(
+            "INSERT INTO declaration_extraction_run(id,organization_id,import_id,provider,model_name,document_model_name,"
+            "prompt_version,schema_version,harness_version,input_tokens,output_tokens,estimated_cost_usd)"
+            " VALUES(:run,:org,:job,'OpenAiDeclarationProvider',:model,:reading,'test','test','2',:input,:output,:cost)"), params)
+        repository = DeclarationImportRepository(migrator_session, seed_data["org_a_id"])
+        await repository.append_pass_entries(run_id, tuple(ledger.pass_entries))
+        (run,), passes = await repository.list_runs(import_id), await repository.list_run_passes(import_id)
+
+        stored = [row.safe_metadata for row in passes]
+        assert [(row["pass_id"], row["configured_model"], row["input_tokens"], row["cached_input_tokens"],
+                 row["cache_write_input_tokens"], row["output_tokens"], Decimal(row["estimated_cost_usd"]), row["failure_class"])
+                for row in stored] == [
+            ("read_page", reading_model, reading_input, reading_input // 4, reading_input // 2, 5, Decimal("0"), None),
+            ("inventory", extraction_model, extraction_input, extraction_input // 4, extraction_input // 2, 5, Decimal("0"), None)]
+        assert (run.input_tokens, run.output_tokens, run.estimated_cost_usd) == (reading_input + extraction_input, 10, Decimal("0"))
+
+        shown = _run_out(run, stored)
+        assert shown.usage_status == "REPORTED"
+        assert [(stage.stage, stage.model, stage.usage_status, stage.reported_input_tokens, stage.reported_output_tokens,
+                 stage.estimated_cost_usd) for stage in shown.stages] == [
+            ("READING", reading_model, "REPORTED", reading_input, 5, None),
+            ("EXTRACTION", extraction_model, "REPORTED", extraction_input, 5, None)]
+        assert (shown.input_tokens, shown.output_tokens, shown.estimated_cost_usd) == (reading_input + extraction_input, 10, None)
+        assert shown.unassigned is None
+    finally:
+        await savepoint.rollback()
 
 
 @pytest.fixture
