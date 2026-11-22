@@ -86,9 +86,25 @@ for the reading model.
 | precheck deadline | 600 seconds |
 | provider pages / characters per batch | 20 / 80,000 |
 | input / output tokens per import | 2,500,000 / 500,000 |
-| output tokens per provider call | 12,000 |
+| output tokens per provider call | 24,000 |
 | recheck pages / recheck calls | 12 / 2 |
 | candidates / estimated import cost | 5,000 / 3.00 USD |
+
+The per-call allowance (`HV_DECLARATION_PROVIDER_MAX_OUTPUT_TOKENS_PER_CALL`) applies to
+every model request of an import: reading a page, the three extraction passes, reconciliation
+and a recheck. A request gets the smaller of the allowance and what the import has left of its
+output tokens, so the last request can get less. Before each request the worker reserves its
+worst-case cost, with the output at that allowance and the model's price, and does not send a
+request whose reservation would exceed the import's cost limit.
+
+The request timeout is a separate bound, and a long answer needs a long timeout. A model
+writes about 90 output tokens per second (measured on staging), so an answer of 24,000
+tokens takes about 270 seconds. Unless the organization saves its own **Zeitlimit pro
+Anfrage** in its AI settings, a request may take 60 seconds
+(`HV_DECLARATION_PROVIDER_TIMEOUT_SECONDS`) with OpenAI or Anthropic and 180 seconds with an
+OpenAI-compatible API. An organization whose imports need answers of this length to complete
+sets a timeout above 270 seconds; a request that runs out of time fails with
+`PROVIDER_TIMEOUT`.
 
 Every **Evidence-Quote** must appear locally on the exact
 `(document_key, pdf_page)` given. The validator normalizes Unicode, line breaks,

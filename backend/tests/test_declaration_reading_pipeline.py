@@ -250,7 +250,7 @@ async def test_a_call_with_unknown_usage_keeps_its_reservation(seed_data) -> Non
     item = await _item(lease)
     assert (item.status, item.error_code) == ("RETRY_WAIT", "PROVIDER_TIMEOUT")
     # The fake reserves 17 input tokens and the model's full output allowance; none of it is given back.
-    assert item.input_tokens == 17 and item.output_tokens == 12_000
+    assert item.input_tokens == 17 and item.output_tokens == settings.declaration_provider_max_output_tokens_per_call
     assert item.estimated_cost_usd > Decimal("0.05")
 
 
