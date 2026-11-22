@@ -345,9 +345,16 @@ per-import ceiling before any provider call; Q&A reserves its bounded worst case
 before its provider call. Both acquire the same monthly organization lock, across
 properties and processes, in addition to existing per-call controls. Finalized
 costs and conservative unresolved reservations count against the calendar month;
-expired Q&A reservations are not free credit. Work crossing a month boundary is
-included. Abandoned reservations from earlier months with expired leases do not
-consume the new month's allowance. The cap is the organization's optional
+expired Q&A reservations are not free credit. A Q&A request that provably never
+left the host (the name did not resolve, the endpoint guard refused the address or
+the connection could not be made: `ProviderUnavailable.not_sent`, decided by the
+knowledge providers from the phase of the request and never from message text, with
+the same test as `ProviderFailure.not_sent`) is finalized at zero, so repeated
+questions at an unreachable provider do not use up the limit; the ledger row still
+records the failed question as `PROVIDER_UNAVAILABLE`. A timeout and every failure
+after the request may have been written keep the reservation. Work crossing a month
+boundary is included. Abandoned reservations from earlier months with expired
+leases do not consume the new month's allowance. The cap is the organization's optional
 monthly limit (`require_organization_ai_budget` in `services/ai_settings_service.py`);
 with no limit, or with a model whose price is unknown, nothing is capped. A
 Q&A or declaration provider call whose reservation would exceed the limit, or
