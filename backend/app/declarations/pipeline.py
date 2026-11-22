@@ -196,6 +196,15 @@ class _Ledger:
         ):
             raise PipelineFailure("IMPORT_TOKEN_BUDGET_EXCEEDED")
 
+    def release_reservation(self, reservation: _Reservation) -> None:
+        """Give back a durable charge: its request never left the host (``ProviderFailure.not_sent``), so nothing was consumed.
+
+        The attempt itself stays counted and on record; only what it was charged is returned.
+        """
+        self.input_tokens -= reservation.input_tokens
+        self.output_tokens -= reservation.output_tokens
+        self.cost_usd -= reservation.cost_usd
+
     def retain_reservation_for_incomplete_usage(
         self,
         usage: ProviderUsage | None,
@@ -637,7 +646,9 @@ class DeclarationPipeline:
         """Keep the attempt's evidence and the consumed (or, when unknown, the reserved) usage of a failed call."""
         try:
             _append_failure_attempt_metadata(ledger, exc)
-            if not exc.usage_complete:
+            if exc.not_sent:
+                ledger.release_reservation(reservation)
+            elif not exc.usage_complete:
                 ledger.retain_reservation_for_incomplete_usage(
                     exc.usage if isinstance(exc.usage, ProviderUsage) else None,
                     exc.attempt_count,
@@ -724,7 +735,9 @@ class DeclarationPipeline:
             except PipelineFailure:
                 await self._checkpoint(ledger)
                 raise
-            if not exc.usage_complete:
+            if exc.not_sent:
+                ledger.release_reservation(reservation)
+            elif not exc.usage_complete:
                 try:
                     ledger.retain_reservation_for_incomplete_usage(
                         exc.usage if isinstance(exc.usage, ProviderUsage) else None,
@@ -776,7 +789,9 @@ class DeclarationPipeline:
             except PipelineFailure:
                 await self._checkpoint(ledger)
                 raise
-            if not exc.usage_complete:
+            if exc.not_sent:
+                ledger.release_reservation(reservation)
+            elif not exc.usage_complete:
                 try:
                     ledger.retain_reservation_for_incomplete_usage(
                         exc.usage if isinstance(exc.usage, ProviderUsage) else None,
@@ -1117,7 +1132,9 @@ class DeclarationPipeline:
             except PipelineFailure:
                 await self._checkpoint(ledger)
                 raise
-            if not exc.usage_complete:
+            if exc.not_sent:
+                ledger.release_reservation(reservation)
+            elif not exc.usage_complete:
                 try:
                     ledger.retain_reservation_for_incomplete_usage(
                         exc.usage if isinstance(exc.usage, ProviderUsage) else None,

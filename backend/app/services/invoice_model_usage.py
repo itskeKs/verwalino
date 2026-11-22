@@ -13,7 +13,7 @@ from typing import Literal, Sequence
 
 from pydantic import BaseModel
 
-from app.models.invoice_model_call import InvoiceModelCall
+from app.models.invoice_model_call import REQUEST_NOT_SENT, InvoiceModelCall
 
 _STAGES = {"read_page": "READING", "extract_invoice": "EXTRACTION"}
 _STAGE_ORDER = {"READING": 0, "EXTRACTION": 1}
@@ -66,7 +66,11 @@ def _usage(calls: Sequence[InvoiceModelCall]) -> dict:
 
 
 def summarize(calls: Sequence[InvoiceModelCall]) -> InvoiceModelUsageOut:
-    """The usage of every call of an invoice, over all its attempts, per stage and model and in total."""
+    """The usage of every request of an invoice, over all its attempts, per stage and model and in total.
+
+    A call whose request never left the host (``REQUEST_NOT_SENT``) is no request: it consumed nothing and is not listed.
+    """
+    calls = [call for call in calls if call.error_code != REQUEST_NOT_SENT]
     if not calls:
         return InvoiceModelUsageOut(stages=[], total=None)
     groups: dict[tuple[str, str], list[InvoiceModelCall]] = {}

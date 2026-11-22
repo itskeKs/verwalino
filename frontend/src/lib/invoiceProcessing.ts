@@ -104,6 +104,10 @@ const PROCESSING_MESSAGES: Record<string, Entry> = {
     invoice: `Das Modell unter „Informationen extrahieren“ hat keine Angaben geliefert (Fehler oder Zeitüberschreitung beim Anbieter). ${KEPT} Sie können die Verarbeitung erneut starten oder ${BY_HAND}. ${PAID_AGAIN} ${CHOOSE_OTHER}`,
     inbox: `Das Modell unter „Informationen extrahieren“ hat keine Angaben geliefert (Fehler oder Zeitüberschreitung beim Anbieter). ${KEPT} ${IN_USAGE} Sie können ${IN_AGAIN} oder ${IN_BY_HAND}. ${IN_PAID_AGAIN} ${CHOOSE_OTHER}`,
   },
+  provider_unreachable: {
+    invoice: `Der KI-Anbieter Ihrer Organisation konnte nicht erreicht werden (die Adresse ließ sich nicht auflösen oder ist nicht zulässig, oder die Verbindung kam nicht zustande). Die Anfrage wurde nicht gesendet und hat keine Kosten verursacht. Falls schon Anfragen gesendet wurden, steht ihr Verbrauch unter „Verbrauch der KI-Verarbeitung“. ${KEPT} Sie können die Verarbeitung erneut starten, sobald der Anbieter erreichbar ist, oder ${BY_HAND}. Bleibt der Fehler bestehen, kann Ihre Administration ${SETTINGS} die Adresse des Anbieters prüfen.`,
+    inbox: `Der KI-Anbieter Ihrer Organisation konnte nicht erreicht werden (die Adresse ließ sich nicht auflösen oder ist nicht zulässig, oder die Verbindung kam nicht zustande). Die Anfrage wurde nicht gesendet und hat keine Kosten verursacht. Falls schon Anfragen gesendet wurden, steht ihr Verbrauch ${IN_USAGE_WHERE}. ${KEPT} Sie können ${IN_AGAIN}, sobald der Anbieter erreichbar ist, oder ${IN_BY_HAND}. Bleibt der Fehler bestehen, kann Ihre Administration ${SETTINGS} die Adresse des Anbieters prüfen.`,
+  },
   model_result_invalid: {
     invoice: `Das Modell hat eine Antwort geliefert, die sich nicht als Rechnung auswerten ließ. ${KEPT} Sie können die Verarbeitung erneut starten oder ${BY_HAND}. ${PAID_AGAIN} ${CHOOSE_OTHER}`,
     inbox: `Das Modell hat eine Antwort geliefert, die sich nicht als Beleg auswerten ließ. ${KEPT} ${IN_USAGE} Sie können ${IN_AGAIN} oder ${IN_BY_HAND}. ${IN_PAID_AGAIN} ${CHOOSE_OTHER}`,

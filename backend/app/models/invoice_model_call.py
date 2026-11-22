@@ -15,6 +15,11 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base, UUIDPrimaryKeyMixin
 
+# The ``error_code`` of a call that was settled because its request never left the host (the name did not resolve, the
+# endpoint guard refused the address, the connection could not be made): it consumed nothing, so it is settled at zero,
+# and it is no request the user is shown. Every other failure keeps the stable code of its failure.
+REQUEST_NOT_SENT = "PROVIDER_REQUEST_NOT_SENT"
+
 
 class InvoiceModelCall(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "invoice_model_call"

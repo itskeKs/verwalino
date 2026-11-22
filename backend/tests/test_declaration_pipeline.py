@@ -34,7 +34,7 @@ from app.declarations.openai_provider import OpenAiDeclarationProvider
 from app.declarations.fake_provider import FakeDocumentReadingProvider
 from app.declarations.preflight import DocumentIntegrityError, PdfPreflight
 from app.declarations.observability import ProviderPassMetadata
-from app.declarations.provider import DocumentInput, PageInput, ProviderCallResult, ProviderFailure, ProviderReservationEstimate, ProviderUsage
+from app.declarations.provider import DocumentInput, PageImage, PageInput, ProviderCallResult, ProviderFailure, ProviderReservationEstimate, ProviderUsage
 from app.declarations.schemas import (
     AdditionalFactPayload,
     CoreExtractionOutput,
@@ -406,6 +406,125 @@ async def test_call_rejects_invalid_failure_contract_before_usage_branch() -> No
         await pipeline._call("inventory", (), ledger, DocumentInventoryOutput)
 
     assert ledger.pass_entries == []
+
+
+# ---- a failed request is booked by whether it can have left the host (issue #833) ---------------------------
+#
+# The import reserves a request durably before it leaves (the reservation is part of the checkpointed totals) and, once
+# it failed, keeps that reservation when the request may have been sent without usage being reported. A request that
+# provably never left (``not_sent``) consumed nothing: its reservation is given back, so that a retried import does
+# not pile up spending for requests nobody received.
+
+_PAGE = PageImage(document_key="d", pdf_page=1, media_type="image/png", data=b"png")
+_DOCUMENT_INVENTORY = DocumentInventoryOutput(documents=[{"document_key": "d", "document_type": "DECLARATION", "title": "D"}])
+
+
+def _failed_call_site(site: str, failure: ProviderFailure):
+    """The pipeline with one provider that fails every request with ``failure``, the ledger and the checkpoints it wrote."""
+    checkpoints: list[tuple[int, int, Decimal, int]] = []
+
+    async def checkpoint(ledger, *, reading=None) -> None:
+        checkpoints.append((ledger.input_tokens, ledger.output_tokens, ledger.cost_usd, ledger.attempts))
+
+    async def fail(*_args, **_kwargs):
+        raise failure
+
+    estimate = lambda *_args, **_kwargs: ProviderReservationEstimate(1, 1, (1,))  # noqa: E731
+    pipeline = object.__new__(DeclarationPipeline)
+    pipeline._settings = settings
+    pipeline._checkpoint = checkpoint
+    pipeline._provider = SimpleNamespace(inventory=fail, reconcile=fail, recheck=fail, estimate_reservation=estimate)
+    pipeline._reading_provider = SimpleNamespace(read_page=fail, estimate_reservation=estimate)
+    pipeline._reading_model = "gpt-5.4-mini"
+    ledger = _Ledger(0, 0, Decimal("0"), 0, 500_000, 60_000, Decimal("1"), settings)
+    runs = {
+        "call": lambda: pipeline._call("inventory", (), ledger, DocumentInventoryOutput),
+        "reconcile": lambda: pipeline._call_reconcile(
+            _DOCUMENT_INVENTORY, CoreExtractionOutput(facts=[]), RuleExtractionOutput(rules=[]), ledger),
+        "recheck": lambda: pipeline._call_recheck_batch((), ("LOW_PAGE_QUALITY",), ("rule:heating",), ledger),
+        "reading": lambda: pipeline._read_one(
+            ledger, SimpleNamespace(exclude_wait=lambda _seconds: None), _PAGE, uuid.uuid4()),
+    }
+    return ledger, checkpoints, runs[site]
+
+
+def _failure(code: str = "PROVIDER_CONNECTION_ERROR", *, pass_id: str = "inventory", **options) -> ProviderFailure:
+    metadata = _safe_attempt_metadata(failure_class=code, pass_id=pass_id)
+    return ProviderFailure(code, True, "safe", attempt_metadata=(metadata,), **options)
+
+
+_SITES = ["call", "reconcile", "recheck", "reading"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("site", _SITES)
+async def test_a_request_that_never_left_gives_its_reservation_back(site) -> None:
+    ledger, checkpoints, run = _failed_call_site(site, _failure(not_sent=True))
+    with pytest.raises(ProviderFailure):
+        await run()
+    # The reservation was durable before the request (the first checkpoint) and is gone from the last one; the attempt
+    # stays on record, as does its pass-ledger entry.
+    assert checkpoints[0][0] == 1 and checkpoints[0][1] > 0 and checkpoints[0][2] > 0
+    assert checkpoints[-1] == (0, 0, Decimal("0"), 1)
+    assert (ledger.input_tokens, ledger.output_tokens, ledger.cost_usd) == (0, 0, Decimal("0"))
+    assert [entry.failure_class for entry in ledger.pass_entries] == ["PROVIDER_CONNECTION_ERROR"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("site", _SITES)
+async def test_a_request_that_may_have_been_sent_keeps_its_reservation(site) -> None:
+    ledger, checkpoints, run = _failed_call_site(site, _failure("PROVIDER_TIMEOUT"))
+    with pytest.raises(ProviderFailure):
+        await run()
+    # Unknown is not zero: what the request consumed is not known, so the durable reservation stays booked.
+    assert checkpoints[0] == checkpoints[-1] and checkpoints[-1][0] == 1 and checkpoints[-1][2] > 0
+    assert (ledger.input_tokens, ledger.cost_usd) == (checkpoints[-1][0], checkpoints[-1][2])
+
+
+@pytest.mark.asyncio
+async def test_repeated_requests_that_never_left_do_not_accumulate_in_the_ledger() -> None:
+    ledger, checkpoints, run = _failed_call_site("call", _failure(not_sent=True))
+    for _ in range(3):
+        with pytest.raises(ProviderFailure):
+            await run()
+    assert (ledger.input_tokens, ledger.output_tokens, ledger.cost_usd) == (0, 0, Decimal("0"))
+
+
+@pytest.mark.asyncio
+async def test_a_failure_that_reports_usage_is_never_released_even_if_it_claims_not_to_have_been_sent() -> None:
+    usage = ProviderUsage(1, 5, Decimal("0.00001"), 1)
+    ledger, checkpoints, run = _failed_call_site("call", _failure("PROVIDER_REFUSAL", usage=usage, not_sent=True, usage_complete=True))
+    with pytest.raises(ProviderFailure) as raised:
+        await run()
+    assert raised.value.not_sent is False
+    assert (ledger.input_tokens, ledger.output_tokens, ledger.cost_usd) == (1, 5, Decimal("0.00001"))
+
+
+@pytest.mark.asyncio
+async def test_a_connection_refused_by_a_real_transport_gives_the_import_its_reservation_back() -> None:
+    from tests.local_provider_endpoints import closed_port, provider_for
+
+    provider = provider_for("openai_compatible", f"http://127.0.0.1:{closed_port()}/v1")
+    checkpoints: list[Decimal] = []
+
+    async def checkpoint(ledger, *, reading=None) -> None:
+        checkpoints.append(ledger.cost_usd)
+
+    pipeline = object.__new__(DeclarationPipeline)
+    pipeline._settings = settings
+    pipeline._checkpoint = checkpoint
+    pipeline._provider = provider
+    ledger = _Ledger(0, 0, Decimal("0"), 0, 500_000, 60_000, Decimal("1"), settings)
+    document = DocumentInput("d", (PageInput("d", 1, "Teilungserklärung", 1.0),))
+    try:
+        with pytest.raises(ProviderFailure) as raised:
+            await pipeline._call("inventory", (document,), ledger, DocumentInventoryOutput)
+    finally:
+        await provider._client.close()
+    assert raised.value.not_sent is True
+    assert checkpoints[0] > 0, "the request was reserved before it was tried"
+    assert ledger.input_tokens == 0 and ledger.output_tokens == 0 and ledger.cost_usd == 0
+    assert len(ledger.pass_entries) == 1
 
 
 def test_output_allowances_descend_exactly_across_logical_calls() -> None:

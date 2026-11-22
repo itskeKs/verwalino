@@ -2,36 +2,45 @@
 
 Every transport is the real one (OpenAI SDK shape, OpenAI-compatible and Anthropic wire over a mock HTTP transport)
 behind the real worker, reservation and ledger; only the network is faked. A request that provably never left is the
-one case that costs nothing.
+one case that costs nothing: one that failed while the name was resolved, in the endpoint guard, while connecting or in
+the TLS handshake (issue #833), which the last tests run over real local sockets, and one raised before any attempt.
 """
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from types import SimpleNamespace
 
 import httpx
+import httpx2
 import openai
 import pytest
 from pydantic import SecretStr
 
 from app.core.db import get_worker_session_factory
-from app.declarations.fake_provider import FakeInvoiceExtractionProvider
+from app.declarations.fake_provider import FakeDocumentReadingProvider, FakeInvoiceExtractionProvider
 from app.declarations.invoice_pipeline import InvoiceProviders, _failed_amounts
 from app.declarations.openai_provider import OpenAiDeclarationProvider
 from app.declarations.pipeline import _Reservation
 from app.declarations.provider import DocumentInput, PageInput, ProviderFailure, ProviderUsage
 from app.declarations.provider_runtime import ProviderClient, create_extraction_provider
+from app.models.invoice_model_call import REQUEST_NOT_SENT
 from app.services.ai_settings_service import EffectiveAiSettings
 from app.workers.invoice_extraction import process_once
 from tests.invoice_model_support import no_invoice_model_data as no_invoice_model_data
+from tests.local_provider_endpoints import UNRESOLVABLE, closed_port, listening, not_tls, provider_for, resolve_without_network
 from tests.test_invoice_extraction_provider import _Encoder, _SdkResponse
 from tests.test_invoice_model_extraction import (
+    Harness,
+    ai,
     leave_no_invoice_model_data as leave_no_invoice_model_data,
     ledger,
     monthly,
     no_proposal,
+    process,
     scan_pdf,
     state,
     store as store,
     tesseract_unusable as tesseract_unusable,
+    transcript,
     upload,
     usage,
     worker_tenant as worker_tenant,
@@ -60,8 +69,12 @@ class Wire:
 
 def openai_transport(model, wire):
     def outcome(step):
-        if step == "connection":
-            return openai.APIConnectionError(request=REQUEST)
+        if step in {"reset", "refused"}:
+            # What the SDK raises for a connection that broke while the request was out (its HTTP library's read error)
+            # or could not be made at all (its connect error).
+            error = openai.APIConnectionError(request=REQUEST)
+            error.__cause__ = httpx2.ReadError("reset") if step == "reset" else httpx2.ConnectError("refused")
+            return error
         if step == "timeout":
             return openai.APITimeoutError(request=REQUEST)
         if step == "server":
@@ -86,7 +99,9 @@ def http_transport(kind, model, wire, base_url):
 
     def handle(request):
         step = wire.next()
-        if step == "connection":
+        if step == "reset":
+            raise httpx.ReadError("reset", request=request)
+        if step == "refused":
             raise httpx.ConnectError("refused", request=request)
         if step == "timeout":
             raise httpx.ReadTimeout("slow", request=request)
@@ -120,8 +135,8 @@ class Transports:
         return InvoiceProviders(reader=reader, extractor=extractor)
 
 
-def configure(org, kind):
-    configure_ai(org, import_enabled=True, monthly_limit_usd=None, **KINDS[kind])
+def configure(org, kind, monthly_limit_usd=None):
+    configure_ai(org, import_enabled=True, monthly_limit_usd=monthly_limit_usd, **KINDS[kind])
 
 
 @pytest.fixture(params=sorted(KINDS))
@@ -130,7 +145,7 @@ def kind(request):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("step", ["connection", "timeout", "server"])
+@pytest.mark.parametrize("step", ["reset", "timeout", "server"])
 async def test_a_request_that_was_sent_and_failed_without_usage_stays_booked_at_its_reservation(worker_tenant, kind, step):
     api, ids = worker_tenant
     org = ids["org_a_id"]
@@ -192,13 +207,17 @@ RESERVED = (5000, 6000, Decimal("0.012"), False)
 
 @pytest.mark.no_db
 @pytest.mark.asyncio
-async def test_only_a_failure_without_any_attempt_usage_or_metadata_books_zero():
+async def test_only_a_failure_that_never_left_books_zero():
     result = await FakeInvoiceExtractionProvider().extract_invoice(
         [DocumentInput("invoice", (PageInput("invoice", 1, "text", 1.0),))], categories=(), model="m", max_output_tokens=10)
     attempt = result.attempt_metadata
     reported = ProviderUsage(300, 20, Decimal("0.0001"), 1)
     cases = {
         "never left": (ProviderFailure("OPENAI_API_KEY_MISSING", False, "no client"), (0, 0, Decimal("0"), True)),
+        "not sent: the connection could not be made": (ProviderFailure("PROVIDER_CONNECTION_ERROR", True, "refused", attempt_metadata=attempt, not_sent=True), (0, 0, Decimal("0"), True)),
+        "not sent, with an attempt counted": (ProviderFailure("PROVIDER_CONNECTION_ERROR", True, "refused", attempt_metadata=attempt, attempt_count=1, not_sent=True), (0, 0, Decimal("0"), True)),
+        "not sent, but usage reported": (ProviderFailure("PROVIDER_SCHEMA_FAILURE", False, "invalid", usage=reported, not_sent=True), (300, 20, Decimal("0.0001"), True)),
+        "sent, the connection reset": (ProviderFailure("PROVIDER_CONNECTION_ERROR", True, "reset", attempt_metadata=attempt, not_sent=False), RESERVED),
         "usage reported": (ProviderFailure("PROVIDER_SCHEMA_FAILURE", False, "invalid", usage=reported), (300, 20, Decimal("0.0001"), True)),
         "sent, usage unknown": (ProviderFailure("PROVIDER_TIMEOUT", True, "slow", attempt_metadata=attempt), RESERVED),
         "sent, declared complete without usage": (ProviderFailure("PROVIDER_TIMEOUT", True, "slow", attempt_metadata=attempt, usage_complete=True), RESERVED),
@@ -207,3 +226,125 @@ async def test_only_a_failure_without_any_attempt_usage_or_metadata_books_zero()
         "usage that cannot be valid": (ProviderFailure("PROVIDER_SCHEMA_FAILURE", False, "invalid", usage=ProviderUsage(-1, 0, Decimal("0"), 1)), RESERVED),
     }
     assert {name: _failed_amounts(failure, RESERVATION) for name, (failure, _) in cases.items()} == {name: expected for name, (_, expected) in cases.items()}
+
+
+# ---- a request that never left the host (issue #833) -------------------------------------------------------------
+
+SITUATIONS = [(kind, situation) for kind in KINDS for situation in ("refused", "tls", "unresolvable", "guard") if (kind, situation) != ("openai", "guard")]
+
+
+@asynccontextmanager
+async def unreachable(situation, monkeypatch):
+    """The base URL of an endpoint that cannot be connected to, for real, in one of the four ways a connection fails
+    before the request is written: refused, a TLS handshake that fails, a name that does not resolve, and a name that
+    resolves to an address the endpoint guard refuses (link-local here; a hosted deployment also refuses private ones)."""
+    if situation == "refused":
+        yield f"http://127.0.0.1:{closed_port()}/v1"
+    elif situation == "tls":
+        async with listening(not_tls) as port:
+            yield f"https://127.0.0.1:{port}/v1"
+    else:
+        resolve_without_network(monkeypatch, address=None if situation == "unresolvable" else "169.254.169.254")
+        yield f"https://{UNRESOLVABLE}/v1"
+
+
+class Real:
+    """The worker's provider factory with the real transport of one kind for both models, aimed at ``base_url``."""
+
+    def __init__(self, kind, base_url):
+        self.kind, self.base_url = kind, base_url
+
+    def __call__(self, effective):
+        return InvoiceProviders(reader=provider_for(self.kind, self.base_url, model=effective.document_model),
+                                extractor=provider_for(self.kind, self.base_url, model=effective.model))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind,situation", SITUATIONS)
+async def test_a_request_that_could_not_be_sent_is_settled_as_not_sent_and_costs_nothing(worker_tenant, monkeypatch, kind, situation):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    configure(org, kind)
+    original = scan_pdf()
+    doc = await upload(api, original)
+    async with unreachable(situation, monkeypatch) as base_url:
+        assert await process_once(get_worker_session_factory(), org, providers=Real(kind, base_url))
+    document, attempts = await state(api, doc)
+    assert [(a["status"], a["error_code"]) for a in attempts] == [("failed", "provider_unreachable")]
+    assert no_proposal(document) and (await api.get(f"/api/invoice-documents/{doc['id']}/content")).content == original
+    (row,) = await ledger(org)
+    assert (row.status, row.usage_complete, row.error_code) == ("SETTLED", True, REQUEST_NOT_SENT)
+    assert (row.input_tokens, row.output_tokens, row.cost_usd) == (0, 0, Decimal("0"))
+    # What was reserved before the request stays on the row, so that a request that was not sent is told from one that was.
+    assert row.reserved_input_tokens > 0 and row.reserved_output_tokens > 0
+    assert (row.reserved_cost_usd > 0) == (kind != "openai_compatible"), "a model without a price reserves no money"
+    assert await monthly(org) == 0
+    assert await usage(api, doc) == {"stages": [], "total": None}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["openai", "anthropic"])
+async def test_three_attempts_that_could_not_be_sent_do_not_use_up_the_monthly_limit(worker_tenant, monkeypatch, kind):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    configure(org, kind)
+    doc = await upload(api, scan_pdf())
+    async with unreachable("refused", monkeypatch) as base_url:
+        providers = Real(kind, base_url)
+        assert await process_once(get_worker_session_factory(), org, providers=providers)
+        (first,) = await ledger(org)
+        reservation = first.reserved_cost_usd
+        assert reservation > 0
+        # A limit that one reservation of this size uses up on its own with the next: had the first attempt been
+        # booked, the second would be refused before it was tried.
+        configure(org, kind, monthly_limit_usd=reservation * Decimal("1.5"))
+        for _ in range(2):
+            assert (await api.post(f"/api/invoice-documents/{doc['id']}/retry")).status_code == 200
+            assert await process_once(get_worker_session_factory(), org, providers=providers)
+    _, attempts = await state(api, doc)
+    assert [(a["status"], a["error_code"]) for a in attempts] == [("failed", "provider_unreachable")] * 3
+    rows = await ledger(org)
+    assert [(row.status, row.error_code, row.reserved_cost_usd) for row in rows] == [("SETTLED", REQUEST_NOT_SENT, reservation)] * 3
+    assert await monthly(org) == 0
+    assert await usage(api, doc) == {"stages": [], "total": None}
+
+
+@pytest.mark.asyncio
+async def test_a_page_read_before_the_provider_became_unreachable_stays_booked_and_listed(worker_tenant):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    ai(org)
+    reader = FakeDocumentReadingProvider(
+        transcripts=transcript(1, "Mustermann Versicherungen AG Rechnung RE-2026-0042"), usage=ProviderUsage(1000, 200, Decimal("0.00165"), 1),
+        failures={("invoice", 2): ProviderFailure("PROVIDER_CONNECTION_ERROR", True, "refused", not_sent=True)})
+    doc = await upload(api, scan_pdf(2))
+    await process(org, Harness(reader=reader))
+    assert [(a["status"], a["error_code"]) for a in (await state(api, doc))[1]] == [("failed", "provider_unreachable")]
+    first, second = await ledger(org)
+    assert (first.pdf_page, first.status, first.usage_complete, first.error_code) == (1, "SETTLED", True, None)
+    assert (first.input_tokens, first.output_tokens, first.cost_usd) == (1000, 200, Decimal("0.00165"))
+    assert (second.pdf_page, second.status, second.error_code) == (2, "SETTLED", REQUEST_NOT_SENT)
+    assert (second.input_tokens, second.output_tokens, second.cost_usd) == (0, 0, Decimal("0"))
+    # The month and the card hold what the page that was sent consumed, and no request for the one that was not.
+    assert await monthly(org) == Decimal("0.00165")
+    (stage,) = (await usage(api, doc))["stages"]
+    assert (stage["calls"], stage["reported_input_tokens"], stage["estimated_cost_usd"]) == (1, 1000, "0.00165")
+
+
+@pytest.mark.asyncio
+async def test_a_repair_request_that_cannot_connect_after_a_reported_first_leg_stays_booked_at_its_reservation(worker_tenant, kind):
+    api, ids = worker_tenant
+    org = ids["org_a_id"]
+    configure(org, kind)
+    # The first answer was received (the request was sent, its usage is reported); the connection of the one repair
+    # request is refused. The logical request left the host, so it is not "not sent": what the first leg consumed is
+    # part of the reservation, which stays booked.
+    wire = Wire("malformed", "refused")
+    doc = await upload(api, scan_pdf())
+    assert await process_once(get_worker_session_factory(), org, providers=Transports(kind, wire))
+    assert wire.requests == 2
+    assert [(a["status"], a["error_code"]) for a in (await state(api, doc))[1]] == [("failed", "model_reading_failed")]
+    (row,) = await ledger(org)
+    assert (row.status, row.usage_complete, row.error_code) == ("SETTLED", False, "PROVIDER_CONNECTION_ERROR")
+    assert (row.input_tokens, row.output_tokens, row.cost_usd) == (row.reserved_input_tokens, row.reserved_output_tokens, row.reserved_cost_usd)
+    assert row.reserved_input_tokens >= MALFORMED_USAGE[0] and await monthly(org) == row.reserved_cost_usd
