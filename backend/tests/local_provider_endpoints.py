@@ -45,12 +45,22 @@ def closed_port() -> int:
 @asynccontextmanager
 async def listening(handler):
     """A local server on a free loopback port; ``handler(reader, writer)`` serves every connection. Yields the port."""
-    server = await asyncio.start_server(handler, "127.0.0.1", 0)
+    writers = []
+
+    async def serve(reader, writer):
+        writers.append(writer)
+        try:
+            await handler(reader, writer)
+        except (asyncio.IncompleteReadError, ConnectionError):
+            pass  # the client gave up first
+
+    server = await asyncio.start_server(serve, "127.0.0.1", 0)
     try:
         yield server.sockets[0].getsockname()[1]
     finally:
         server.close()
-        server.close_clients()
+        for writer in writers:
+            writer.close()
         await server.wait_closed()
 
 
