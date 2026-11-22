@@ -9,6 +9,7 @@ import io
 import subprocess
 import sys
 import types
+import uuid
 
 import pytest
 from PIL import Image
@@ -85,6 +86,39 @@ async def extract_all(org, harness=None, **options) -> int:
     while await process_once(get_worker_session_factory(), org, providers=harness, **options):
         done += 1
     return done
+
+
+def inbox_adapters(stages, harness, **options):
+    """The adapters a test drives with a ``WorkflowRunner``: the runner's own stages and, if named, ``intake_extraction``.
+
+    The inbox's extraction stage reaches the organization's provider, so the declaration worker runs it and the inbox
+    worker's runner has no such stage (``core/invoice_claimant.py``). A test that follows a document from the upload to its
+    proposal puts the stage next to the runner's in this scaffold, with the fake providers; it is looked up when it runs, so
+    that a test may replace ``intake_extraction.process_once``.
+    """
+    from app.workers import intake_extraction
+    from app.workers.workflow_runner import build_adapters
+
+    names = tuple(stage for stage in stages if stage != "intake_extraction")
+    runner = build_adapters(names, **options) if names else {}
+
+    async def extraction(org):
+        return "PROCESSED" if await intake_extraction.process_once(get_worker_session_factory(), org, providers=harness) else "IDLE"
+
+    return {stage: extraction if stage == "intake_extraction" else runner[stage] for stage in stages}
+
+
+async def confirm_partition(api, ref, *documents):
+    """A person confirms how the original divides: these logical documents, each page in exactly one of them.
+
+    One document of all its pages is the confirmation "this is one document". It follows the partition that stands.
+    """
+    current = (await api.get("/api/document-refs/" + ref["id"] + "/partition")).json()["current"]
+    reply = await api.post("/api/document-refs/" + ref["id"] + "/partition", headers={
+        "Idempotency-Key": str(uuid.uuid4()), "If-Match": '"' + (current["id"] if current else "none") + '"'},
+        json={"logical_document_ids": list(documents), "reason": "Synthetic confirmation", "visual_pages_reviewed": True})
+    assert reply.status_code == 201, reply.text
+    return reply.json()
 
 
 async def ledger(org):

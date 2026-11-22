@@ -103,8 +103,8 @@ async def assert_no_adoption(ids):
 
 
 async def test_declining_review_confirmation_leaves_no_cost_or_source_release(migrator_session,scope_seed,store):
-    from app.workers.workflow_runner import WorkflowRunner,build_adapters
-    from tests.intake_model_support import Harness
+    from app.workers.workflow_runner import WorkflowRunner
+    from tests.intake_model_support import Harness,inbox_adapters
     ids=await fixture(migrator_session,scope_seed);await confirm_grant(ids)
     async with client(ids) as api:
         child,_,review,preview,url=await ready(api,ids)
@@ -112,7 +112,7 @@ async def test_declining_review_confirmation_leaves_no_cost_or_source_release(mi
         rejected=await api.post(url,**body)
         assert rejected.status_code==422,rejected.text
         async def organizations():return (ids['org'],)
-        runner=WorkflowRunner(organizations,build_adapters(['outbox','intake_extraction'],intake_providers=Harness()))
+        runner=WorkflowRunner(organizations,inbox_adapters(['outbox','intake_extraction'],Harness()))
         for _ in range(3):
             if (await runner.run_once()).code=='IDLE':break
         await assert_no_adoption(ids)

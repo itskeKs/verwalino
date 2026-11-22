@@ -19,8 +19,11 @@ import uuid
 from app.workers.error_tracking import configure_worker_error_tracking
 
 logger=logging.getLogger(__name__)
-STAGES=('intake_inspection','invoice_extraction','declaration_import','outbox','intake_extraction')
-INBOX_STAGES=('intake_inspection','outbox','intake_extraction')
+# The inbox's extraction stage (``workers/intake_extraction.py``) is not one of them: it reads an unstructured original
+# with the organization's models, so the declaration worker runs it (``core/invoice_claimant.py``) and this process, which
+# has neither the session secret nor a route to a provider, cannot be told to.
+STAGES=('intake_inspection','invoice_extraction','declaration_import','outbox')
+INBOX_STAGES=('intake_inspection','outbox')
 IDLE_CODES={'IDLE','DECLARATION_IMPORT_DISABLED'}
 
 
@@ -64,29 +67,25 @@ class WorkflowRunner:
             return DispatchResult('IDLE')
 
 
-def build_adapters(stages=INBOX_STAGES,*,session_factory=None,declaration_worker=None,intake_providers=None):
-    """Construction performs no database or provider request. ``intake_providers`` builds the transports of the models
-    that read an unstructured inbox document (default: those of the organization's provider)."""
+def build_adapters(stages=INBOX_STAGES,*,session_factory=None,declaration_worker=None):
+    """Construction performs no database or provider request."""
     from app.core.db import get_worker_session_factory
     from app.workers.workflow import process_once as inspect_once
     from app.workers.invoice_extraction import process_once as invoice_once
     from app.workers.outbox import process_once as outbox_once
-    from app.workers.intake_extraction import process_once as intake_extract_once
     stages=tuple(dict.fromkeys(stages))
     if not stages or any(stage not in STAGES for stage in stages):raise ValueError('Unknown or empty workflow stages')
     factory=session_factory or get_worker_session_factory()
     async def inspection(org):return 'PROCESSED' if await inspect_once(factory,org) else 'IDLE'
     async def invoice(org):return 'PROCESSED' if await invoice_once(factory,org) else 'IDLE'
     async def outbox(org):return 'PROCESSED' if await outbox_once(factory,org) else 'IDLE'
-    async def intake_extraction(org):
-        return 'PROCESSED' if await intake_extract_once(factory,org,**({'providers':intake_providers} if intake_providers else {})) else 'IDLE'
     async def declaration(org):
         nonlocal declaration_worker
         if declaration_worker is None:
             from app.workers.declaration_import import DeclarationImportWorker
             declaration_worker=DeclarationImportWorker()
         return (await declaration_worker.run_once(organization_id=org)).code
-    available={'intake_inspection':inspection,'invoice_extraction':invoice,'declaration_import':declaration,'outbox':outbox,'intake_extraction':intake_extraction}
+    available={'intake_inspection':inspection,'invoice_extraction':invoice,'declaration_import':declaration,'outbox':outbox}
     return {stage:available[stage] for stage in stages}
 
 
@@ -105,11 +104,7 @@ async def check_readiness(stages):
     if 'invoice_extraction' in stages:
         from app.workers.invoice_extraction import check_readiness as check_extractor
         await check_extractor()
-    if 'intake_extraction' in stages:
-        from app.workers.intake_extraction import check_readiness as check_intake_extractor
-        await asyncio.to_thread(check_intake_extractor)
-    claims={'intake_inspection':'claim_intake_inspection(uuid)',
-            'outbox':'claim_outbox_delivery(uuid)','intake_extraction':'claim_intake_extraction(uuid)'}
+    claims={'intake_inspection':'claim_intake_inspection(uuid)','outbox':'claim_outbox_delivery(uuid)'}
     async with get_worker_unscoped_session() as session:
         for stage in stages:
             if stage in claims and not await session.scalar(text(
@@ -124,7 +119,7 @@ async def main(argv=None):
     organizations=parser.add_mutually_exclusive_group()
     organizations.add_argument('--organization',action='append',type=uuid.UUID)
     organizations.add_argument('--all-organizations',action='store_true')
-    parser.add_argument('--stage',action='append',choices=STAGES,help='Repeatable; defaults to the three inbox stages.')
+    parser.add_argument('--stage',action='append',choices=STAGES,help='Repeatable; defaults to the two inbox stages.')
     parser.add_argument('--once',action='store_true',help='Run at most one non-idle stage; existing queues remain durable.')
     parser.add_argument('--healthcheck',action='store_true',help='Check local infrastructure without claiming work.')
     args=parser.parse_args(argv)

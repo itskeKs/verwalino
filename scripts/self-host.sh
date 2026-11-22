@@ -115,7 +115,8 @@ HV_ERROR_TRACKING_DSN and HV_ERROR_TRACKING_ENVIRONMENT opt in the app and the w
 Export HV_RELEASE_ID to label tracker releases (otherwise app version 0.1.0).
 The declaration-worker also processes invoices, with the organization's own models and only after its opt-in;
 export HV_INVOICE_EXTRACTION_ENABLED=false to switch that off for the app and the worker (not a private config key); see DEPLOY.md.
-Optional inbox-worker (profile inbox, ClamAV signatures): see DEPLOY.md.
+Optional inbox-worker (profile inbox, ClamAV signatures): it inspects files and has no secret and no route to an AI provider;
+the declaration-worker reads an unstructured inbox document with the organization's models, only after its opt-in; see DEPLOY.md.
 Start, stop and update also stop an existing inbox-worker; restart it after app readiness.
 VERWALINO_CONFIG selects the private config file (default: .env.selfhost).
 Update requires --image for a digest installation; a local build is rebuilt.

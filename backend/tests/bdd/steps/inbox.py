@@ -64,8 +64,8 @@ def process_invoice(world, monkeypatch):
     from app.core.intake_extraction import extract_logical
     from app.core.intake_inspection import result
     from app.workers import intake_extraction, workflow
-    from app.workers.workflow_runner import WorkflowRunner, build_adapters
-    from tests.intake_model_support import Harness, enable_models
+    from app.workers.workflow_runner import WorkflowRunner
+    from tests.intake_model_support import Harness, enable_models, inbox_adapters
 
     # Existing inspector double; the organization has opted in and the fake models answer: a text invoice keeps its
     # text layer, so the reading model is not asked.
@@ -85,7 +85,7 @@ def process_invoice(world, monkeypatch):
     async def organizations():
         return (world.data["organization_id"],)
 
-    runner = WorkflowRunner(organizations, build_adapters(intake_providers=harness))
+    runner = WorkflowRunner(organizations, inbox_adapters(("intake_inspection", "outbox", "intake_extraction"), harness))
     stages = []
     for _ in range(10):
         tick = world.run(runner.run_once())

@@ -189,7 +189,7 @@ async def test_inbox_healthcheck_checks_dependencies_without_claiming_jobs(monke
     monkeypatch.setattr(workflow_runner,'check_readiness',ready)
     monkeypatch.setattr(workflow_runner,'build_adapters',forbidden)
     assert await workflow_runner.main(['--healthcheck'])==0
-    assert seen==['intake_inspection','outbox','intake_extraction']
+    assert seen==['intake_inspection','outbox'],'the inbox worker runs no model stage: the declaration worker runs the inbox extraction'
 
 
 async def test_inbox_stage_failure_is_parked_then_explicitly_retried_without_duplicate_work(worker_tenant,store,monkeypatch):

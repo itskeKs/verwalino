@@ -16,7 +16,7 @@ from tests.test_scope_payment_reconciliation import read_value
 from tests.test_invoice_extraction_worker import pdf_bytes
 from tests.test_intake_batches import receive,work_sql
 from tests.test_error_tracking import offline_tracker as offline_tracker
-from tests.intake_model_support import Harness,enable_models,tesseract_unusable as tesseract_unusable
+from tests.intake_model_support import Harness,enable_models,inbox_adapters,tesseract_unusable as tesseract_unusable
 from tests.test_intake_extraction import model_result
 
 pytestmark=[pytest.mark.asyncio,pytest.mark.usefixtures('tesseract_unusable')]
@@ -119,7 +119,7 @@ async def test_worker_discards_malformed_result_and_integrity_failure(migrator_s
 
 async def test_shared_runner_claim_competition_and_attempt_limit(migrator_session,scope_seed,store):
     import asyncio
-    from app.workers.workflow_runner import WorkflowRunner,build_adapters
+    from app.workers.workflow_runner import WorkflowRunner
     ids=await fixture(migrator_session,scope_seed)
     async with client(ids) as api:await source(api,ids)
     claims=await asyncio.gather(*[work_sql(ids,'SELECT claim_intake_extraction(:org)') for _ in range(2)])
@@ -133,7 +133,7 @@ async def test_shared_runner_claim_competition_and_attempt_limit(migrator_sessio
     async with client(ids) as api:
         await source(api,ids)
         async def organizations():return (ids['org'],)
-        runner=WorkflowRunner(organizations,build_adapters(['intake_extraction'],intake_providers=Harness()))
+        runner=WorkflowRunner(organizations,inbox_adapters(['intake_extraction'],Harness()))
         assert (await runner.run_once()).code=='PROCESSED'
         assert (await runner.run_once()).code=='IDLE'
 
@@ -143,7 +143,7 @@ async def test_intake_completion_exhaustion_reports_failure_then_recovers_its_du
     from unittest.mock import AsyncMock
     from sqlalchemy.ext.asyncio import AsyncSession
     from app.core import locking
-    from app.workers.workflow_runner import WorkflowRunner, build_adapters
+    from app.workers.workflow_runner import WorkflowRunner
 
     ids = await fixture(migrator_session, scope_seed)
     async with client(ids) as api:
@@ -159,7 +159,7 @@ async def test_intake_completion_exhaustion_reports_failure_then_recovers_its_du
     monkeypatch.setattr(locking, 'asyncio', SimpleNamespace(sleep=AsyncMock()))
     async def organizations():
         return (ids['org'],)
-    runner = WorkflowRunner(organizations, build_adapters(['intake_extraction'], intake_providers=Harness()))
+    runner = WorkflowRunner(organizations, inbox_adapters(['intake_extraction'], Harness()))
     assert (await runner.run_once()).code == 'STAGE_ERROR'
     assert len(completions) == 10
     assert (await runner.run_once()).code == 'IDLE'
