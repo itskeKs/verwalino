@@ -14,6 +14,7 @@ from app.models.declaration_import import (
     DeclarationImportDocument,
     DeclarationImportPass,
     DeclarationPageReading,
+    DeclarationQueueRequest,
 )
 from app.declarations.observability import PassLedgerEntry
 from app.models.property_document import PropertyDocument
@@ -51,6 +52,18 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
             DeclarationExtractionRun.organization_id == self._org_id,
             DeclarationExtractionRun.import_id == import_id,
         ).order_by(DeclarationExtractionRun.started_at, DeclarationExtractionRun.id))).all()
+
+    async def count_page_readings(self, import_id: uuid.UUID) -> int:
+        """The page transcripts saved for the import, by any of its runs."""
+        return int(await self._session.scalar(
+            select(func.count()).select_from(DeclarationPageReading)
+            .where(DeclarationPageReading.organization_id == self._org_id)
+            .where(DeclarationPageReading.import_id == import_id)) or 0)
+
+    async def queue_request_time(self, request_id: uuid.UUID) -> datetime | None:
+        """When the user's start (or retry) command was recorded: the time the import was started."""
+        return await self._session.scalar(select(DeclarationQueueRequest.created_at).where(
+            DeclarationQueueRequest.organization_id == self._org_id, DeclarationQueueRequest.id == request_id))
 
     async def lock_acl(self):
         await self._session.execute(text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),

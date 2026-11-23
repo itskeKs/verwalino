@@ -1,11 +1,11 @@
 import { api } from "../api/client";
 import { formatUploadLimit, MAX_UPLOAD_BYTES } from "../lib/uploads";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ReactNode } from "react";
 import * as declarationApi from "../api/endpoints";
-import type { DeclarationDocument, DeclarationImport, Property, Unit } from "../api/types";
+import type { DeclarationDocument, DeclarationImport, DeclarationImportStep, Property, Unit } from "../api/types";
 import { DeclarationImportPage } from "./DeclarationImportPage";
 import { PropertiesPage } from "./PropertiesPage";
 import { PropertyDetailPage } from "./PropertyDetailPage";
@@ -35,8 +35,9 @@ function declarationImport(status: DeclarationImport["status"]): DeclarationImpo
     applied_property_id: null,
     status,
     draft_revision: 1,
-    progress_percent: 50,
-    current_stage: null,
+    status_label: "Dokumente vorbereiten",
+    started_at: null,
+    steps: [],
     error_code: null,
     error_message: null,
     input_tokens: 0,
@@ -406,12 +407,12 @@ describe("Teilungserklärung upload wizard", () => {
 
   it("loads a durable import, polls every five seconds, and enters the readiness state", async () => {
     vi.spyOn(declarationApi, "getDeclarationImport").mockResolvedValue(
-      pendingImport({ mode: "EXISTING_PROPERTY", target_property_id: "property-42", status: "QUEUED", progress_percent: 0 }),
+      pendingImport({ mode: "EXISTING_PROPERTY", target_property_id: "property-42", status: "QUEUED" }),
     );
     vi.spyOn(declarationApi, "listDeclarationDocuments").mockResolvedValue([]);
     const pollSpy = vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation((_id, options) => {
       expect(options.intervalMs).toBe(5_000);
-      options.onUpdate(pendingImport({ mode: "EXISTING_PROPERTY", target_property_id: "property-42", status: "NEEDS_REVIEW", progress_percent: 100 }));
+      options.onUpdate(pendingImport({ mode: "EXISTING_PROPERTY", target_property_id: "property-42", status: "NEEDS_REVIEW" }));
       return () => undefined;
     });
     renderImportRoute("/teilungserklaerung/import/import-1");
@@ -729,4 +730,210 @@ it("waits for the persisted draft documents before accepting upload selections",
   expect(screen.getByLabelText("PDF-Dateien auswählen", { exact: true })).toBeDisabled();
   finish([]);
   await waitFor(() => expect(screen.getByLabelText("PDF-Dateien auswählen", { exact: true })).toBeEnabled());
+});
+
+
+// ---- the status page of a started import (issue #870) -------------------------------------------------------------
+
+const step = (label: string, state: DeclarationImportStep["state"], detail: string | null = null, elapsed: number | null = null): DeclarationImportStep =>
+  ({ label, state, detail, elapsed_seconds: elapsed });
+
+const WAITING_STEPS = [
+  step("Dateien prüfen", "WAITING"), step("Angaben auslesen", "WAITING"),
+  step("Angaben abgleichen", "WAITING"), step("Zur Prüfung bereit", "WAITING"),
+];
+const RUNNING_STEPS = [
+  step("Dateien prüfen", "DONE"), step("Seiten lesen", "DONE", "12 Seiten gelesen"),
+  step("Angaben auslesen", "RUNNING", "2 Modellanfragen abgeschlossen", 95),
+  step("Angaben abgleichen", "WAITING"), step("Zur Prüfung bereit", "WAITING"),
+];
+const DONE_STEPS = RUNNING_STEPS.map((each) => ({ ...each, state: "DONE" as const, elapsed_seconds: null }));
+
+const queuedImport = () => pendingImport({
+  status: "QUEUED", status_label: "Wartet auf Verarbeitung", started_at: "2026-11-23T13:05:00Z", steps: WAITING_STEPS,
+});
+const runningImport = () => pendingImport({
+  status: "EXTRACTING", status_label: "Angaben auslesen", started_at: "2026-11-23T13:05:00Z", steps: RUNNING_STEPS,
+});
+
+function lindenallee(title = "Teilungserklärung Lindenallee.pdf"): DeclarationDocument {
+  return {
+    id: "document-1", property_id: null, doc_type: "DECLARATION", title, original_filename: title,
+    mime_type: "application/pdf", content_byte_size: 5, content_sha256: "a", sequence_no: 1, document_role: "DECLARATION",
+  };
+}
+
+function loadImport(item: DeclarationImport) {
+  vi.spyOn(declarationApi, "getDeclarationImport").mockResolvedValue(item);
+  vi.spyOn(declarationApi, "listDeclarationDocuments").mockResolvedValue([lindenallee()]);
+}
+
+describe("status page of a started Teilungserklärung import", () => {
+  it("replaces the upload form by a status page that names the import, says it waits and lists the steps", async () => {
+    loadImport(queuedImport());
+    vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation(() => () => undefined);
+    renderImportRoute("/teilungserklaerung/import/import-1");
+
+    const steps = await screen.findByRole("list", { name: "Verarbeitungsschritte" });
+    expect(within(steps).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "Dateien prüfenWartet", "Angaben auslesenWartet", "Angaben abgleichenWartet", "Zur Prüfung bereitWartet",
+    ]);
+    expect(screen.getByText("Importstatus: Wartet auf Verarbeitung.")).toBeVisible();
+    expect(screen.getByText("Teilungserklärung Lindenallee.pdf")).toBeVisible();
+    expect(screen.getByText("Gestartet: 23.11.2026, 14:05 Uhr")).toBeVisible();
+    expect(screen.queryByLabelText("PDF-Dateien auswählen")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Import starten" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Ausgewählte PDFs hochladen" })).toBeNull();
+  });
+
+  it("shows every step as done, running or waiting from the recorded data, and nothing the server did not report", async () => {
+    loadImport(runningImport());
+    vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation(() => () => undefined);
+    renderImportRoute("/teilungserklaerung/import/import-1");
+
+    const items = within(await screen.findByRole("list", { name: "Verarbeitungsschritte" })).getAllByRole("listitem");
+    expect(items.map((item) => item.textContent)).toEqual([
+      "Dateien prüfenErledigt",
+      "Seiten lesenErledigt · 12 Seiten gelesen",
+      "Angaben auslesenLäuft seit 1 Min. 35 s · 2 Modellanfragen abgeschlossen",
+      "Angaben abgleichenWartet",
+      "Zur Prüfung bereitWartet",
+    ]);
+    expect(items.map((item) => item.getAttribute("aria-current"))).toEqual([null, null, "step", null, null]);
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(document.querySelector("progress")).toBeNull();
+    expect(screen.queryByText(/\d\s?%/)).toBeNull();
+    expect(screen.getByText("Sie können diese Seite schließen; der serverseitige Importstatus bleibt erhalten.")).toBeVisible();
+    // The status line carries the server's label, never a raw stage name.
+    expect(screen.getByText("Importstatus: Angaben auslesen.")).toBeVisible();
+    expect(screen.queryByText(/extracting|preflight|reconciling|retry_wait|queued/i)).toBeNull();
+  });
+
+  it("says that a new attempt is scheduled for an import that waits for a retry", async () => {
+    loadImport(pendingImport({ status: "RETRY_WAIT", status_label: "Neuer Versuch ist eingeplant", steps: WAITING_STEPS }));
+    vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation(() => () => undefined);
+    renderImportRoute("/teilungserklaerung/import/import-1");
+
+    expect(await screen.findByText("Importstatus: Neuer Versuch ist eingeplant.")).toBeVisible();
+    expect(screen.getByRole("list", { name: "Verarbeitungsschritte" })).toBeVisible();
+    expect(screen.queryByText(/retry_wait/)).toBeNull();
+  });
+
+  it("leads from \"Import starten\" to the status page without leaving the import's address", async () => {
+    vi.spyOn(declarationApi, "getDeclarationImport").mockResolvedValue(pendingImport());
+    vi.spyOn(declarationApi, "listDeclarationDocuments").mockResolvedValue([lindenallee()]);
+    vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation(() => () => undefined);
+    const start = vi.spyOn(declarationApi, "startDeclarationImport").mockResolvedValue(queuedImport());
+    renderImportRoute("/teilungserklaerung/import/import-1");
+
+    const button = await screen.findByRole("button", { name: "Import starten" });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+
+    expect(await screen.findByRole("list", { name: "Verarbeitungsschritte" })).toBeVisible();
+    expect(start).toHaveBeenCalledWith("import-1", expect.any(String));
+    expect(screen.getByText("Importstatus: Wartet auf Verarbeitung.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Import starten" })).toBeNull();
+    expect(screen.queryByLabelText("PDF-Dateien auswählen")).toBeNull();
+  });
+
+  it("keeps showing the wizard, without a progress bar, for a draft", async () => {
+    loadImport(pendingImport());
+    vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation(() => () => undefined);
+    renderImportRoute("/teilungserklaerung/import/import-1");
+
+    expect(await screen.findByLabelText("PDF-Dateien auswählen")).toBeVisible();
+    expect(screen.getByText("Importstatus: Dokumente vorbereiten.")).toBeVisible();
+    expect(screen.queryByRole("list", { name: "Verarbeitungsschritte" })).toBeNull();
+    expect(document.querySelector("progress")).toBeNull();
+    expect(screen.queryByText(/\d\s?%/)).toBeNull();
+  });
+
+  it("shows a started import's page again after a reload from what the server says", async () => {
+    loadImport(runningImport());
+    const poll = vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation(() => () => undefined);
+    const first = renderImportRoute("/teilungserklaerung/import/import-1");
+    await screen.findByRole("list", { name: "Verarbeitungsschritte" });
+    first.unmount();
+    renderImportRoute("/teilungserklaerung/import/import-1");
+
+    const items = within(await screen.findByRole("list", { name: "Verarbeitungsschritte" })).getAllByRole("listitem");
+    expect(items[2]).toHaveTextContent("Angaben auslesenLäuft seit 1 Min. 35 s");
+    expect(poll).toHaveBeenCalledTimes(2);
+  });
+
+  it("counts the running step's time on from the server's figure", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    loadImport(runningImport());
+    vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation(() => () => undefined);
+    renderImportRoute("/teilungserklaerung/import/import-1");
+    const list = await screen.findByRole("list", { name: "Verarbeitungsschritte" });
+    expect(within(list).getAllByRole("listitem")[2]).toHaveTextContent("Läuft seit 1 Min. 35 s");
+
+    await act(async () => { vi.advanceTimersByTime(5_000); });
+
+    expect(within(list).getAllByRole("listitem")[2]).toHaveTextContent("Läuft seit 1 Min. 40 s");
+  });
+
+  it("shows the finished steps and a way to the review when the import finishes while the page is open, then goes there", async () => {
+    loadImport(runningImport());
+    let update: (item: DeclarationImport) => void = () => undefined;
+    vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation((_id, options) => {
+      update = options.onUpdate;
+      return () => undefined;
+    });
+    render(
+      <MemoryRouter initialEntries={["/teilungserklaerung/import/import-1"]}>
+        <Routes>
+          <Route path="/teilungserklaerung/import/:importId" element={<DeclarationImportPage />} />
+          <Route path="/teilungserklaerung/import/:importId/review" element={<h1>Teilungserklärung prüfen</h1>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByRole("list", { name: "Verarbeitungsschritte" });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+
+    act(() => update(pendingImport({ status: "NEEDS_REVIEW", status_label: "Fachliche Prüfung", steps: DONE_STEPS })));
+
+    const items = within(screen.getByRole("list", { name: "Verarbeitungsschritte" })).getAllByRole("listitem");
+    expect(items).toHaveLength(5);
+    items.forEach((item) => {
+      expect(item).toHaveTextContent("Erledigt");
+      expect(item).not.toHaveTextContent(/Läuft|Wartet/);
+    });
+    expect(screen.getByRole("link", { name: "Zur fachlichen Prüfung" })).toHaveAttribute("href", "/teilungserklaerung/import/import-1/review");
+    expect(screen.queryByText(/Sie können diese Seite schließen/)).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Teilungserklärung prüfen" })).toBeNull();
+
+    await act(async () => { vi.advanceTimersByTime(2_000); });
+
+    expect(screen.getByRole("heading", { name: "Teilungserklärung prüfen" })).toBeVisible();
+  });
+
+  it("goes straight to the review for an import that was already finished when the page opened", async () => {
+    loadImport(pendingImport({ status: "NEEDS_REVIEW", status_label: "Fachliche Prüfung", steps: DONE_STEPS }));
+    vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation(() => () => undefined);
+    render(
+      <MemoryRouter initialEntries={["/teilungserklaerung/import/import-1"]}>
+        <Routes>
+          <Route path="/teilungserklaerung/import/:importId" element={<DeclarationImportPage />} />
+          <Route path="/teilungserklaerung/import/:importId/review" element={<h1>Teilungserklärung prüfen</h1>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Teilungserklärung prüfen" })).toBeVisible();
+  });
+
+  it("keeps the failure text and the retry of a failed import and lists no steps", async () => {
+    loadImport(pendingImport({ status: "FAILED", status_label: "Verarbeitung fehlgeschlagen", error_code: "PROVIDER_TIMEOUT" }));
+    vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation(() => () => undefined);
+    renderImportRoute("/teilungserklaerung/import/import-1");
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Verarbeitung fehlgeschlagen.");
+    expect(alert).toHaveTextContent("Zeitüberschreitung beim Dienstleister. Bitte versuchen Sie den Import erneut.");
+    expect(screen.getByRole("button", { name: "Erneut versuchen" })).toBeVisible();
+    expect(screen.queryByRole("list", { name: "Verarbeitungsschritte" })).toBeNull();
+  });
 });

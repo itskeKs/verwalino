@@ -241,6 +241,14 @@ export interface DeclarationRunBudget {
   estimated_cost_usd: string | null;
 }
 
+/** One step of a started import with what the server recorded for it; `elapsed_seconds` only for the running step. */
+export interface DeclarationImportStep {
+  label: string;
+  state: "DONE" | "RUNNING" | "WAITING";
+  detail: string | null;
+  elapsed_seconds: number | null;
+}
+
 export interface DeclarationImport {
   runs?: DeclarationRunBudget[];
   queue_request_id?: string | null;
@@ -250,9 +258,12 @@ export interface DeclarationImport {
   target_property_id: string | null;
   applied_property_id: string | null;
   status: DeclarationImportStatus;
+  /** The server's German status line, from the same table as the step labels. */
+  status_label: string;
+  /** When the start (or the last retry) was recorded; null for a draft. */
+  started_at: string | null;
+  steps: DeclarationImportStep[];
   draft_revision: number;
-  progress_percent: number;
-  current_stage: string | null;
   error_code: string | null;
   error_message: string | null;
   input_tokens: number;

@@ -1,3 +1,4 @@
+import { DeclarationImportStatus, DeclarationImportTarget } from "../components/declarations/DeclarationImportStatus";
 import { DeclarationRunBudget } from "../components/declarations/DeclarationRunBudget";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -18,7 +19,13 @@ import type {
   DeclarationDocumentRole,
   DeclarationImport,
   DeclarationImportMode,
+  DeclarationImportStatus as ImportStatus,
 } from "../api/types";
+
+// An import that finishes while its page shows the steps stays on that page this long, so that the user sees every
+// step done, and then continues to the review.
+const REVIEW_HANDOVER_MS = 2_000;
+const PROCESSING_STATUSES: ReadonlySet<ImportStatus> = new Set(["QUEUED", "PREFLIGHT", "EXTRACTING", "RECONCILING", "RETRY_WAIT"]);
 
 const RETRYABLE_FAILURE_CODES = new Set([
   "PROVIDER_TIMEOUT",
@@ -82,15 +89,6 @@ function safeErrorMessage(error: unknown): string {
   return error.message;
 }
 
-function stageLabel(item: DeclarationImport | null): string {
-  if (!item) return "Vorbereitung";
-  if (item.status === "DRAFT") return "Dokumente vorbereiten";
-  if (item.status === "NEEDS_REVIEW") return "Fachliche Prüfung";
-  if (item.status === "FAILED") return "Verarbeitung fehlgeschlagen";
-  if (item.status === "APPLIED") return "Übernommen";
-  return item.current_stage || "Verarbeitung läuft";
-}
-
 function uploadStatusLabel(status: UploadStatus): string {
   return {
     ready: "Bereit zum Hochladen",
@@ -129,6 +127,9 @@ export function DeclarationImportPage() {
   const queueKeys = useRef<Record<string, string>>({});
   const creationStarted = useRef(false);
   const reviewNavigated = useRef(false);
+  const lastStatus = useRef<ImportStatus | null>(null);
+  const handover = useRef<number | undefined>(undefined);
+  const [receivedAt, setReceivedAt] = useState(0);
   const uploadInFlight = useRef(false);
   const reorderInFlight = useRef(false);
 
@@ -137,12 +138,19 @@ export function DeclarationImportPage() {
   const activeImportId = importId || item?.id;
 
   const applyImportUpdate = useCallback((updated: DeclarationImport) => {
+    const previous = lastStatus.current;
+    lastStatus.current = updated.status;
     setItem(updated);
+    setReceivedAt(Date.now());
     if (updated.status === "NEEDS_REVIEW" && !isReviewRoute && !reviewNavigated.current) {
       reviewNavigated.current = true;
-      navigate(`/teilungserklaerung/import/${updated.id}/review`, { replace: true });
+      const toReview = () => navigate(`/teilungserklaerung/import/${updated.id}/review`, { replace: true });
+      if (previous !== null && PROCESSING_STATUSES.has(previous)) handover.current = window.setTimeout(toReview, REVIEW_HANDOVER_MS);
+      else toReview();
     }
   }, [isReviewRoute, navigate]);
+
+  useEffect(() => () => window.clearTimeout(handover.current), []);
 
   useEffect(() => {
     if (importId) return;
@@ -364,19 +372,54 @@ export function DeclarationImportPage() {
   const targetMode = item?.mode ?? routeMode;
   const targetPropertyId = item?.target_property_id ?? propertyId;
 
+  const documentTitles = documents.filter((document) => document.status === "uploaded").map((document) => document.title);
+  const heading = (
+    <div className="declaration-import-heading">
+      <div>
+        <h1>Teilungserklärung einlesen</h1>
+        <p className="empty-hint">Der Import erstellt zunächst nur einen prüfbaren Entwurf. Daten werden erst nach fachlicher Freigabe übernommen.</p>
+      </div>
+      {item && <span className="badge badge--draft">{item.status_label}</span>}
+    </div>
+  );
+  const errorLine = statusError && <p className="error-text" role="alert">{statusError}</p>;
+
+  // An address of a started import that has not been read yet shows neither the form nor a step.
+  if (importId && !item) {
+    return (
+      <main className="declaration-import-page">
+        {heading}
+        {errorLine || <p className="declaration-import-live" role="status">Import wird geladen…</p>}
+      </main>
+    );
+  }
+
+  if (item && item.status !== "DRAFT") {
+    return (
+      <main className="declaration-import-page">
+        {heading}
+        {errorLine}
+        <p className="declaration-import-live" aria-live="polite">{`Importstatus: ${item.status_label}.`}</p>
+        <DeclarationImportStatus
+          item={item}
+          documentTitles={documentTitles}
+          receivedAt={receivedAt}
+          failureMessage={failureMessage}
+          retryable={isRetryable}
+          retrying={retrying}
+          onRetry={() => void retryImport()}
+        />
+        <DeclarationRunBudget runs={item.runs ?? []} />
+      </main>
+    );
+  }
+
   return (
     <main className="declaration-import-page">
-      <div className="declaration-import-heading">
-        <div>
-          <h1>Teilungserklärung einlesen</h1>
-          <p className="empty-hint">Der Import erstellt zunächst nur einen prüfbaren Entwurf. Daten werden erst nach fachlicher Freigabe übernommen.</p>
-        </div>
-        {item && <span className="badge badge--draft">{stageLabel(item)}</span>}
-      </div>
-
-      {statusError && <p className="error-text" role="alert">{statusError}</p>}
+      {heading}
+      {errorLine}
       <p className="declaration-import-live" aria-live="polite">
-        {creating ? "Importentwurf wird vorbereitet." : item ? `Importstatus: ${stageLabel(item)}.` : "Importentwurf wird vorbereitet."}
+        {creating ? "Importentwurf wird vorbereitet." : item ? `Importstatus: ${item.status_label}.` : "Importentwurf wird vorbereitet."}
       </p>
 
       <DeclarationRunBudget runs={item?.runs ?? []} />
@@ -387,11 +430,7 @@ export function DeclarationImportPage() {
 
       <section className="card declaration-import-section" aria-labelledby="declaration-target-heading">
         <h2 id="declaration-target-heading">1. Ziel</h2>
-        {targetMode === "EXISTING_PROPERTY" ? (
-          <p><strong>Nachtrag für das aktuelle Objekt einlesen</strong><br />Objekt-ID: {targetPropertyId}. Das Ziel ist über diese Seite festgelegt.</p>
-        ) : (
-          <p><strong>Neues Objekt aus einer Teilungserklärung anlegen</strong><br />Die erkannten Angaben werden später vor der Übernahme fachlich geprüft.</p>
-        )}
+        <DeclarationImportTarget mode={targetMode} propertyId={targetPropertyId} />
       </section>
 
       <section className="card declaration-import-section" aria-labelledby="declaration-documents-heading">
@@ -452,10 +491,6 @@ export function DeclarationImportPage() {
       <section className="card declaration-import-section" aria-labelledby="declaration-processing-heading">
         <h2 id="declaration-processing-heading">3. Verarbeitung</h2>
         <p>Für die Extraktion werden die benötigten Dokumentabschnitte vom KI-Anbieter Ihrer Organisation verarbeitet. Die Originaldateien bleiben dem Importentwurf zugeordnet und werden nicht automatisch als Stammdaten übernommen.</p>
-        {item && <>
-          <progress value={item.progress_percent} max="100">{item.progress_percent}%</progress>
-          <p className="empty-hint">{item.progress_percent}% – {stageLabel(item)}. Sie können diese Seite schließen; der serverseitige Importstatus bleibt erhalten.</p>
-        </>}
         {!canStart && item?.status === "DRAFT" && <p className="empty-hint">Import starten ist noch nicht möglich: Mindestens eine PDF muss vollständig hochgeladen sein und es dürfen keine Uploads ausstehen.</p>}
         <button type="button" className="btn btn--primary" disabled={!canStart || starting} onClick={() => void startImport()}>
           {starting ? "Import wird gestartet…" : "Import starten"}
@@ -464,14 +499,7 @@ export function DeclarationImportPage() {
 
       <section className="card declaration-import-section" aria-labelledby="declaration-result-heading">
         <h2 id="declaration-result-heading">4. Ergebnis</h2>
-        {item?.status === "NEEDS_REVIEW" && <p><strong>Bereit für die fachliche Prüfung</strong><br />Die erkannten Angaben liegen als Entwurf zur Prüfung vor. Die eigentliche Prüfoberfläche folgt im nächsten Schritt.</p>}
-        {item?.status === "APPLIED" && <p><strong>Übernommen</strong><br />Der freigegebene Entwurf wurde in das Objekt übernommen.</p>}
-        {item?.status === "CANCELLED" && <><p><strong>Abgebrochen</strong><br />{failureMessage ?? "Der Import wurde abgebrochen."}</p>{isRetryable && <button type="button" className="btn btn--primary" disabled={retrying} onClick={() => void retryImport()}>{retrying ? "Wird erneut gestartet…" : "Erneut versuchen"}</button>}</>}
-        {item?.status === "FAILED" && <>
-          <p className="error-text" role="alert"><strong>Verarbeitung fehlgeschlagen.</strong><br />{failureMessage ?? "Der Import kann nicht fortgesetzt werden."}</p>
-          {isRetryable && <button type="button" className="btn btn--primary" disabled={retrying} onClick={() => void retryImport()}>{retrying ? "Wird erneut gestartet…" : "Erneut versuchen"}</button>}
-        </>}
-        {!item || ["DRAFT", "QUEUED", "PREFLIGHT", "EXTRACTING", "RECONCILING", "RETRY_WAIT", "APPLYING"].includes(item.status) ? <p className="empty-hint">Noch kein abschließendes Ergebnis.</p> : null}
+        <p className="empty-hint">Noch kein abschließendes Ergebnis.</p>
       </section>
     </main>
   );

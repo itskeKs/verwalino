@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.core.tenant import AuthContext, require_write_dep
 from app.core.live_principal import get_live_writer_db, get_live_publication_db, get_live_review_db
 from app.core.uploads import read_upload_limited
+from app.declarations.progress import Progress, build_progress
 from app.declarations.provider import READING_PASS_ID
 from app.declarations.review_schemas import (
     ApprovalPreviewOut,
@@ -27,6 +28,7 @@ from app.declarations.review_schemas import (
 )
 from app.models.declaration_import import DeclarationImport
 from app.models.property_document import PropertyDocument
+from app.repositories.declaration_import_repo import DeclarationImportRepository
 from app.services.declaration_import_service import (
     DeclarationImportService,
     require_declaration_import_enabled,
@@ -84,6 +86,17 @@ class DeclarationRunOut(BaseModel):
     estimated_cost_usd: Decimal | None
 
 
+class DeclarationStepOut(BaseModel):
+    """One step of a started import as the status page shows it, from the data the server recorded."""
+
+    label: str
+    state: Literal["DONE", "RUNNING", "WAITING"]
+    # What the step counted so far, as a phrase ("3 Seiten gelesen"); absent while nothing was counted.
+    detail: str | None
+    # Seconds since the running step began; absent when no run recorded a point to count from.
+    elapsed_seconds: int | None
+
+
 class DeclarationImportOut(BaseModel):
     runs: list[DeclarationRunOut] = Field(default_factory=list)
     id: str
@@ -91,9 +104,11 @@ class DeclarationImportOut(BaseModel):
     target_property_id: str | None
     applied_property_id: str | None
     status: str
+    status_label: str
+    # When the start (or the last retry) was recorded; absent for a draft.
+    started_at: datetime | None = None
+    steps: list[DeclarationStepOut] = Field(default_factory=list)
     draft_revision: int
-    progress_percent: int
-    current_stage: str | None
     error_code: str | None
     error_message: str | None
     input_tokens: int
@@ -210,7 +225,8 @@ async def start_import(
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_live_writer_db),
 ):
-    return _import_out(await DeclarationImportService(db, auth.organization_id, auth.user_id).start(import_id, idempotency_key))
+    item = await DeclarationImportService(db, auth.organization_id, auth.user_id).start(import_id, idempotency_key)
+    return await _import_detail(DeclarationImportRepository(db, auth.organization_id), item)
 
 
 @router.get("/{import_id}", response_model=DeclarationImportOut)
@@ -219,14 +235,8 @@ async def get_import(
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_live_writer_db),
 ):
-    from app.repositories.declaration_import_repo import DeclarationImportRepository
     item = await DeclarationImportService(db, auth.organization_id, auth.user_id).get(import_id)
-    repository = DeclarationImportRepository(db, auth.organization_id)
-    runs = await repository.list_runs(import_id)
-    passes = await repository.list_run_passes(import_id)
-    result = _import_out(item)
-    result.runs = [_run_out(run, [entry.safe_metadata for entry in passes if entry.declaration_extraction_run_id == run.id]) for run in runs]
-    return result
+    return await _import_detail(DeclarationImportRepository(db, auth.organization_id), item)
 
 
 @router.get("/{import_id}/documents/{document_id}/content")
@@ -294,7 +304,8 @@ async def retry_import(
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_live_writer_db),
 ):
-    return _import_out(await DeclarationImportService(db, auth.organization_id, auth.user_id).retry(import_id, idempotency_key))
+    item = await DeclarationImportService(db, auth.organization_id, auth.user_id).retry(import_id, idempotency_key)
+    return await _import_detail(DeclarationImportRepository(db, auth.organization_id), item)
 
 
 @router.post("/{import_id}/approve")
@@ -393,13 +404,29 @@ def _run_stages(run, passes, is_priced) -> tuple[list[DeclarationStageOut], Decl
         input_tokens=held_input, output_tokens=held_output, estimated_cost_usd=held_cost if known_price else None)
 
 
-def _import_out(item: DeclarationImport) -> DeclarationImportOut:
+async def _import_detail(repository: DeclarationImportRepository, item: DeclarationImport) -> DeclarationImportOut:
+    """The import with its runs and the steps the server recorded for it."""
+    runs = await repository.list_runs(item.id)
+    passes = await repository.list_run_passes(item.id)
+    progress = build_progress(
+        item.status, runs=runs, passes=passes, pages_read=await repository.count_page_readings(item.id),
+        now=datetime.now(timezone.utc))
+    result = _import_out(item, progress)
+    if item.queue_request_id:
+        result.started_at = await repository.queue_request_time(item.queue_request_id)
+    result.runs = [_run_out(run, [entry.safe_metadata for entry in passes if entry.declaration_extraction_run_id == run.id]) for run in runs]
+    return result
+
+
+def _import_out(item: DeclarationImport, progress: Progress | None = None) -> DeclarationImportOut:
+    progress = progress or build_progress(item.status, now=datetime.now(timezone.utc))
     return DeclarationImportOut(
         id=str(item.id), mode=item.mode,
         target_property_id=str(item.target_property_id) if item.target_property_id else None,
         applied_property_id=str(item.applied_property_id) if item.applied_property_id else None,
-        status=item.status, draft_revision=item.draft_revision,
-        progress_percent=item.progress_percent, current_stage=item.current_stage,
+        status=item.status, status_label=progress.status_label, draft_revision=item.draft_revision,
+        steps=[DeclarationStepOut(label=step.label, state=step.state, detail=step.detail,
+                                  elapsed_seconds=step.elapsed_seconds) for step in progress.steps],
         error_code=item.error_code, error_message=item.error_message,
         input_tokens=item.input_tokens, output_tokens=item.output_tokens,
         estimated_cost_usd=item.estimated_cost_usd, attempt_count=item.attempt_count,

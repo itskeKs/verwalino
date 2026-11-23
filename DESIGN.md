@@ -1124,8 +1124,9 @@ imports and on a design token nothing reads.
   form: `AttachmentsPanel.tsx` (documents, metadata upload limit stated in the copy), `MasterImport.tsx` (CSV with
   preview table and row errors), the mandate upload in `MandateDetailPage.tsx`. These forms have no drag
   and drop or progress bar; controls are disabled while requests run. CSV import and attachments report
-  outcomes in `role="status"` lines. `DeclarationImportPage.tsx` renders a `<progress>` for processing,
-  styled by `.declaration-import-section progress` in `index.css`.
+  outcomes in `role="status"` lines. `DeclarationImportPage.tsx` shows the form for a draft only; a started
+  import has its own status page without a progress bar (see "Declaration import: status page of a
+  started import").
 - **Money and date fields.** Date: `<input type="date">` (63 uses), value ISO `YYYY-MM-DD`, the browser
   shows its locale format. Money: `<input type="text" inputMode="decimal">` (62 uses) with placeholder
   `0.00`; the user may type a comma, helpers turn it into a dot (`moneyInput` in `SpecialLeviesPage.tsx`,
@@ -1160,7 +1161,8 @@ its reconciliation total excludes non-income rows, as the server note explains.
 Every async region provides loading, empty, error and success copy using the patterns below.
 Failed requests preserve the user's input.
 
-Loading, error and success are inline text, there is no toast, spinner or skeleton component.
+Loading, error and success are inline text, there is no toast, spinner or skeleton component; the only moving
+indicator is the running step of the declaration import status page (a lucide icon, see its section).
 
 | State | Markup | Copy patterns (German text verbatim; `{...}` is a value) |
 |---|---|---|
@@ -1289,6 +1291,7 @@ Inputs show and accept what the user types: they are not display call sites.
 | Money | `1.234,56 €`: `.` thousands, `,` decimals, always two, sign first (`-1.234,56 €`), no float arithmetic | Shared `formatMoney(cents)` in `lib/format.ts`, fed by `centsFromDecimal()` for API decimal strings; used by every money call site |
 | Date | `TT.MM.JJJJ`, e.g. `05.03.2026`, from the ISO API value | Shared `formatDate(iso)` in `lib/format.ts` |
 | Date and time | `TT.MM.JJJJ, HH:MM Uhr`, e.g. `31.10.2026, 14:05 Uhr`, Europe/Berlin calendar, no seconds | Shared `formatDateTime(iso)` in `lib/format.ts`; `formatDate(iso)` maps timestamps to the Europe/Berlin calendar date |
+| Elapsed time | `42 s`, `2 Min. 5 s`, `1 Std. 2 Min.`: whole seconds under a minute, minutes with seconds under an hour, then hours with minutes; never negative | Shared `formatElapsed(seconds)` in `lib/format.ts`; used by the running step of the declaration import status page |
 | Long date | weekday and month in words ("Freitag, 30. Oktober 2026") | `dateLabel` in `DashboardPage.tsx` |
 | Plain numbers | `Intl.NumberFormat("de-DE")` / `toLocaleString("de-DE")` (`1.234.567`) | `PropertyDetailPage.tsx`, `AttachmentsPanel.tsx`, `IntakeBatchPage.tsx` |
 | File size | `1.5 KB` / `1.0 MB` with a dot (`toFixed(1)`); mandates use whole KB (`12 KB`, `toFixed(0)`). Attachments show `1.234 Bytes` (`Intl.NumberFormat("de-DE")`); intake shows `1,5 KiB` (`toLocaleString("de-DE")`) | `formatBytes()` in `InvoiceDocumentsPage.tsx`, `formatSize()` in `MandateDetailPage.tsx`, `AttachmentsPanel.tsx`, `IntakeBatchPage.tsx` |
@@ -2523,7 +2526,7 @@ dessen Abschluss wird der Verbrauch der Stufe zugeordnet.“
 A run with tokens and no entry shows that block and the total. A run with neither a stage nor such a
 remainder keeps the model name and the total as before. Nothing scrolls horizontally at 360 px.
 
-The import screen's „4. Ergebnis“ card explains every failure code in German, in one
+The import status page's „Ergebnis“ card explains every failure code in German, in one
 `role="alert"` paragraph under „Verarbeitung fehlgeschlagen.“: what happened, that the uploaded
 original is kept and nothing was applied (“Das hochgeladene Dokument bleibt erhalten; es wurde
 nichts übernommen.”), and what to do (choose another model in Einstellungen, import less, contact
@@ -2603,6 +2606,47 @@ explicit reservations on both import and review screens at 1280 and 360 px.
 | --- | --- | --- |
 | Before | [view](docs/assets/design/ai-budget-reserved-before-1280.png) | [view](docs/assets/design/ai-budget-reserved-before-360.png) |
 | Import after | [view](docs/assets/design/ai-budget-reserved-after-1280.png) | [view](docs/assets/design/ai-budget-reserved-after-360.png) |
+
+### Declaration import: status page of a started import (#870)
+
+A started import has its own page at `/teilungserklaerung/import/<id>`, the address of the upload wizard.
+`pages/DeclarationImportPage.tsx` renders the wizard (steps „Ziel“ to „Ergebnis“, the upload form, „Import
+starten“) for a draft only; every other status renders `components/declarations/DeclarationImportStatus.tsx`, and
+an address that has not been read yet shows „Import wird geladen…“ (`role="status"`) instead of the form. The page
+has no percentage and no `<progress>`: nothing on it is estimated, every figure is something the server recorded
+(`GET /api/declaration-imports/{id}`: `status_label`, `started_at`, `steps`).
+
+- Badge and the line „Importstatus: …“ carry the server's `status_label`; the page never shows a stage name.
+  The labels of statuses, steps and pass kinds come from the one table in `backend/app/declarations/progress.py`.
+- Card „Import“: the target text of the wizard, the titles of the uploaded documents (a wrapping list) and
+  „Gestartet: TT.MM.JJJJ, HH:MM Uhr“.
+- Card „Verarbeitung“ (only while the response lists steps): an ordered list (`aria-label="Verarbeitungsschritte"`)
+  with one item per step: a mark (lucide `Check` green = done, `LoaderCircle` in the primary colour and turning =
+  running, `Circle` muted = waiting; the turning stops under `prefers-reduced-motion`), the label (bold unless the
+  step waits) and a muted line with the state word „Erledigt“, „Läuft“ or „Wartet“, for the running step „seit {Zeit}“
+  (counted on every second from the figure of the last answer, `formatElapsed`) and, after ` · `, the count when
+  there is one („12 Seiten gelesen“, „2 Modellanfragen abgeschlossen“). The running item carries
+  `aria-current="step"`. „Seiten lesen“ is listed only once a page was read, so a text-layer document has four
+  steps. A queued import says „Wartet auf Verarbeitung“ and every step waits; a retry says „Neuer Versuch ist
+  eingeplant“. „Sie können diese Seite schließen; der serverseitige Importstatus bleibt erhalten.“ stays while the
+  import is processing.
+- Card „Ergebnis“ (an import that finished or ended): „Bereit für die fachliche Prüfung“ with the primary link „Zur
+  fachlichen Prüfung“, „Übernommen“, „Abgebrochen“ or, for a failure, the `role="alert"` paragraph of the section
+  above with „Erneut versuchen“ as before. A failed or cancelled import lists no steps.
+- An import that finishes while the page is open shows every step done and the link for two seconds
+  (`REVIEW_HANDOVER_MS`) and then opens „Teilungserklärung prüfen“; an address opened on an import that already waits
+  for review goes there at once.
+- At 360 px the cards are one column and long document titles wrap; nothing scrolls sideways.
+
+Synthetic import on the test database (the fictional Lindenallee scan, processed by the offline worker with a held
+call; before = the page of `main`, whose bar and raw stage name this replaces):
+
+| State | Before, 1280 px | After, 1280 px | Before, 360 px | After, 360 px |
+| --- | --- | --- | --- | --- |
+| Waiting for processing | [view](docs/assets/design/declaration-status/queued-before-1280.png) | [view](docs/assets/design/declaration-status/queued-after-1280.png) | [view](docs/assets/design/declaration-status/queued-before-360.png) | [view](docs/assets/design/declaration-status/queued-after-360.png) |
+| Extraction running (page read, one request finished) | [view](docs/assets/design/declaration-status/running-before-1280.png) | [view](docs/assets/design/declaration-status/running-after-1280.png) | [view](docs/assets/design/declaration-status/running-before-360.png) | [view](docs/assets/design/declaration-status/running-after-360.png) |
+| Finished while the page is open | not shown (opened the review at once) | [view](docs/assets/design/declaration-status/finished-after-1280.png) | not shown | [view](docs/assets/design/declaration-status/finished-after-360.png) |
+| Failed (text unchanged) | [view](docs/assets/design/declaration-status/failed-before-1280.png) | [view](docs/assets/design/declaration-status/failed-after-1280.png) | [view](docs/assets/design/declaration-status/failed-before-360.png) | [view](docs/assets/design/declaration-status/failed-after-360.png) |
 
 ### Hausgeld booking on the economic plan (#186)
 

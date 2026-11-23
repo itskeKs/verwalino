@@ -757,13 +757,6 @@ code {
   max-width: 100%;
 }
 
-.declaration-import-section progress {
-  display: block;
-  height: 0.8rem;
-  margin-top: 0.8rem;
-  width: min(100%, 540px);
-}
-
 .declaration-document-list {
   display: grid;
   gap: 0.75rem;
