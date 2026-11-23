@@ -84,3 +84,57 @@ async def test_the_entry_leaves_an_import_alone_when_the_reading_model_is_not_sa
 
     assert [result.code for result in run.results] == ["DECLARATION_IMPORT_DISABLED"] and run.imports == []
     assert (await client_a_admin.get(f"/api/declaration-imports/{import_id}")).json()["status"] == "QUEUED"
+
+
+def _run_entry(name: str, documents: Path, *arguments: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "-m", "tests.offline_declaration_import", "--organization", name, "--documents", str(documents), *arguments],
+        cwd=ROOT / "backend", capture_output=True, text=True, timeout=240, check=False,
+    )
+
+
+async def test_the_inventory_answer_option_makes_the_import_reach_the_review_with_a_hint_for_a_relation_to_a_document_that_was_not_uploaded(
+    seed_data, client_a_admin, migrator_session, tmp_path, monkeypatch
+) -> None:
+    organization = seed_data["org_a_id"]
+    configure_ai(organization, model="saved-extraction-model", document_model="saved-reading-model", import_enabled=True)
+    import_id, _document = await _queue_scan(client_a_admin, tmp_path, monkeypatch)
+    name = await migrator_session.scalar(text("SELECT name FROM organization WHERE id=:id"), {"id": organization})
+
+    done = _run_entry(name, tmp_path, "--inventory-answer", "relation-to-unuploaded-document")
+
+    lines = done.stdout.splitlines()
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert f"import {import_id}: NEEDS_REVIEW" in lines
+    # The whole extraction ran: the relation does not end the import.
+    assert any(" call=extract_core " in line for line in lines) and any(" call=reconcile " in line for line in lines)
+    preview = await client_a_admin.get(f"/api/declaration-imports/{import_id}/approval-preview")
+    assert preview.status_code == 200, preview.text
+    hints = [issue for issue in preview.json()["issues"] if issue["code"] == "DOCUMENT_RELATION_TARGET_NOT_UPLOADED"]
+    assert [(issue["severity"], issue["candidate_id"]) for issue in hints] == [("INFO", None)]
+    assert "„Aufteilungsplan“" in hints[0]["message"] and "wurde nicht hochgeladen" in hints[0]["message"]
+
+
+async def test_the_inventory_answer_option_makes_the_import_fail_before_any_extraction_call_for_a_document_outside_the_import(
+    seed_data, client_a_admin, migrator_session, tmp_path, monkeypatch
+) -> None:
+    organization = seed_data["org_a_id"]
+    configure_ai(organization, model="saved-extraction-model", document_model="saved-reading-model", import_enabled=True)
+    import_id, _document = await _queue_scan(client_a_admin, tmp_path, monkeypatch)
+    name = await migrator_session.scalar(text("SELECT name FROM organization WHERE id=:id"), {"id": organization})
+
+    done = _run_entry(name, tmp_path, "--inventory-answer", "unknown-document")
+
+    lines = done.stdout.splitlines()
+    # The failure is the expected outcome of this form, so the command exits 0 when every import ended so.
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert f"import {import_id}: FAILED (UNKNOWN_INVENTORY_DOCUMENT)" in lines
+    # The indented lines under the import's own line are what its providers were asked: the inventory only.
+    own = []
+    for line in lines[lines.index(f"import {import_id}: FAILED (UNKNOWN_INVENTORY_DOCUMENT)") + 1:]:
+        if not line.startswith("  "):
+            break
+        own.append(line)
+    assert [line.split(" call=")[1].split(" ")[0] for line in own if line.startswith("  extraction ")] == ["inventory"]
+    state = await client_a_admin.get(f"/api/declaration-imports/{import_id}")
+    assert (state.json()["status"], state.json()["error_code"]) == ("FAILED", "UNKNOWN_INVENTORY_DOCUMENT")

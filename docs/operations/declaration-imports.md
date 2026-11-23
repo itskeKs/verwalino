@@ -123,6 +123,28 @@ Common precheck errors are `PDF_SIZE_LIMIT_EXCEEDED`,
 `OCR_TIMEOUT`, `OCR_UNAVAILABLE` and `OCR_FAILED` are no longer produced; imports that stored
 `OCR_TIMEOUT` before 0196 keep it and stay retryable.
 
+### The inventory against the documents of the import
+
+The inventory passes (the first pass over every batch) answer which documents the import holds and how they
+relate. The merged answer is checked against the import's documents right after them, before the first
+`extract_core` call, so that an answer that cannot belong to the import costs no extraction request (no
+reservation is made, none is left in the run's usage):
+
+- An entry whose own `document_key` is not a document of the import fails the import with
+  `UNKNOWN_INVENTORY_DOCUMENT`; a document of the import without an entry fails it with
+  `MISSING_INVENTORY_DOCUMENT`. Both are final (no `RETRY_WAIT`); the import page explains them in German and
+  names the next step (start a new import, contact the operator if it repeats).
+- A **relation** (`AMENDS`, `SUPPLEMENTS`, `REFERENCES`) whose `target_document_key` is not a document of the
+  import is no failure: a declaration regularly names documents that were not uploaded (an Aufteilungsplan, an
+  earlier deed, a Nachtrag). The relation is left out of the inventory that every later step reads (reconciliation,
+  evidence validation, the relation candidates), so no candidate is created for it, and the run records one issue
+  per left-out relation, code `DOCUMENT_RELATION_TARGET_NOT_UPLOADED`, severity `INFO`, bound to no candidate
+  (`candidate_id` is null; `details_json` holds `document_key` and `pdf_page` of the relation's evidence where the
+  answer names a page of the import). Its German text names the document the relation was read in, the relation
+  in plain words (`ändert`, `ergänzt`, `verweist auf`), the other document as the answer names it, and says that it
+  was not uploaded and the relation was not taken over. The review page lists such issues in „Hinweise zum Import“;
+  they never block the approval. The evidence of a left-out relation is not validated, so it cannot fail the import.
+
 ## Reading Stage (ADR 0017)
 
 `DocumentReadingProvider.read_page` (`declarations/provider.py`) takes one rendered PNG page

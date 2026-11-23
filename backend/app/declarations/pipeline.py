@@ -364,12 +364,18 @@ class DeclarationPipeline:
             # pass before every inventory batch has completed.
             for batch in batches:
                 inventories.append(await self._call("inventory", batch.as_documents(), ledger, DocumentInventoryOutput))
+            # The inventory is complete: an answer that cannot belong to this import is refused here, before any
+            # extraction call is reserved or paid for.
+            inventory, relation_hints = _validate_inventory_documents(
+                _merge_inventory(inventories),
+                document_ids,
+                page_counts,
+                {_document_key(document): document.title or document.original_filename for _link, document in documents},
+            )
             for batch in batches:
                 cores.append(await self._call("extract_core", batch.as_documents(), ledger, CoreExtractionOutput))
             for batch in batches:
                 rulesets.append(await self._call("extract_rules", batch.as_documents(), ledger, RuleExtractionOutput))
-            inventory = _merge_inventory(inventories)
-            _validate_inventory_documents(inventory, document_ids)
             core = _merge_core(cores)
             rules = _merge_rules(rulesets)
             await self._transition(lease, {"EXTRACTING"}, "RECONCILING", {"current_stage": "reconciling"})
@@ -446,7 +452,7 @@ class DeclarationPipeline:
                             )
 
             drafts, draft_issues = await self._convert(
-                imported, inventory, reconciliation, issues, document_ids, lease
+                imported, inventory, reconciliation, [*issues, *relation_hints], document_ids, lease
             )
             if len(drafts) > self._settings.declaration_max_candidates:
                 raise PipelineFailure("CANDIDATE_LIMIT_EXCEEDED")
@@ -1742,17 +1748,63 @@ def _merge_inventory(values: Sequence[DocumentInventoryOutput]) -> DocumentInven
     return DocumentInventoryOutput(documents=list(sorted(items.values(), key=lambda item: (item.document_key, _stable_json(item.model_dump(mode="json"))))))
 
 
-def _validate_inventory_documents(inventory: DocumentInventoryOutput, document_ids: dict[str, uuid.UUID]) -> None:
-    seen: set[str] = set()
-    for item in inventory.documents:
-        if item.document_key not in document_ids:
-            raise PipelineFailure("UNKNOWN_INVENTORY_DOCUMENT")
-        seen.add(item.document_key)
-        for relation in item.relations:
-            if relation.target_document_key not in document_ids:
-                raise PipelineFailure("UNKNOWN_INVENTORY_DOCUMENT")
-    if set(document_ids) != seen:
+# How a relation reads in the hint of the review, by its type.
+_RELATION_PHRASES = {"AMENDS": "ändert", "SUPPLEMENTS": "ergänzt", "REFERENCES": "verweist auf"}
+
+
+def _validate_inventory_documents(
+    inventory: DocumentInventoryOutput,
+    document_ids: dict[str, uuid.UUID],
+    page_counts: dict[str, int],
+    document_titles: dict[str, str],
+) -> tuple[DocumentInventoryOutput, list[ValidationIssue]]:
+    """Fail an inventory that cannot belong to the import; leave out the relations to a document that was not uploaded.
+
+    An entry for a document outside the import, or no entry for a document of it, fails the import. A relation whose
+    target is not a document of the import does not: a declaration regularly names documents that were not uploaded
+    (a plan, an earlier deed). That relation is dropped from the inventory that every later step reads, and one hint
+    per relation is returned for the review.
+    """
+    seen = {item.document_key for item in inventory.documents}
+    if not seen <= set(document_ids):
+        raise PipelineFailure("UNKNOWN_INVENTORY_DOCUMENT")
+    if seen != set(document_ids):
         raise PipelineFailure("MISSING_INVENTORY_DOCUMENT")
+    hints: dict[tuple[str, str, str], ValidationIssue] = {}
+    kept = []
+    for item in inventory.documents:
+        relations = [relation for relation in item.relations if relation.target_document_key in document_ids]
+        for relation in item.relations:
+            if relation.target_document_key in document_ids:
+                continue
+            # The page the relation was read on, where the answer names one of this import's pages.
+            evidence = next(
+                (
+                    value for value in relation.evidence
+                    if 1 <= value.pdf_page <= page_counts.get(value.document_key, 0)
+                ),
+                None,
+            )
+            page = f" (Seite {evidence.pdf_page})" if evidence is not None else ""
+            hints.setdefault(
+                (item.document_key, relation.relation_type, relation.target_document_key),
+                ValidationIssue(
+                    code="DOCUMENT_RELATION_TARGET_NOT_UPLOADED",
+                    severity="INFO",
+                    message=(
+                        f"Das Dokument „{document_titles[item.document_key]}“ {_RELATION_PHRASES[relation.relation_type]} "
+                        f"„{relation.target_document_key}“{page}. Dieses Dokument wurde nicht hochgeladen; "
+                        "die Beziehung wurde nicht übernommen."
+                    ),
+                    document_key=evidence.document_key if evidence is not None else None,
+                    pdf_page=evidence.pdf_page if evidence is not None else None,
+                ),
+            )
+        kept.append(item.model_copy(update={"relations": relations}))
+    if not hints:
+        return inventory, []
+    # Entries of one document that differed only by a left-out relation are one entry now.
+    return _merge_inventory([DocumentInventoryOutput(documents=kept)]), list(hints.values())
 
 
 def _validate_inventory_evidence(
