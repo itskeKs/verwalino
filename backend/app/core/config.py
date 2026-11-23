@@ -113,9 +113,9 @@ class Settings(BaseSettings):
 
     # --- Declaration import / OpenAI provider ---
     # Server-only secret. Do not place a real value in the project .env.
-    declaration_prompt_version: str = "declaration-v4"
-    declaration_schema_version: str = "2"
-    declaration_harness_version: str = "6"
+    declaration_prompt_version: str = "declaration-v5"
+    declaration_schema_version: str = "3"
+    declaration_harness_version: str = "7"
     declaration_provider_timeout_seconds: int = 60
     declaration_max_cost_usd: Decimal = Decimal("3.00")
     declaration_max_recheck_pages: int = 12
