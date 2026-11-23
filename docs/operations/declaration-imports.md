@@ -136,14 +136,19 @@ reservation is made, none is left in the run's usage):
   names the next step (start a new import, contact the operator if it repeats).
 - A **relation** (`AMENDS`, `SUPPLEMENTS`, `REFERENCES`) whose `target_document_key` is not a document of the
   import is no failure: a declaration regularly names documents that were not uploaded (an Aufteilungsplan, an
-  earlier deed, a Nachtrag). The relation is left out of the inventory that every later step reads (reconciliation,
-  evidence validation, the relation candidates), so no candidate is created for it, and the run records one issue
-  per left-out relation, code `DOCUMENT_RELATION_TARGET_NOT_UPLOADED`, severity `INFO`, bound to no candidate
-  (`candidate_id` is null; `details_json` holds `document_key` and `pdf_page` of the relation's evidence where the
-  answer names a page of the import). Its German text names the document the relation was read in, the relation
-  in plain words (`ändert`, `ergänzt`, `verweist auf`), the other document as the answer names it, and says that it
-  was not uploaded and the relation was not taken over. The review page lists such issues in „Hinweise zum Import“;
+  earlier deed, a Nachtrag), and the name the model gave a target may match none of the uploaded ones. The relation
+  is left out of the inventory that every later step reads (reconciliation, evidence validation, the relation
+  candidates), so no candidate is created for it, and the run records one issue per left-out relation, code
+  `DOCUMENT_RELATION_TARGET_UNMATCHED`, severity `INFO`, bound to no candidate (`candidate_id` is null;
+  `details_json` holds `document_key` and `pdf_page` of the relation's evidence where the answer names a page of
+  the import). Its German text names the document the relation was read in, the relation in plain words (`ändert`,
+  `ergänzt`, `verweist auf`) and the other document as the answer names it, and says that the reference could not
+  be matched to an uploaded document and the relation was not taken over; it does not say that the document was
+  not uploaded, because the pipeline cannot know that. The review page lists such issues in „Hinweise zum Import“;
   they never block the approval. The evidence of a left-out relation is not validated, so it cannot fail the import.
+  The text is not fixed: it quotes the name the model gave for the target (up to 120 characters) and the title or
+  file name of the source document. These rows are stored in `declaration_candidate_issue` like the import's other
+  evidence, exported and erased with it, and nothing logs them.
 
 ## Reading Stage (ADR 0017)
 

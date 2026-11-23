@@ -163,8 +163,8 @@ describe("Teilungserklärung review", () => {
 
   it("shows the hints that belong to no proposal above the proposals, and nothing else there", async () => {
     const hint = {
-      id: "hint", code: "DOCUMENT_RELATION_TARGET_NOT_UPLOADED", severity: "INFO", resolution_status: "OPEN", candidate_id: null,
-      message: "Das Dokument „Teilungserklärung Watelerstraße“ verweist auf „Aufteilungsplan“ (Seite 5). Dieses Dokument wurde nicht hochgeladen; die Beziehung wurde nicht übernommen.",
+      id: "hint", code: "DOCUMENT_RELATION_TARGET_UNMATCHED", severity: "INFO", resolution_status: "OPEN", candidate_id: null,
+      message: "Das Dokument „Teilungserklärung Watelerstraße“ verweist auf „Aufteilungsplan“ (Seite 5). Der Verweis konnte keinem hochgeladenen Dokument zugeordnet werden; die Beziehung wurde nicht übernommen.",
     };
     const ofCandidate = { id: "own", code: "WARN", severity: "WARNING", message: "Eigener Hinweis", resolution_status: "OPEN", candidate_id: "candidate-1" };
     const resolved = { id: "done", code: "OLD", severity: "WARNING", message: "Erledigt", resolution_status: "RESOLVED", candidate_id: null };

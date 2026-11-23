@@ -1748,7 +1748,8 @@ def _merge_inventory(values: Sequence[DocumentInventoryOutput]) -> DocumentInven
     return DocumentInventoryOutput(documents=list(sorted(items.values(), key=lambda item: (item.document_key, _stable_json(item.model_dump(mode="json"))))))
 
 
-# How a relation reads in the hint of the review, by its type.
+# The issue of a relation that was left out of the inventory, and how that relation reads in it, by its type.
+_RELATION_HINT_CODE = "DOCUMENT_RELATION_TARGET_UNMATCHED"
 _RELATION_PHRASES = {"AMENDS": "ändert", "SUPPLEMENTS": "ergänzt", "REFERENCES": "verweist auf"}
 
 
@@ -1758,12 +1759,13 @@ def _validate_inventory_documents(
     page_counts: dict[str, int],
     document_titles: dict[str, str],
 ) -> tuple[DocumentInventoryOutput, list[ValidationIssue]]:
-    """Fail an inventory that cannot belong to the import; leave out the relations to a document that was not uploaded.
+    """Fail an inventory that cannot belong to the import; leave out the relations whose target is no document of it.
 
     An entry for a document outside the import, or no entry for a document of it, fails the import. A relation whose
     target is not a document of the import does not: a declaration regularly names documents that were not uploaded
-    (a plan, an earlier deed). That relation is dropped from the inventory that every later step reads, and one hint
-    per relation is returned for the review.
+    (a plan, an earlier deed), and the name the model gave the target may match none of the uploaded ones. That
+    relation is dropped from the inventory that every later step reads, and one hint per relation is returned for
+    the review.
     """
     seen = {item.document_key for item in inventory.documents}
     if not seen <= set(document_ids):
@@ -1789,12 +1791,12 @@ def _validate_inventory_documents(
             hints.setdefault(
                 (item.document_key, relation.relation_type, relation.target_document_key),
                 ValidationIssue(
-                    code="DOCUMENT_RELATION_TARGET_NOT_UPLOADED",
+                    code=_RELATION_HINT_CODE,
                     severity="INFO",
                     message=(
                         f"Das Dokument „{document_titles[item.document_key]}“ {_RELATION_PHRASES[relation.relation_type]} "
-                        f"„{relation.target_document_key}“{page}. Dieses Dokument wurde nicht hochgeladen; "
-                        "die Beziehung wurde nicht übernommen."
+                        f"„{relation.target_document_key}“{page}. Der Verweis konnte keinem hochgeladenen Dokument "
+                        "zugeordnet werden; die Beziehung wurde nicht übernommen."
                     ),
                     document_key=evidence.document_key if evidence is not None else None,
                     pdf_page=evidence.pdf_page if evidence is not None else None,
@@ -2149,11 +2151,13 @@ def _candidate_drafts(imported, inventory, output, validation_issues, document_i
                 details_json,
             )
         )
-    unique_issues: dict[tuple[str, str, str, str | None], DraftIssue] = {}
-    for issue in draft_issues:
-        unique_issues.setdefault(
-            (issue.code, issue.severity, issue.message, issue.candidate_stable_key), issue
-        )
+    unique_issues: dict[tuple[str | int | None, ...], DraftIssue] = {}
+    for position, issue in enumerate(draft_issues):
+        key = (issue.code, issue.severity, issue.message, issue.candidate_stable_key)
+        if issue.code == _RELATION_HINT_CODE:
+            # One issue per left-out relation, even where the hints of two relations read the same.
+            key += (position,)
+        unique_issues.setdefault(key, issue)
     return (
         tuple(sorted(drafts, key=lambda item: item.stable_key)),
         tuple(unique_issues[key] for key in sorted(unique_issues, key=str)),

@@ -93,7 +93,7 @@ def _run_entry(name: str, documents: Path, *arguments: str) -> subprocess.Comple
     )
 
 
-async def test_the_inventory_answer_option_makes_the_import_reach_the_review_with_a_hint_for_a_relation_to_a_document_that_was_not_uploaded(
+async def test_the_inventory_answer_option_makes_the_import_reach_the_review_with_a_hint_for_a_relation_to_a_document_that_matches_none_of_the_upload(
     seed_data, client_a_admin, migrator_session, tmp_path, monkeypatch
 ) -> None:
     organization = seed_data["org_a_id"]
@@ -101,7 +101,7 @@ async def test_the_inventory_answer_option_makes_the_import_reach_the_review_wit
     import_id, _document = await _queue_scan(client_a_admin, tmp_path, monkeypatch)
     name = await migrator_session.scalar(text("SELECT name FROM organization WHERE id=:id"), {"id": organization})
 
-    done = _run_entry(name, tmp_path, "--inventory-answer", "relation-to-unuploaded-document")
+    done = _run_entry(name, tmp_path, "--inventory-answer", "relation-to-unmatched-document")
 
     lines = done.stdout.splitlines()
     assert done.returncode == 0, done.stdout + done.stderr
@@ -110,9 +110,9 @@ async def test_the_inventory_answer_option_makes_the_import_reach_the_review_wit
     assert any(" call=extract_core " in line for line in lines) and any(" call=reconcile " in line for line in lines)
     preview = await client_a_admin.get(f"/api/declaration-imports/{import_id}/approval-preview")
     assert preview.status_code == 200, preview.text
-    hints = [issue for issue in preview.json()["issues"] if issue["code"] == "DOCUMENT_RELATION_TARGET_NOT_UPLOADED"]
+    hints = [issue for issue in preview.json()["issues"] if issue["code"] == "DOCUMENT_RELATION_TARGET_UNMATCHED"]
     assert [(issue["severity"], issue["candidate_id"]) for issue in hints] == [("INFO", None)]
-    assert "„Aufteilungsplan“" in hints[0]["message"] and "wurde nicht hochgeladen" in hints[0]["message"]
+    assert "„Aufteilungsplan“" in hints[0]["message"] and "keinem hochgeladenen Dokument zugeordnet" in hints[0]["message"]
 
 
 async def test_the_inventory_answer_option_makes_the_import_fail_before_any_extraction_call_for_a_document_outside_the_import(

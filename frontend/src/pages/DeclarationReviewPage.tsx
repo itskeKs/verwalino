@@ -125,7 +125,7 @@ function DeclarationReviewImportPage({ importId }: { importId: string | undefine
   }, [showConfirmation]);
 
   const documentTitles = useMemo(() => new Map(documents.map((document) => [document.id, document.title])), [documents]);
-  // Open issues that belong to no proposal (a document refers to a document that was not uploaded, a page could not be read).
+  // Open issues that belong to no proposal (a relation to a document that matches none of the upload was left out, a page could not be read).
   const importHints = useMemo(
     () => (preview?.issues ?? []).filter((issue) => issue.candidate_id === null && issue.resolution_status === "OPEN"),
     [preview],

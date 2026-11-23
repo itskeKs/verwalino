@@ -102,8 +102,8 @@ It knows the fictional Lindenallee declaration only, exits with 1 when an import
 changes nothing outside the instance's organization.
 
 `--inventory-answer` changes what the stand-in extraction model's inventory says, for a user check of what an inventory answer
-can cause; every import the run processes gets that answer. `relation-to-unuploaded-document` makes the declaration REFERENCES a
-document (`Aufteilungsplan`) that was not uploaded: the import reaches „Fachliche Prüfung“, and the review shows the hint in
+can cause; every import the run processes gets that answer. `relation-to-unmatched-document` makes the declaration REFERENCES a
+document (`Aufteilungsplan`) that matches none of the import's documents: the import reaches „Fachliche Prüfung“, and the review shows the hint in
 „Hinweise zum Import“. `unknown-document` makes the inventory name a document that is not in the import: the import fails with
 `UNKNOWN_INVENTORY_DOCUMENT` before any extraction call (the output lists the `inventory` call only), and the import page
 explains it in German. With the option, the exit status is 0 when every import ended in the state the option stands for

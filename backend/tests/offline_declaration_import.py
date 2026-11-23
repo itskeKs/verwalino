@@ -8,8 +8,8 @@ organization's saved settings the way the worker takes them (the job's first run
 printed at the end show which model was asked for which page. Test tree only: no product switch, no configuration key.
 
 ``--inventory-answer`` changes what the stand-in extraction model's inventory says, for the user check of the failures and
-hints that an inventory answer can cause: ``relation-to-unuploaded-document`` (the declaration REFERENCES a document that
-was not uploaded: the import reaches the review with a hint) or ``unknown-document`` (the answer names a document of its
+hints that an inventory answer can cause: ``relation-to-unmatched-document`` (the declaration REFERENCES a document that
+matches none of the import's: the import reaches the review with a hint) or ``unknown-document`` (the answer names a document of its
 own that is not in the import: the import fails before any extraction call). Without it the answer is the plain one.
 
 The stored API key is neither decrypted nor used here (an instance has its own session secret, and no provider is
@@ -21,7 +21,7 @@ from what the administrator saved under Einstellungen; the instance has the queu
     cd <repository>/backend && . ../scripts/test-env.sh && uv run --locked --extra dev --extra ops \\
       python -m tests.offline_declaration_import --organization "<name or id>" \\
       --documents "$(sed -n 's/^scratch=//p' /tmp/hausverwaltung-acceptance.lock/instance)/documents" \\
-      [--inventory-answer relation-to-unuploaded-document|unknown-document]
+      [--inventory-answer relation-to-unmatched-document|unknown-document]
 """
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ from tests.declaration_fixtures import ModelRecording, SlowReadingProvider, lind
 MAX_IMPORTS = 25
 # The inventory answers besides the plain one, and the state every import is expected to end in for each.
 INVENTORY_ANSWERS = {
-    "relation-to-unuploaded-document": ("NEEDS_REVIEW", None),
+    "relation-to-unmatched-document": ("NEEDS_REVIEW", None),
     "unknown-document": ("FAILED", "UNKNOWN_INVENTORY_DOCUMENT"),
 }
 
@@ -93,7 +93,7 @@ def fictional_provider(document_id, usage: ProviderUsage | None = None, inventor
         fact(subject,'location',TextValue(kind='TEXT',value=location),location)
         fact(subject,'mea',MeaFraction(kind='MEA',numerator=share,denominator=1000),str(share))
     entry = {'document_key':document_id,'document_type':'DECLARATION','title':'Fiktive Teilungserklärung'}
-    if inventory_answer == 'relation-to-unuploaded-document':
+    if inventory_answer == 'relation-to-unmatched-document':
         entry['relations'] = [{'relation_type':'REFERENCES','target_document_key':'Aufteilungsplan',
             'evidence':[{'document_key':document_id,'pdf_page':1,'quote':'WEG Lindenallee 12'}]}]
     elif inventory_answer == 'unknown-document':
@@ -253,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--organization", required=True, help="name or id of the organization")
     parser.add_argument("--documents", required=True, help="the document storage root of the instance")
     parser.add_argument("--inventory-answer", choices=sorted(INVENTORY_ANSWERS),
-                        help="what the stand-in inventory says: a relation to a document that was not uploaded, or a document "
+                        help="what the stand-in inventory says: a relation to a document that matches none of the import's, or a document "
                              "that is not in the import (the import then fails before any extraction call)")
     arguments = parser.parse_args(argv)
     from app.core.config import settings
