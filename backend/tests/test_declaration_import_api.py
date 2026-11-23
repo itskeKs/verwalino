@@ -1823,3 +1823,137 @@ async def test_parallel_upload_and_start_are_serialized(client_a_admin, monkeypa
     cancelled = await client_a_admin.post(f"/api/declaration-imports/{import_id}/cancel")
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "CANCELLED"
+
+
+# ---- the status page of a started import (issue #870) -------------------------------------------------------------
+
+_WAITING_STEPS = [("Dateien prüfen", "WAITING"), ("Angaben auslesen", "WAITING"),
+                  ("Angaben abgleichen", "WAITING"), ("Zur Prüfung bereit", "WAITING")]
+
+
+async def _import_with_one_document(client, name: str = "teilungserklaerung.pdf") -> tuple[str, str]:
+    created = await client.post("/api/declaration-imports", json={"mode": "NEW_PROPERTY"})
+    assert created.status_code == 201
+    import_id = created.json()["id"]
+    uploaded = await client.post(
+        f"/api/declaration-imports/{import_id}/documents",
+        files={"file": (name, make_text_pdf("Teilungserklärung", "Hauptstraße 1", "Einheit 1"), "application/pdf")},
+        data={"document_role": "DECLARATION", "sequence_no": "1"},
+    )
+    assert uploaded.status_code == 201
+    return import_id, uploaded.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_a_started_import_says_that_it_waits_and_when_it_was_started(client_a_admin) -> None:
+    from datetime import datetime, timezone
+
+    import_id, _document = await _import_with_one_document(client_a_admin)
+    path = f"/api/declaration-imports/{import_id}"
+    draft = (await client_a_admin.get(path)).json()
+    assert (draft["status_label"], draft["steps"], draft["started_at"]) == ("Dokumente vorbereiten", [], None)
+
+    started = await client_a_admin.post(f"{path}/start", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"})
+    assert started.status_code == 200
+    try:
+        for body in (started.json(), (await client_a_admin.get(path)).json()):
+            assert body["status"] == "QUEUED" and body["status_label"] == "Wartet auf Verarbeitung"
+            assert [(step["label"], step["state"]) for step in body["steps"]] == _WAITING_STEPS
+            assert all(step["detail"] is None and step["elapsed_seconds"] is None for step in body["steps"])
+            assert abs((datetime.now(timezone.utc) - datetime.fromisoformat(body["started_at"])).total_seconds()) < 120
+            # The page reads the steps; no percentage and no raw stage name leaves the server any more.
+            assert "progress_percent" not in body and "current_stage" not in body
+    finally:
+        assert (await client_a_admin.post(f"{path}/cancel")).status_code == 200
+
+
+class _HeldCall:
+    """A provider whose call of one kind stays open until the test lets it end."""
+
+    def __init__(self, inner, method: str) -> None:
+        self._inner, self._method = inner, method
+        self.reached, self.release = asyncio.Event(), asyncio.Event()
+
+    def __getattr__(self, name):
+        target = getattr(self._inner, name)
+        if name != self._method:
+            return target
+
+        async def held(*args, **kwargs):
+            self.reached.set()
+            await self.release.wait()
+            return await target(*args, **kwargs)
+
+        return held
+
+
+@pytest.mark.asyncio
+async def test_a_running_import_shows_the_step_the_server_is_in_and_the_calls_it_finished(
+    isolated_declaration_worker,
+) -> None:
+    client_a_admin, _tenant_session = isolated_declaration_worker
+    import_id, document_id = await _import_with_one_document(client_a_admin)
+    path = f"/api/declaration-imports/{import_id}"
+    assert (await client_a_admin.post(f"{path}/start", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"})).status_code == 200
+    provider = _HeldCall(_provider_for_uploaded_documents(document_id), "extract_core")
+    worker = DeclarationImportWorker(DeclarationPipeline(provider, store=get_store()))
+    processing = asyncio.create_task(worker.run_once())
+    try:
+        await asyncio.wait_for(provider.reached.wait(), timeout=30)
+        running = (await client_a_admin.get(path)).json()
+        # The inventory call has ended and is recorded; the extraction call is open and not counted.
+        assert (running["status"], running["status_label"]) == ("EXTRACTING", "Angaben auslesen")
+        assert [(step["label"], step["state"], step["detail"]) for step in running["steps"]] == [
+            ("Dateien prüfen", "DONE", None),
+            ("Angaben auslesen", "RUNNING", "1 Modellanfrage abgeschlossen"),
+            ("Angaben abgleichen", "WAITING", None),
+            ("Zur Prüfung bereit", "WAITING", None),
+        ]
+        assert [step["elapsed_seconds"] for step in running["steps"]][1] is not None
+        assert [step["elapsed_seconds"] for step in running["steps"]][0::2] == [None, None]
+    finally:
+        provider.release.set()
+        outcome = await processing
+    assert outcome.code == "PROCESSED"
+
+    finished = (await client_a_admin.get(path)).json()
+    assert (finished["status"], finished["status_label"]) == ("NEEDS_REVIEW", "Fachliche Prüfung")
+    assert [(step["label"], step["state"]) for step in finished["steps"]] == [
+        ("Dateien prüfen", "DONE"), ("Angaben auslesen", "DONE"), ("Angaben abgleichen", "DONE"), ("Zur Prüfung bereit", "DONE")]
+    assert all(step["elapsed_seconds"] is None for step in finished["steps"])
+    extraction, reconciliation = finished["steps"][1]["detail"], finished["steps"][2]["detail"]
+    assert extraction == "3 Modellanfragen abgeschlossen"
+    # Every reserved call of the import ended as a finished call of one of the two steps.
+    assert 3 + int(reconciliation.split()[0]) == finished["attempt_count"]
+
+
+@pytest.mark.asyncio
+async def test_the_start_time_and_the_saved_pages_are_read_inside_the_organization(
+    client_a_admin, seed_data, migrator_session
+) -> None:
+    from app.core.db import get_tenant_session
+    from app.models.declaration_import import DeclarationPageReading
+    from app.repositories.declaration_import_repo import DeclarationImportRepository
+
+    import_id, document_id = await _import_with_one_document(client_a_admin)
+    path = f"/api/declaration-imports/{import_id}"
+    started = await client_a_admin.post(f"{path}/start", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"})
+    assert started.status_code == 200
+    request_id = uuid.UUID(started.json()["queue_request_id"])
+    org_a, org_b = seed_data["org_a_id"], seed_data["org_b_id"]
+    try:
+        # The worker saves a page transcript with the usage of its call; the owner role stands in for it here.
+        await _set_organization(migrator_session, org_a)
+        migrator_session.add(DeclarationPageReading(
+            organization_id=org_a, import_id=uuid.UUID(import_id), document_id=uuid.UUID(document_id),
+            pdf_page=1, model_name="gpt-5.4-mini", blocks=[]))
+        await migrator_session.commit()
+        for organization, expected_time, expected_pages in ((org_a, True, 1), (org_b, False, 0)):
+            async with get_tenant_session(organization) as session:
+                repository = DeclarationImportRepository(session, organization)
+                assert (await repository.queue_request_time(request_id) is not None) is expected_time
+                assert await repository.count_page_readings(uuid.UUID(import_id)) == expected_pages
+        assert (await client_a_admin.get(path)).json()["steps"][1] == {
+            "label": "Seiten lesen", "state": "WAITING", "detail": "1 Seite gelesen", "elapsed_seconds": None}
+    finally:
+        assert (await client_a_admin.post(f"{path}/cancel")).status_code == 200

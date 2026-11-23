@@ -75,6 +75,14 @@ export function formatDateTime(iso: string): string {
   return `${parts.day}.${parts.month}.${parts.year}, ${parts.hour}:${parts.minute} Uhr`;
 }
 
+/** Elapsed time `42 s`, `2 Min. 5 s`, `1 Std. 2 Min.`: whole seconds under a minute, minutes with seconds under an hour, then hours with minutes. */
+export function formatElapsed(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  if (seconds < 60) return `${seconds} s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} Min. ${seconds % 60} s`;
+  return `${Math.floor(seconds / 3600)} Std. ${Math.floor((seconds % 3600) / 60)} Min.`;
+}
+
 /** Percentage contract `19 %`: decimal comma, no trailing zeros, a normal space; a value that is not a plain decimal renders as stored. */
 export function formatPercent(value: string): string {
   const match = /^(-?\d+)(?:\.(\d+))?$/.exec(value);

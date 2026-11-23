@@ -224,6 +224,29 @@ provider, endpoint, timeout and key. One page is one request; a failed page is r
   inference; it is absent when zero. The stages and `unassigned` add up to the run's tokens and cost.
   The import and review screens show them as „Dokumente einlesen“, „Informationen extrahieren“ and
   „Nicht zugeordnet“ before the run total.
+- **Status of a started import.** The same `GET /api/declaration-imports/{id}` (and the answers of
+  `POST …/start` and `POST …/retry`) carries what the import page shows while the import runs:
+  `status_label` (the German status line), `started_at` (when the start or the last retry was
+  recorded) and `steps`, each with `label`, `state` (`DONE`, `RUNNING` or `WAITING`), `detail` (what
+  the step counted, such as „12 Seiten gelesen“) and `elapsed_seconds` (only the running step). There
+  is no percentage and no raw stage name: `progress_percent` and `current_stage` stay in the table
+  but leave the response. `declarations/progress.py` holds the one table of German labels (every status the
+  database allows, every kind of pass the ledger accepts and the steps) and derives the steps from
+  recorded data only: the import's status, the passes of its open run (the last run once the import
+  has finished) and the saved page transcripts. A step is running only while the status names it
+  (`PREFLIGHT` runs „Dateien prüfen“, or „Seiten lesen“ once a page of this run was read; `EXTRACTING`
+  runs „Angaben auslesen“; `RECONCILING` runs „Angaben abgleichen“). „Seiten lesen“ is listed only for an
+  import of which a page was read, so a text-layer document has no such step. The count of a step is
+  the number of recorded rows: transcripts saved for the import (any run) for the reading, finished
+  model requests of the open run for the two others (an attempt that failed is not counted). The pass
+  ledger row of a call is written when the call has ended, so the page cannot tell which call of a
+  stage is in flight, and the page names stages, not single calls. The time of the running step counts
+  from the last row the run recorded for an earlier step, or from the start of the run, to the moment
+  of the answer; the page counts on from that figure until its next poll. A queued import waits
+  („Wartet auf Verarbeitung“), a `RETRY_WAIT` import says that a new attempt is scheduled; a `FAILED` or
+  `CANCELLED` import lists no steps and keeps its failure text. A test fails when a status, a stage
+  written to `current_stage` or a pass kind has no label
+  (`tests/test_declaration_import_progress.py`).
 
 ## Provider Failures, Recovery and Safe Telemetry
 

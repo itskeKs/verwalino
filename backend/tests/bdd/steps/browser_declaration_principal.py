@@ -1,4 +1,5 @@
 """Declaration import start: replay-safe queueing and durable principal cancellation."""
+import re
 import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
@@ -68,8 +69,7 @@ def clerk_starts_import(browser_world, request):
             assert state["keys"][0], "the start must carry a command key"
             browser_world.world.data["start_keys"] = state["keys"]
             browser_world.world.data["receipt"] = state["receipt"]
-            await page.wait_for_function(
-                "() => [...document.querySelectorAll('button')].some(button => button.textContent === 'Import starten' && button.disabled)")
+            await expect(page.get_by_text("Importstatus: Wartet auf Verarbeitung.", exact=True)).to_be_visible()
         finally:
             await context.close()
     browser_world.run(run())
@@ -189,3 +189,73 @@ def replay_acknowledges(browser_world):
         assert replayed["queue_request_id"] == world.data["retry_receipt"], replayed
     finally:
         world.run(client.aclose())
+
+
+STEP_LABELS = ["Dateien prüfen", "Angaben auslesen", "Angaben abgleichen", "Zur Prüfung bereit"]
+
+
+@when("the clerk uploads a PDF and starts the import")
+def clerk_starts_import_plainly(browser_world, request):
+    async def run():
+        context, page = await sign_in_context(browser_world, *CLERK)
+        try:
+            await page.goto("/teilungserklaerung/import")
+            await page.wait_for_url("**/teilungserklaerung/import/*")
+            browser_world.world.data["job"] = urlsplit(page.url).path.rsplit("/", 1)[-1]
+            request.addfinalizer(lambda: cancel_import_job(browser_world.world))
+            await page.locator("#declaration-files:enabled").wait_for()
+            await field(page, "PDF-Dateien auswählen").set_input_files(
+                {"name": "synthetic.pdf", "mimeType": "application/pdf", "buffer": PDF})
+            await button(page, "Ausgewählte PDFs hochladen").click()
+            await expect(button(page, "Import starten")).to_be_enabled()
+            await button(page, "Import starten").click()
+        finally:
+            await context.close()
+    browser_world.run(run())
+
+
+async def expect_waiting_status_page(page):
+    await expect(page.get_by_text("Importstatus: Wartet auf Verarbeitung.", exact=True)).to_be_visible()
+    steps = page.get_by_role("list", name="Verarbeitungsschritte").get_by_role("listitem")
+    await expect(steps).to_have_count(len(STEP_LABELS))
+    for index, label in enumerate(STEP_LABELS):
+        await expect(steps.nth(index)).to_contain_text(label)
+        await expect(steps.nth(index)).to_contain_text("Wartet")
+    await expect(page.get_by_text("synthetic.pdf", exact=True)).to_be_visible()
+    await expect(page.get_by_text("Gestartet:")).to_be_visible()
+    # The upload form is gone and no raw stage name is shown.
+    await expect(field(page, "PDF-Dateien auswählen")).to_have_count(0)
+    await expect(button(page, "Import starten")).to_have_count(0)
+    await expect(page.get_by_text(re.compile("queued|preflight|extracting|reconciling|retry_wait", re.I))).to_have_count(0)
+
+
+@then("the clerk's page shows the import waiting for processing with its steps")
+def status_page_shows_waiting(browser_world):
+    async def run():
+        context, page = await sign_in_context(browser_world, *CLERK)
+        try:
+            await page.goto(f"/teilungserklaerung/import/{browser_world.world.data['job']}")
+            await expect_waiting_status_page(page)
+        finally:
+            await context.close()
+    browser_world.run(run())
+
+
+@then("a reload shows the same steps and they fit a 360 pixel wide viewport")
+def status_page_after_reload(browser_world):
+    async def run():
+        context, page = await sign_in_context(browser_world, *CLERK)
+        try:
+            await page.goto(f"/teilungserklaerung/import/{browser_world.world.data['job']}")
+            await expect_waiting_status_page(page)
+            await page.reload()
+            await expect_waiting_status_page(page)
+            await page.set_viewport_size({"width": 360, "height": 800})
+            await expect_waiting_status_page(page)
+            for widths in await page.locator("main").evaluate_all(
+                    "nodes => nodes.map(node => ({visible: node.clientWidth, content: node.scrollWidth}))"):
+                assert widths["content"] <= widths["visible"] + 1, widths
+            assert await page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1")
+        finally:
+            await context.close()
+    browser_world.run(run())

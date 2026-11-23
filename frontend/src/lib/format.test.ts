@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { centsFromDecimal, formatDate, formatDateTime, formatDecimalMoney, formatIban, formatMoney, formatPercent, shown } from "./format";
+import { centsFromDecimal, formatDate, formatDateTime, formatDecimalMoney, formatElapsed, formatIban, formatMoney, formatPercent, shown } from "./format";
 
 describe("formatMoney", () => {
   it("groups thousands with a dot and suffixes the euro sign", () => {
@@ -125,5 +125,22 @@ describe("shown", () => {
     expect(() => formatDecimalMoney("312,00 EUR")).toThrow(RangeError);
     expect(shown("312,00 EUR", formatDecimalMoney)).toBe("312,00 EUR");
     expect(shown("einhundert", formatDecimalMoney)).toBe("einhundert");
+  });
+});
+
+describe("formatElapsed", () => {
+  it("counts whole seconds under a minute, minutes with seconds under an hour, then hours with minutes", () => {
+    expect(formatElapsed(0)).toBe("0 s");
+    expect(formatElapsed(42)).toBe("42 s");
+    expect(formatElapsed(60)).toBe("1 Min. 0 s");
+    expect(formatElapsed(125)).toBe("2 Min. 5 s");
+    expect(formatElapsed(3599)).toBe("59 Min. 59 s");
+    expect(formatElapsed(3600)).toBe("1 Std. 0 Min.");
+    expect(formatElapsed(7384)).toBe("2 Std. 3 Min.");
+  });
+
+  it("never shows a negative or fractional time", () => {
+    expect(formatElapsed(-4)).toBe("0 s");
+    expect(formatElapsed(59.9)).toBe("59 s");
   });
 });
