@@ -1,6 +1,6 @@
 # Feature status
 
-Current feature catalog of Verwalino by area. Status as of 2026-11-21, migration head `0203`.
+Current feature catalog of Verwalino by area. Status as of 2026-11-21, migration head `0204`.
 Status: ✅ implemented and reachable in the running app, 🟡 partial (reason given), ❌ not implemented.
 Short paths: `api/ services/ engine/ models/ workers/ core/` are under
 `backend/app/`, `pages/ components/ lib/` under `frontend/src/`; other paths are relative to the
