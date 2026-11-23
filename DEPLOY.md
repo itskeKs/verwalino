@@ -165,7 +165,11 @@ those bytes. No background deletion or retention override is added.
 Monthly model costs reuse the Q&A reservation ledger and declaration extraction
 runs. Running imports reserve their entire existing per-import ceiling; completed
 runs use their recorded cost. Active or expired Q&A reservations retain their
-worst-case charge until trustworthy final accounting. A shared organization lock
+worst-case charge until trustworthy final accounting, except that a question whose
+request provably never left the host (the name did not resolve, the endpoint guard
+refused the address or the connection could not be made) is finalized at zero: an
+unreachable provider does not use up the allowance. A timeout or any failure after the
+request may have been written keeps the reservation. A shared organization lock
 serializes admission across properties, processes, and both features. Crashed
 work can therefore conservatively consume the allowance until reconciled by the
 existing worker lifecycle; restarting does not reset it. Calendar-month accounting
