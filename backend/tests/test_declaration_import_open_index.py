@@ -80,6 +80,7 @@ async def test_the_read_of_a_users_open_imports_uses_the_index_when_the_organiza
                 event.remove(engine, 'before_cursor_execute', capture)
             # Other tests of the session may have left open imports of the same user: only this test's rows are compared.
             assert sorted(row.status for row in rows if row.id in own) == sorted(OPEN)
+            assert all(row.status in statuses for row in rows)
 
             # The plan of the statement the repository sent, for the values it sent.
             [(statement, parameters)] = statements
