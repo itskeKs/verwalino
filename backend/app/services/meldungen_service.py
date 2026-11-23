@@ -9,18 +9,21 @@ and to nobody else, an administrator included, and exists only while the import 
 the starter's review or has failed; `declarations/progress.py` decides which status is which and says the words.
 
 The second kind is the Posteingang batch (issue #872). Its Meldung belongs to the user who uploaded the batch and to nobody
-else, and exists while a file of the batch is received and waits, is being processed, waits for the organization's setup, or
-has failed. A batch whose files are all at rest (their documents wait for review in the Posteingang, a file is still
-missing, or the files wait for the decision how an original divides) is no Meldung: the Posteingang names those. The state
-of a file is the one the batch page shows (`intake_batch_status`); `INTAKE_FILE_STATES` below decides which of them is a
-Meldung, and the words of the stages are the batch page's own table, which the Meldung's row reads (`stage`).
+else, and exists while a file of the batch is received and waits, is being processed, or has failed. A file at rest is none of
+these: its documents wait for review in the Posteingang, a file is still missing, the files wait for the decision how an
+original divides, or the evaluation waits for the organization's AI setup, which may never come (nothing runs and nothing
+failed). A batch whose files are all at rest is no Meldung: the Posteingang names those. A batch that stopped with a failure
+stays a Meldung for `FAILED_LISTED_FOR` after its latest failure and then leaves the list (it stays on its batch page); a batch
+that still has a file that waits or runs stays listed whatever its age. The state of a file is the one the batch page shows
+(`intake_batch_status`); `INTAKE_FILE_STATES` and `EXTRACTION_STOPS` below decide which of them is a Meldung, and the words of
+the stages are the batch page's own table, which the Meldung's row reads (`stage`).
 """
 
 from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,6 +50,13 @@ IMPORT_TITLE = "Teilungserklärung einlesen"
 NEW_PROPERTY_SUBJECT = "Neues Objekt"
 EXISTING_PROPERTY_SUBJECT = "Bestehendes Objekt"
 
+# How long a batch that stopped with a failure stays a Meldung, counted from the latest failure of one of its files (the
+# latest change of a failed job of the batch, so a file that failed again after a retry starts it over; the upload time would
+# list a batch uploaded a month ago whose retry failed just now for no time at all). A failure the user cannot retry (a rejected
+# file, an extraction that failed three times) would otherwise stay listed for good (owner decision on issue #872). A failure
+# is listed while it is younger than this, and on the day it is this old it leaves; the batch page keeps showing it.
+FAILED_LISTED_FOR = timedelta(days=14)
+
 INTAKE_KIND = "INTAKE_BATCH"
 INTAKE_TITLE = "Dokumentenstapel"
 
@@ -54,27 +64,58 @@ INTAKE_TITLE = "Dokumentenstapel"
 INTAKE_STAGES = ("inspection", "preparation", "extraction", "split", "review")
 
 # Which state of a file (its `status` and `stage`, the words of `intake_batch_status`) is a Meldung of its batch, and in which
-# state: a file that is received and waits for the inspection, one that is processed, one that stopped with a failure. None:
-# no Meldung, because the file is at rest: its upload is missing (the batch page offers to send it), the documents wait
-# for review in the Posteingang, or they wait for the decision how an original divides. Every status and stage the database
-# names has a decision here, a test fails for one that has none.
+# state: WAITING for a file the worker will pick up by itself, RUNNING for one that is processed, FAILED for one that stopped
+# with a failure. None: the file is at rest, nothing runs and nothing moves it but a person or the organization's setup. Every
+# status and stage the database names has a decision here, a test fails for one that has none; one line of reason each.
 INTAKE_FILE_STATES: dict[tuple[str, str], MeldungState | None] = {
+    # No file arrived: only its uploader sending it on the batch page moves it, and the batch page offers that. The reading the
+    # issue leaves to the owner: a batch of such files is not a Meldung (the Posteingang names it).
     ("waiting", "inspection"): None,
+    # Queued for the inspection: the worker takes it by itself.
     ("received", "inspection"): "WAITING",
     ("processing", "inspection"): "RUNNING",
+    # Scanner or parser blocked or rejected the file: its uploader requests a blocked one again on the batch page, a rejected
+    # one is failed for good; no setting of the organization moves either.
     ("failed", "inspection"): "FAILED",
     ("processing", "preparation"): "RUNNING",
+    # The delivery of the inspected original stopped; nothing the organization sets or the uploader does moves it.
     ("failed", "preparation"): "FAILED",
     ("processing", "extraction"): "RUNNING",
+    # The extraction ended without a proposal: `EXTRACTION_STOPS` decides by the reason.
     ("failed", "extraction"): "FAILED",
+    # A person decides how the original divides (the Posteingang asks), and the proposals wait for review there: not the
+    # setup, not the worker, and the Posteingang names both.
     ("review", "split"): None,
     ("review", "review"): None,
 }
 
-# The reasons a file's extraction ended that the batch page does not call a failure: the organization's setup for the AI
-# import is missing, the file is kept and can be requested again (`AWAITS_SETUP` in `frontend/src/lib/invoiceProcessing.ts`,
-# which a test compares). Such a file waits.
-AWAITS_SETUP = frozenset({"ai_import_disabled", "ai_inbox_confirmation_missing", "ai_document_model_missing", "ai_key_unreadable"})
+# What a file whose extraction ended without a proposal (`failed` at `extraction`) is, by the reason it ended (`error_code` of
+# its extraction job): every reason the inbox's extraction stores has a decision here, a test fails for one that has none.
+# None: at rest. FAILED: the batch page calls it a failure and its uploader is told. The reasons that wait for a person's
+# request again are failures, not waiting: the worker does not take such a job up again by itself.
+EXTRACTION_STOPS: dict[str, MeldungState | None] = {
+    # Only the organization's settings move these, an administrator's action: the AI import is opt-in and nothing is read
+    # locally, so an organization that never sets it up never gets past this. The file is kept, nothing runs and nothing
+    # failed, and the batch page counts it as received (`AWAITS_SETUP` of `invoiceProcessing.ts`): at rest.
+    **dict.fromkeys(("ai_import_disabled", "ai_inbox_confirmation_missing", "ai_document_model_missing", "ai_key_unreadable"), None),
+    # Failed; the passing of time (the budget's month), the provider, a repaired installation or the uploader's own request
+    # moves it, so it is not a setup that may never come: the uploader requests the evaluation again (an administrator may raise
+    # a limit first). A run that the settings changed under (`ai_settings_changed`) takes the current ones the next time.
+    **dict.fromkeys(("organization_ai_budget_exceeded", "ai_settings_changed", "provider_unreachable", "model_reading_failed",
+                     "model_extraction_failed", "model_result_invalid", "lease_lost", "render_timeout", "extraction_timeout",
+                     "render_unavailable", "pdf_parser_unavailable", "processor_failed", "storage_integrity_mismatch",
+                     "stored_original_unavailable"), "FAILED"),
+    # Failed for good: the file cannot be evaluated or the attempts are used; only a new submission helps.
+    **dict.fromkeys(("file_size_limit", "mime_mismatch", "invalid_page_selection", "source_page_count_changed", "unsupported_format",
+                     "invalid_document", "image_pixel_limit", "attempt_limit"), "FAILED"),
+    # Its uploader lost the permission to work on the document, so the request again needs the permission back, an
+    # administrator's action; nothing runs and the batch page calls it failed, so its uploader is told.
+    "initiator_permission_changed": "FAILED",
+}
+
+# The reasons of an extraction that wait for the organization's setup (the ones at rest); `AWAITS_SETUP` in
+# `frontend/src/lib/invoiceProcessing.ts`, which the batch page counts as received and a test compares, is the same set.
+AWAITS_SETUP = frozenset(code for code, state in EXTRACTION_STOPS.items() if state is None)
 
 # What the badge of a batch says. The words of the stage are the batch page's, shown by the row beside it.
 INTAKE_STATE_LABELS: dict[str, str] = {"WAITING": STATUS_LABELS["QUEUED"], "RUNNING": "Läuft", "FAILED": STATUS_LABELS["FAILED"]}
@@ -104,22 +145,30 @@ class Meldung:
 def intake_file_state(status: str, stage: str, error_code: str | None) -> MeldungState | None:
     """The state of the Meldung one file of a batch stands for, if it stands for one."""
     state = INTAKE_FILE_STATES[(status, stage)]
-    if state == "FAILED" and stage == "extraction" and error_code in AWAITS_SETUP:
-        return "WAITING"
+    if state == "FAILED" and stage == "extraction":
+        # A reason nobody decided is a failure: the user is told rather than left without a word.
+        return EXTRACTION_STOPS.get(error_code or "", "FAILED")
     return state
 
 
-def intake_batch_state(groups: Sequence[FileGroup]) -> tuple[MeldungState, str] | None:
+def intake_batch_state(groups: Sequence[FileGroup], now: datetime) -> tuple[MeldungState, str] | None:
     """The state of a batch's Meldung and the stage it names, from how many of its files are in each state.
 
     The most urgent state of any file is the batch's: a failure before work that runs before work that waits. The stage is
-    the least advanced one among the files in that state. None: no file is in a state that is a Meldung.
+    the least advanced one among the files in that state. None: no file is in a state that is a Meldung, or the batch has
+    only failed files and the latest of those failures is `FAILED_LISTED_FOR` old.
     """
     stages: dict[MeldungState, list[str]] = {}
+    failed_at: list[datetime] = []
     for group in groups:
         state = intake_file_state(group.status, group.stage, group.error_code)
         if state is not None:
             stages.setdefault(state, []).append(group.stage)
+            if state == "FAILED" and group.failed_at is not None:
+                failed_at.append(group.failed_at)
+    # A file that waits or runs keeps the batch listed whatever its age; a failure without a time is never cut.
+    if set(stages) == {"FAILED"} and len(failed_at) == len(stages["FAILED"]) and now - max(failed_at) >= FAILED_LISTED_FOR:
+        return None
     for state in ("FAILED", "RUNNING", "WAITING"):
         if state in stages:
             return state, min(stages[state], key=INTAKE_STAGES.index)
@@ -141,10 +190,11 @@ class MeldungenService:
         return found[:MELDUNGEN_LIMIT]
 
     async def _intake_batches(self) -> list[Meldung]:
-        """The user's Posteingang batches with a file that waits, runs or failed; every one of them is the user's own."""
+        """The user's Posteingang batches with a file that waits, runs or failed (not too long ago); every one of them is the user's own."""
         found = []
+        now = datetime.now(timezone.utc)
         for batch in await self._batches.progress(MELDUNGEN_LIMIT):
-            decided = intake_batch_state(batch.groups)
+            decided = intake_batch_state(batch.groups, now)
             if decided is None:
                 continue
             state, stage = decided

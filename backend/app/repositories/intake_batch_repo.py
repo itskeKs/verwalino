@@ -15,12 +15,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 @dataclass(frozen=True, slots=True)
 class FileGroup:
-    """How many files of a batch are in one state: the words `intake_batch_status` gives a file."""
+    """How many files of a batch are in one state: the words `intake_batch_status` gives a file.
+
+    `failed_at` is when a file of a failed state last failed (the latest change of its failed job); absent for any other state.
+    """
 
     status: str
     stage: str
     error_code: str | None
     count: int
+    failed_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,7 +54,11 @@ class IntakeBatchRepository:
                 id=uuid.UUID(row["id"]),
                 created_at=datetime.fromisoformat(row["created_at"]),
                 item_count=row["item_count"],
-                groups=tuple(FileGroup(g["status"], g["stage"], g["error_code"], g["count"]) for g in row["groups"]),
+                groups=tuple(
+                    FileGroup(g["status"], g["stage"], g["error_code"], g["count"],
+                              datetime.fromisoformat(g["failed_at"]) if g["failed_at"] else None)
+                    for g in row["groups"]
+                ),
             )
             for row in rows
         ]

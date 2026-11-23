@@ -176,21 +176,38 @@ Meldung: another user of the organization, an administrator included, and anothe
 
 | File (batch page) | Meldung |
 |---|---|
-| „Empfangen“ (`received`, waits for the inspection) | waits |
+| „Empfangen“ (`received`, waits for the inspection; the worker takes it by itself) | waits |
 | „In Verarbeitung“ (`processing`: inspection, preparation or extraction runs) | runs |
-| „Gesperrt / fehlgeschlagen“ (`failed`: inspection, delivery or extraction) | failed |
-| failed in the extraction for a reason of the organization's AI setup (`AWAITS_SETUP`, which the batch page does not call a failure) | waits |
+| „Gesperrt / fehlgeschlagen“ (`failed`: inspection, delivery or extraction), whatever the reason of the extraction (`EXTRACTION_STOPS`) except the next row | failed |
+| failed in the extraction for a reason of the organization's AI setup (`AWAITS_SETUP`: `ai_import_disabled`, `ai_inbox_confirmation_missing`, `ai_document_model_missing`, `ai_key_unreadable`; the batch page counts it „Empfangen“, not a failure) | none: at rest |
 | „Datei fehlt“ (`waiting`, the upload of the file is missing) | none |
 | „Zur Sichtung“ (`review`: documents wait for review, or „Aufteilung ausstehend“) | none |
 
-The batch is in the most urgent state of its files (failed, then running, then waiting) and names the least advanced stage among them. A batch
-whose files are all at rest leaves the list; a failed file keeps its batch in it until the file is asked for again in the way the batch page
-offers (the inspection or the extraction is requested again, which makes the file wait or run again). Nothing is stored: the state of a file is
+A file at rest is one that nothing runs for and that nothing but a person or the organization's setup moves on. The AI import is opt-in
+and nothing is read locally, so in an organization that has not set it up every upload ends in the extraction refused with one of the four
+reasons above: the file is kept, nothing runs and nothing failed. A Meldung for it would never leave and would keep the frame asking every
+20 seconds, so it is none; once the administration has set the import up and the user requests the evaluation again („Belege und
+Vorschläge“), the file runs and the batch is a Meldung again. Every reason the inbox's extraction stores is decided in `EXTRACTION_STOPS`
+with a line of reason, and a test fails for a reason without a decision. The others stay failures: the passing of time (the budget's
+month), the provider or a repaired installation moves them, the uploader requests the evaluation again, or only a new submission helps
+(`unsupported_format`, `attempt_limit`), or the uploader lost the permission and an administrator has to restore it
+(`initiator_permission_changed`).
+
+The batch is in the most urgent state of its files (failed, then running, then waiting) and names the least advanced stage among them; a
+file at rest is not counted, so a batch with a file at rest and another file that waits, runs or failed is a Meldung by that other file and
+its row names that file's stage. A batch whose files are all at rest leaves the list. A batch that stopped with a failure stays a
+Meldung for 14 days (`FAILED_LISTED_FOR`, owner decision on #872), counted from the latest failure of one of its files, then it leaves the
+list and stays on its batch page; a retry that fails again starts the 14 days over. The failure time is when the failed job or delivery
+last changed (`updated_at` of the inspection or extraction job, `finished_at` of the delivery), which the function reads anyway; the
+upload time would end the Meldung of a fresh failure of an old batch at once. Only a batch whose files that count are all failed is cut: one
+with a file that waits or runs stays listed whatever its age. A failed file keeps its batch in the list within the 14 days until the file is
+asked for again in the way the batch page offers (the inspection or the extraction is requested again, which makes the file wait or run
+again). Nothing is stored: the state of a file is
 derived from the same rows as the batch page's. The source is the database function `intake_batch_progress` (migration 0205), because the
 intake tables are private to the application's role; it follows the rules of `intake_batch_status` and a test takes a batch through every
 stage with the real workers and compares the Meldung with the batch page's own answer at each step. It reads the newest 50 batches of the
-user through `ix_intake_batch_owner` and the files through their keys, in one statement; a failure of a batch older than the newest 50 is not
-named. It adds no worker, no process and no poll of its own: the frame's poll (every 20 seconds while a Meldung waits or runs, ended after 15
+user through `ix_intake_batch_owner` and the files through their keys, in one statement (a failure of a batch older than the newest 50 is not
+named); the function returns, per state of files, when a file of it last failed, and the service decides the 14 days. It adds no worker, no process and no poll of its own: the frame's poll (every 20 seconds while a Meldung waits or runs, ended after 15
 minutes without change) covers it.
 
 ## Run and verify

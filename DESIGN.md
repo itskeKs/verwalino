@@ -2656,7 +2656,8 @@ call; before = the page of `main`, whose bar and raw stage name this replaces):
 
 „Meldungen“ is what the signed-in user is asked to look at, read from rows that already exist (no table of its own, no read
 state). The first kind is the Teilungserklärung import the user started and that is not finished; the second is the Posteingang
-batch the user uploaded that has a file waiting, processed or failed (#872); nobody else is told about either, an administrator
+batch the user uploaded that has a file waiting, processed or failed (#872; a failure is listed for 14 days from its latest failure, a file
+whose evaluation waits for the organization's AI setup is at rest and none); nobody else is told about either, an administrator
 included.
 
 - **Entry** (`components/meldungen/MeldungenLink.tsx`, in the topbar of every page, in front of „Einstellungen“): a lucide `Bell`,

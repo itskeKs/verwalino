@@ -478,10 +478,11 @@ import's own read access (`property_import_runtime_access`, the check of the imp
 `tests/test_declaration_import_open_index.py` asserts the plan on thousands of imports). Which import status is a Meldung, and the words it
 says, are one table in `declarations/progress.py` ([runbook](operations/declaration-imports.md)).
 
-The second kind is the Posteingang batch: one with a file that is received and waits for the inspection, is being processed, waits for
-the organization's AI setup or has failed, belonging to the user who uploaded it (`intake_batch.initiated_by`) and to nobody else; a batch
-whose files are all at rest (their documents wait for review, a file is still missing, or they wait for the decision how an original
-divides) is none. The intake tables are private to `app_rw` (a restrictive policy refuses every read; the commands check the actor), so the
+The second kind is the Posteingang batch: one with a file that is received and waits for the inspection, is being processed or has failed,
+belonging to the user who uploaded it (`intake_batch.initiated_by`) and to nobody else; a batch whose files are all at rest (their documents
+wait for review, a file is still missing, they wait for the decision how an original divides, or the extraction waits for the organization's
+AI setup, which may never come: nothing runs and nothing failed) is none, and a batch that only failed is one for 14 days from its latest
+failure (`FAILED_LISTED_FOR`, owner decision on #872) and then leaves the list and stays on its batch page. The intake tables are private to `app_rw` (a restrictive policy refuses every read; the commands check the actor), so the
 source is a database function: `intake_batch_progress(org, take)` (migration 0205, `repositories/intake_batch_repo.py`) states the
 caller's newest `take` batches in one statement, per batch the number of its files in each state, the state being the `status` and `stage`
 that `intake_batch_status` (the batch page) gives a file. It takes the organization and the user from the session's tenant context and raises for
@@ -489,8 +490,10 @@ another organization, returns only batches the caller uploaded and may read (the
 caller may no longer read is left out), and names no file, error text or document. It reads the keys the batch page's function reads and no
 table scan, however many batches an organization holds (`tests/test_meldungen_intake.py` asserts the scans of a database with thousands of a
 colleague's batches); the batches considered are the newest 50 of the user. Which state of a file is a Meldung (`INTAKE_FILE_STATES`, one
-decision for every status and stage the database names, with a guard test) is decided in the service, not in SQL; the batch is in the
-most urgent state of its files and names the least advanced stage in it. The words of the stages and statuses are the batch page's own
+decision for every status and stage the database names, and `EXTRACTION_STOPS`, one for every reason the inbox's extraction stores, each with a
+guard test) and how long a failure is listed are decided in the service, not in SQL (the function returns, per state of files, when a file of it
+last failed: the latest `updated_at` of its failed job, `finished_at` of its delivery); the batch is in the most urgent state of its files that
+count (a file at rest does not) and names the least advanced stage in it. The words of the stages and statuses are the batch page's own
 table, `frontend/src/lib/intakeStages.ts`, which the batch page and the row of the Meldung both read, so that the route sends the stage as a
 key (`stage`) and the badge's state word only. Isolation is tested in `tests/test_meldungen_intake.py` (the uploader alone, another user of
 the organization, another organization, a scope the uploader may no longer read, a call that names another organization). The frame asks on

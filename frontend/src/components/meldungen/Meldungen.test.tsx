@@ -211,6 +211,20 @@ describe("the refresh while the page stays where it is", () => {
     expect(list).toHaveBeenCalledTimes(1);
   });
 
+  it("does not ask between two navigations for the answer of an organization without the AI import, which holds no batch that waits for its setup", async () => {
+    // Such a file is at rest: the server names no Meldung for it, so the answer is empty and the frame has nothing to follow.
+    const list = await render_([]);
+    await tick(5);
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(entry()).toHaveAccessibleName("Meldungen, 0 offen");
+  });
+
+  it("does not ask between two navigations while the only batch listed is one that stopped with a failure", async () => {
+    const list = await render_([batch({ state: "FAILED", state_label: "Verarbeitung fehlgeschlagen", stage: "inspection" })]);
+    await tick(5);
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
   it("does not ask while the tab is hidden, and asks when it is shown again", async () => {
     const list = await render_([meldung()]);
     Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
