@@ -128,6 +128,27 @@ The tester gets the URL and the sign-in, nothing else. While an instance runs, n
 process may use the test database, because the lock stays with the run until `stop`. Production
 (`docker-compose.prod.yml`) is never involved.
 
+## Handing an export archive to the import form
+
+The test browser can neither save a download nor fill a file field. For a blind run of a change to
+the organization export or import, the launching session puts
+[`scripts/acceptance/handoff-export-archive.js`](../../scripts/acceptance/handoff-export-archive.js)
+and two calls into the tester's brief, with one key per run (for example `archive-<PR>`). The
+tester pastes the whole file with the call appended, in one evaluation (the functions do not
+survive into the next one), on each page that needs a call:
+
+- `await capture("<key>")` in the source organization, before „Daten exportieren“. It stays active
+  until the page reloads and keeps the archive in the browser instead of downloading it. Afterwards
+  `await stored("<key>")` shows its name, type and size, because the export shows no message.
+- `await deliver("<key>")` on the users page of the target organization, after its sign-in and once
+  the import block is shown (it says so when the file field is not there yet: wait, call again), then
+  a real click on „Daten importieren“.
+
+The tester reports what each call returned (key, name, type, size). Source and target must be the
+same origin in the same browser profile, and runs share the store, so a key is never reused. The
+script reads no page content, makes no network call and clicks nothing;
+`make test-acceptance-handoff` tests its refusals and a round trip without a browser.
+
 ## Runs and rounds per PR
 
 This section is the maintainer brief and the review checklist for a PR's acceptance and review

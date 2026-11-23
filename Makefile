@@ -25,7 +25,7 @@ fi; \
 trap 'rmdir /tmp/verwalino-testdb.lock' EXIT
 endef
 
-.PHONY: help test test-agent-rules test-scenario-issues test-record-finding test-review-worktree test-backend test-installer test-selfhost-format test-frontend test-bdd test-bdd-hosted test-browser test-scenarios-report typecheck lint lint-backend lint-frontend \
+.PHONY: help test test-agent-rules test-scenario-issues test-record-finding test-review-worktree test-acceptance-handoff test-backend test-installer test-selfhost-format test-frontend test-bdd test-bdd-hosted test-browser test-scenarios-report typecheck lint lint-backend lint-frontend \
         docs-check mail-previews review-worktree review-worktree-remove screenshots frontend-deps hooks check-testdb
 
 help: ## List the documented targets
@@ -33,7 +33,7 @@ help: ## List the documented targets
 
 # ---- tests -----------------------------------------------------------------
 
-test: test-agent-rules test-scenario-issues test-record-finding test-review-worktree test-installer test-backend test-frontend typecheck ## Whole suite before a merge: agent rules + scenario filing + record-finding + review-worktree + installer contracts + backend pytest (incl. BDD) + frontend vitest + typecheck
+test: test-agent-rules test-scenario-issues test-record-finding test-review-worktree test-acceptance-handoff test-installer test-backend test-frontend typecheck ## Whole suite before a merge: agent rules + scenario filing + record-finding + review-worktree + acceptance hand-off + installer contracts + backend pytest (incl. BDD) + frontend vitest + typecheck
 
 test-agent-rules: ## Paired agent rules, CLAUDE.md symlink and Codex hook contracts (stdlib only; no DB)
 	python3 -B scripts/test_agent_rules.py
@@ -46,6 +46,9 @@ test-record-finding: ## Record-finding contracts (stdlib only; GitHub is faked, 
 
 test-review-worktree: ## Review-worktree contracts (stdlib only; gh, uv and lsof are faked, git runs on sandbox repositories, no DB)
 	python3 -B scripts/test-review-worktree.py
+
+test-acceptance-handoff: ## Acceptance hand-off page script contracts (node:test on a fake IndexedDB, URL, DOM and DataTransfer; no browser, no DB)
+	node --test scripts/test-acceptance-handoff.cjs
 
 test-backend: check-testdb ## Backend pytest against the test DB (PYTEST_ARGS="-q tests/test_x.py -k name" narrows it)
 	@$(TESTDB_LOCK); \

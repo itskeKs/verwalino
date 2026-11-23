@@ -73,7 +73,7 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
 
 `make help` lists every target.
 
-- **`make test`** — the whole run before a merge: agent-rule, scenario-filing, record-finding, review-worktree and installer contracts, the backend
+- **`make test`** — the whole run before a merge: agent-rule, scenario-filing, record-finding, review-worktree, acceptance hand-off and installer contracts, the backend
   suite (including the BDD scenarios), frontend vitest and typecheck. Needs the test database.
 - **`make lint`** — ruff over the backend, eslint and `tsc` over the frontend.
 - **`make mail-previews`** — synthetic transactional mail gallery and 600/375 px light/dark PNGs;
@@ -102,6 +102,9 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
 - **`make test-record-finding`** — record-finding line format, duplicate skip, one comment per issue and refusals; Python stdlib, fake GitHub, no network or database.
 - **`make test-review-worktree`** — review-worktree creation and removal and every refusal; Python stdlib,
   fake `gh`, `uv` and `lsof`, real git on sandbox repositories, no network or database.
+- **`make test-acceptance-handoff`** — the refusals and a capture → deliver round trip of the
+  acceptance hand-off page script; Node's built-in test runner on a fake IndexedDB, URL, DOM and
+  `DataTransfer`, no browser, dependency or database.
 - **`make review-worktree PR=<n>`** — first step of a fresh review: the detached worktree
   `../verwalino-review-<n>` on the head of open PR `<n>`, the locked backend environment installed
   (`uv sync --locked --extra dev --extra ops`), then the directory and the line that loads the
@@ -334,6 +337,7 @@ downloaded `.test_durations` to `backend/.test_durations` before reviewing the d
 | `scripts/` | dev, self-host, deploy, checks; `acceptance/` holds legacy browser scripts (being migrated, #54) |
 | `scripts/scenario_issues.py`, `scripts/test-scenario-issues.py` | stdlib report consumer and fake-GitHub filing contracts; `@known-flaky` failures are excluded |
 | `scripts/record-finding.py`, `scripts/test-record-finding.py` | posts finding lines once per key on a bundle, inbox or task issue, and its fake-GitHub contracts |
+| `scripts/acceptance/handoff-export-archive.js`, `scripts/test-acceptance-handoff.cjs` | page script that hands an export archive to the import form in a blind browser run ([acceptance](docs/acceptance/README.md#handing-an-export-archive-to-the-import-form)), and its contracts on a fake IndexedDB and DOM, no browser |
 | `scripts/review-worktree.sh`, `scripts/test-review-worktree.py` | prepares and removes the review worktree of a PR (`make review-worktree`, `make review-worktree-remove`), and its contracts with fake `gh`, `uv` and `lsof` |
 | `DESIGN.md` | frontend design contract: tokens, layout, components, states, copy and formats; screenshots in `docs/assets/design/` |
 | `docs/` | architecture, domain pages (`m*.md`), ADRs, operations, roadmap, feature status |
