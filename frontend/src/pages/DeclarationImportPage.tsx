@@ -38,6 +38,7 @@ const ORIGINAL_KEPT = "Das hochgeladene Dokument bleibt erhalten; es wurde nicht
 const CHOOSE_READING_MODEL = "In den Einstellungen muss unter „Dokumente einlesen“ ein Modell ausgewählt werden";
 const CHOOSE_OTHER_MODEL = "In den Einstellungen kann unter „Dokumente einlesen“ und „Informationen extrahieren“ ein anderes Modell ausgewählt werden.";
 const SMALLER_IMPORT = "Importieren Sie weniger oder kürzere Dokumente in einem Import.";
+const NEW_IMPORT_OR_OPERATOR = "Bitte starten Sie einen neuen Import. Besteht das Problem weiter, wenden Sie sich an den Betreiber.";
 
 const FAILURE_MESSAGES: Record<string, string> = {
   DECLARATION_IMPORT_DISABLED: "Der Import von Teilungserklärungen ist für Ihre Organisation nicht eingerichtet. Bitte wenden Sie sich an Ihre Administration.",
@@ -52,6 +53,8 @@ const FAILURE_MESSAGES: Record<string, string> = {
   ORGANIZATION_AI_BUDGET_EXCEEDED: `Das monatliche KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den Betreiber. ${ORIGINAL_KEPT}`,
   PAGE_RENDER_TIMEOUT: `Das Aufbereiten einer Seite hat zu lange gedauert. ${ORIGINAL_KEPT} Bitte laden Sie eine kleinere oder einfachere Datei hoch und starten Sie einen neuen Import.`,
   PAGE_RENDER_UNAVAILABLE: `Eine Seite des Dokuments konnte nicht zum Einlesen aufbereitet werden. ${ORIGINAL_KEPT} Bitte prüfen Sie, ob sich die PDF-Datei öffnen lässt, und laden Sie sie gegebenenfalls erneut hoch. Besteht das Problem weiter, wenden Sie sich an den Betreiber.`,
+  UNKNOWN_INVENTORY_DOCUMENT: `Die Antwort des Modells nennt ein Dokument, das nicht zu diesem Import gehört, und wurde deshalb nicht verwendet. ${ORIGINAL_KEPT} ${NEW_IMPORT_OR_OPERATOR}`,
+  MISSING_INVENTORY_DOCUMENT: `Die Antwort des Modells enthält nicht alle Dokumente dieses Imports und wurde deshalb nicht verwendet. ${ORIGINAL_KEPT} ${NEW_IMPORT_OR_OPERATOR}`,
   JOB_PRINCIPAL_UNVERIFIED: "Für diesen älteren Auftrag ist kein bestätigter Auslöser gespeichert. Ein berechtigter Benutzer kann ihn erneut starten.",
   JOB_PERMISSION_CHANGED: "Die Berechtigung des auslösenden Benutzers gilt nicht mehr. Ein berechtigter Benutzer kann den Import erneut starten.",
   PROVIDER_TIMEOUT: "Zeitüberschreitung beim Dienstleister. Bitte versuchen Sie den Import erneut.",

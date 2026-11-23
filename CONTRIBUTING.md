@@ -73,7 +73,7 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
 
 `make help` lists every target.
 
-- **`make test`** — the whole run before a merge: agent-rule, scenario-filing, record-finding, review-worktree and installer contracts, the backend
+- **`make test`** — the whole run before a merge: agent-rule, scenario-filing, record-finding, review-worktree, acceptance hand-off and installer contracts, the backend
   suite (including the BDD scenarios), frontend vitest and typecheck. Needs the test database.
 - **`make lint`** — ruff over the backend, eslint and `tsc` over the frontend.
 - **`make mail-previews`** — synthetic transactional mail gallery and 600/375 px light/dark PNGs;
@@ -102,6 +102,9 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
 - **`make test-record-finding`** — record-finding line format, duplicate skip, one comment per issue and refusals; Python stdlib, fake GitHub, no network or database.
 - **`make test-review-worktree`** — review-worktree creation and removal and every refusal; Python stdlib,
   fake `gh`, `uv` and `lsof`, real git on sandbox repositories, no network or database.
+- **`make test-acceptance-handoff`** — the refusals and a capture → deliver round trip of the
+  acceptance hand-off page script; Node's built-in test runner on a fake IndexedDB, URL, DOM and
+  `DataTransfer`, no browser, dependency or database.
 - **`make review-worktree PR=<n>`** — first step of a fresh review: the detached worktree
   `../verwalino-review-<n>` on the head of open PR `<n>`, the locked backend environment installed
   (`uv sync --locked --extra dev --extra ops`), then the directory and the line that loads the
@@ -163,8 +166,8 @@ Pytest includes these stderr diagnostics with the named failure; synthetic conte
 verify the dump, but do not identify the holder from the historical CI hangs.
 Keep targeted runs short (`timeout 1500 make test-backend PYTEST_ARGS="…"`); a legitimately
 longer test needs an explicit `@pytest.mark.timeout(...)` with a reason.
-CI runs four backend shards with a 30-minute limit each; local `make test` still
-runs the whole backend suite in one process.
+CI runs six backend shards with a 30-minute limit each, and the hosted API scenarios as four
+further jobs; local `make test` still runs the whole backend suite in one process.
 
 Hosted signup acceptance sends real SMTP to the local Mailpit inbox. Start it once with
 `docker compose -f infra/docker-compose.declaration-test.yml up -d mailpit` and leave it
@@ -174,7 +177,7 @@ running for other worktrees. `scripts/test-env.sh` (sourced by the Make targets)
 `VERWALINO_MAILPIT_API=http://127.0.0.1:8025`. SMTP and the unauthenticated UI/API bind
 only to loopback. Run `make test-bdd-hosted` for signup acceptance; its fixture clears the
 shared inbox before each mail scenario, polls briefly, and fails if Mailpit is unavailable.
-CI provides the same digest-pinned Mailpit image in each backend shard. The browser scenarios
+CI provides the same digest-pinned Mailpit image in each backend shard and hosted scenario job. The browser scenarios
 do not send mail and need no Mailpit container. Mail-service unit tests keep FakeSMTP.
 
 If the shared database holds a migration revision unknown to the checkout, or a known one that
@@ -261,15 +264,16 @@ green:
 
 | Job | What it proves |
 |---|---|
-| `backend-shards` | four disjoint pytest selections, plus hosted BDD selections, each against its own Postgres 16 and Mailpit |
+| `backend-shards` | six disjoint pytest selections, each against its own Postgres 16 and Mailpit |
+| `backend-hosted` | the hosted-mode BDD scenarios (`make test-bdd-hosted`) in four disjoint selections, each against its own Postgres 16 and Mailpit |
 | `backend-checks` | ruff, every `app` module importing from the runtime install (no dev extra, as in the image), installer/Caddy checks and the collection contract, alongside the shards without a database |
-| `backend` (`Backend (ruff, pytest)`) | required summary: fails unless every shard and `backend-checks` succeeded, including cancellation or skipped jobs |
+| `backend` (`Backend (ruff, pytest)`) | required summary: fails unless every shard, every hosted scenario job and `backend-checks` succeeded, including cancellation or skipped jobs |
 | `frontend` | eslint, TypeScript, vitest |
 | `browser` | locked Chromium, real UI journeys (`make test-browser`) |
 | `docs` | no broken relative links; paired rule parity and Codex hook contracts |
 
-Backend CI uses `pytest-split --splits 4 --group N --splitting-algorithm least_duration`
-with committed timings in `backend/.test_durations`. Each matrix job runs on a separate
+Backend CI uses `pytest-split --splits 6 --group N --splitting-algorithm least_duration`
+(the hosted scenario jobs `--splits 4`) with committed timings in `backend/.test_durations`. Each matrix job runs on a separate
 GitHub-hosted VM, so the existing compose project, container name and loopback ports
 remain isolated without changing the disposable-database guard. Every process rehearses
 migrations and retains the transaction rollback guard from #181. `-p no:randomly` is
@@ -278,7 +282,7 @@ predecessors. The single full-suite ordered window used to investigate #180 no l
 describes CI; reproduce a shard with its selection and the same committed timings.
 
 The parallel `backend-checks` job collects the full suite once and each shard once with
-`pytest --collect-only -q`. `scripts/backend_test_shards.py check 4` compares node-ID
+`pytest --collect-only -q`. `scripts/backend_test_shards.py check 6` compares node-ID
 multisets: the union must equal the full collection and no node may occur twice. Collection
 loads conftest configuration but does not execute the session migration fixture or connect
 to Postgres. To run the contract locally without a database:
@@ -286,14 +290,16 @@ to Postgres. To run the contract locally without a database:
 ```sh
 source scripts/test-env.sh
 cd backend
-uv run --locked --extra dev --extra ops python ../scripts/backend_test_shards.py check 4
+uv run --locked --extra dev --extra ops python ../scripts/backend_test_shards.py check 6
 ```
 
 Every successful CI run, including pushes to `main`, records setup/call/teardown timings
 per shard and uploads the merged `backend-test-durations` artifact. Hosted BDD reruns use
 the original timings and do not overwrite those measurements. New tests use the mean
-stored duration until refreshed. After major suite changes or visible imbalance, download
-the artifact from a successful main run and commit it as the refreshed baseline:
+stored duration until refreshed, so refresh the baseline after pull requests have added test
+files and whenever a shard job of a green main run takes more than 20 minutes (two thirds of
+its limit). Download the artifact from a successful main run and commit it as the refreshed
+baseline:
 
 ```sh
 gh run download RUN_ID -R itskeKs/verwalino -n backend-test-durations -D backend
@@ -334,6 +340,7 @@ downloaded `.test_durations` to `backend/.test_durations` before reviewing the d
 | `scripts/` | dev, self-host, deploy, checks; `acceptance/` holds legacy browser scripts (being migrated, #54) |
 | `scripts/scenario_issues.py`, `scripts/test-scenario-issues.py` | stdlib report consumer and fake-GitHub filing contracts; `@known-flaky` failures are excluded |
 | `scripts/record-finding.py`, `scripts/test-record-finding.py` | posts finding lines once per key on a bundle, inbox or task issue, and its fake-GitHub contracts |
+| `scripts/acceptance/handoff-export-archive.js`, `scripts/test-acceptance-handoff.cjs` | page script that hands an export archive to the import form in a blind browser run ([acceptance](docs/acceptance/README.md#handing-an-export-archive-to-the-import-form)), and its contracts on a fake IndexedDB and DOM, no browser |
 | `scripts/review-worktree.sh`, `scripts/test-review-worktree.py` | prepares and removes the review worktree of a PR (`make review-worktree`, `make review-worktree-remove`), and its contracts with fake `gh`, `uv` and `lsof` |
 | `DESIGN.md` | frontend design contract: tokens, layout, components, states, copy and formats; screenshots in `docs/assets/design/` |
 | `docs/` | architecture, domain pages (`m*.md`), ADRs, operations, roadmap, feature status |

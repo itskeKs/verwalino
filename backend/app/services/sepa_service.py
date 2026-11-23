@@ -81,7 +81,7 @@ class SepaService:
             {'org':self.org,'property':bank.property_id}):
             raise HTTPException(404,'Complete property contacts not accessible')
         scope=await self.db.scalar(text("SELECT nullif(current_setting('app.current_scope_id',true),'')::uuid"))
-        if not await self.db.scalar(text("SELECT report_scope_source_access(:org,:scope,'read')"),{'org':self.org,'scope':scope}):
+        if not await self.context.report_sources_open(scope,property_id=bank.property_id):
             raise HTTPException(404,'Complete rent sources not accessible')
         return bank
 

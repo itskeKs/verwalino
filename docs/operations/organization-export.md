@@ -263,24 +263,28 @@ carries a generated column, whatever its value, imports the same way.
 **Importing accounting scopes and attachments: when it works and when it is refused.**
 Scopes, scope bindings, scope grants and attachments keep the archived account
 as creator, reviewer, grantor or uploader. The import runs as the importing
-administrator and the database accepts these rows only when that archived
-account is the importing administrator's own account (insert policies
-`scope_insert` and `attachment_insert` bind the actor column to the session
-user). This is the same limit as on earlier releases. In practice:
+administrator and the database accepts the rows of scopes, scope grants and
+attachments only when that archived account is the importing administrator's
+own account (insert policies `scope_insert` and `attachment_insert` bind the
+actor column to the session user). This is the same limit as on earlier
+releases. A scope binding is the exception: its reviewer may be another
+archived account (see "Who is the reviewer of a restored scope binding"
+below). In practice:
 
 - It works when the source organization is gone (deleted, or the archive is
   restored on another installation), the importing administrator signs in with
   the address of the archived administrator, and that administrator is the only
   account that created the scopes, reviewed the bindings, gave the grants and
-  uploaded the attachments. Deleting an
+  uploaded the attachments (a binding another account reviewed does not
+  matter, see below). Deleting an
   organization rewrites all its account addresses to `<id>@deleted.invalid`,
   which frees that address, and the address match above maps the archived
   administrator to the importing administrator. Evidence keeps its original
   actors; the importing administrator receives no extra grant.
 - It is refused when any of these rows names another archived account, even
-  after the source organization is gone: a scope grant given, a binding
-  reviewed or an attachment uploaded by a second administrator or a clerk, or
-  by an administrator whose address the importing administrator does not carry.
+  after the source organization is gone: a scope created, a scope grant given
+  or an attachment uploaded by a second administrator or a clerk, or by an
+  administrator whose address the importing administrator does not carry.
   Such an account is an inactive placeholder after the import, so its first row
   cannot be inserted.
 - It is refused while the source organization still holds the archived
@@ -297,15 +301,112 @@ by the archived administrator, delete the source organization first and import
 as the administrator who carries the archived address. Cloning an organization with its scopes beside
 the living original is not supported (owner decision on issue #134).
 
-**Contact data domains.** A contact's data domain (`person_data_domain`) is
-evidence of an administrator's act and has the same limit. The trigger
-`protect_person_data_setup` accepts a new domain only when its `created_by` is
-the session user, so the domain is restored when the archived creator is the
-importing administrator's own account (source organization gone, same address)
-and refused with entity `person_data_domain` beside the living original or when
-another archived account created it. The same trigger accepts a grant
-(`person_data_grant`) only from the session user as `granted_by` and only for
-an active member.
+**Who is the reviewer of a restored scope binding.** The archived reviewer stays
+the reviewer. `accounting_scope_binding.reviewed_by` is the account the import
+maps the archived reviewer to: the importing administrator's own account when the
+archived reviewer carried that sign-in address, otherwise the inactive placeholder
+account of the clerk or second administrator who reviewed it (it keeps the archived
+name, has no credentials and cannot sign in). This covers a payment that a clerk
+booked on a classified bank account (the database records the clerk as reviewer of
+the payment's binding) and an account that a second administrator classified. The
+importing administrator is never recorded as the reviewer of a classification they
+did not review, and no new column records the original reviewer. Normally the insert
+policy `scope_insert` binds the reviewer of a new binding to the signed-in user. For
+the one row an import is restoring it accepts another reviewer: the import names
+that binding and its archived reviewer in the transaction-local setting
+`app.organization_import_scope_binding` around that one insert, and the policy
+accepts it only for an inactive account of the same organization whose password is
+the unusable `!` the import writes for an archived user (a colleague deactivated in
+the user list keeps their password and is no placeholder), and only while the signed-in
+user is an active administrator of the organization. The organization, the importing
+administrator's live `prepare` grant on the scope (restored from the archive before the
+binding) and the origin `REVIEWED` are still required, and a binding stays immutable
+([ADR 0016](../adr/0016-import-names-the-restored-dunning-context-for-its-preparer.md)).
+
+**Contact data domains and their grants.** A contact's data domain
+(`person_data_domain`) and a grant of it (`person_data_grant`) are evidence of an
+administrator's act, and the archived actor stays the actor. The restored domain
+records as `created_by` the account the import maps the archived creator to, and
+the restored grant records as `granted_by` the account the import maps the archived
+grantor to: the importing administrator's own account when that administrator carried
+the archived account's sign-in address (the source organization was deleted first),
+otherwise the inactive placeholder account of the second administrator (or any other
+administrator) who made it. A placeholder keeps the archived name, has no credentials
+and cannot sign in. The importing administrator is never recorded as the creator or
+grantor of a domain or grant they did not make, and no new column records the original
+actor. Normally the trigger `protect_person_data_setup` binds `created_by` of a new
+domain and `granted_by` of a new grant to the signed-in user. For the one row an import
+is restoring it accepts another actor: the import names that row and its archived actor
+in the transaction-local setting `app.organization_import_person_data_domain` or
+`app.organization_import_person_data_grant` around that one insert, and the trigger
+accepts it only for an inactive account of the same organization whose password is the
+unusable `!` the import writes for an archived user (a colleague deactivated in the user
+list keeps their password and is no placeholder), and only while the signed-in user is
+an active administrator of the organization. Every other rule of the trigger still
+holds, and a domain and a grant stay immutable (a grant allows only its one-way
+revocation) ([ADR 0016](../adr/0016-import-names-the-restored-dunning-context-for-its-preparer.md)).
+
+A grant is restored as the archive has it: its grantee, rights, reason, expiry and
+revocation unchanged, and the time it was made (`created_at`). The grantee is the
+account the import maps the archived user to: the importing administrator's own account
+when they carried the archived address; an account the organization already holds under
+that address, which the import sets inactive with the unusable password `!` before it
+inserts any row (the importing administrator's is the one exception), so it is a
+placeholder too and keeps its own name and address; otherwise a new inactive placeholder
+of the archived member (a clerk, a second administrator), who keeps the archived name and
+address and has no credentials. Normally the trigger takes a new grant only for an active
+member, only unrevoked, and stamps `created_at` with the clock. For the one grant an import
+is restoring, the same setting (`app.organization_import_person_data_grant`, which now
+names the grant, its grantor and its grantee for every grant) opens three conditions:
+the grantee may be the placeholder the setting names (a colleague deactivated in the
+user list who keeps their password is no placeholder and a direct insert of such a grant
+is still refused, and so is one to an account of another organization; an import never
+meets the first case, because it deactivates a colleague it relinks and sets the unusable
+password), a revoked grant keeps `revoked_at` and `revoked_by`,
+and the grant keeps its archived `created_at`, which is what lets a grant whose expiry
+has passed restore (a grant must expire after it was created, and the restore used to
+stamp it again). A new grant, written by an administrator, stays as strict as before,
+and a restored grant stays immutable except for its one-way revocation.
+
+What a restored grant means for access: the access function `has_person_data_capability`
+is unchanged and asks for an active member with a live grant. A grant to a placeholder
+therefore gives no access while the account stays deactivated: no session of it is
+accepted and its password is the unusable `!`. The import reactivates nobody and sets no
+password. An administrator can reactivate the account on the user page. That sets no
+password either, but the account is then reachable by whoever holds its sign-in address:
+the administrator's password reset gives it a password, and so does the self-service
+reset ("Passwort vergessen?") where the installation can send mail (SMTP and
+`HV_PUBLIC_HOST` configured, as on the hosted service, see
+[Password recovery configuration](../../DEPLOY.md#password-recovery-configuration)). The
+self-service reset finds an active account by its address, mails the link to that address
+and lets the holder set a password without an administrator. While the account is
+deactivated it finds nothing and sends nothing, and without mail it never issues a link,
+so there the administrator's reset is the only way. A placeholder whose archived address
+was taken carries the synthetic address described above, which no mailbox receives, so
+only the administrator's reset reaches it. Reactivating a placeholder therefore gives the
+account back, with the rights of its restored live grants, to the holder of the archived
+address. Those rights are what `has_person_data_capability` answers: exactly the restored
+live grants. What they change for what the account reads depends on the source-security
+mode of the organization: in the default mode `PREPARATION` the contact policies already
+admit every contact (`person_source_row_access`, migration 0069), with or without a
+grant, as they did in the source, and the grants decide once the organization enforces
+source security. A revoked grant gives no access, before or after a reactivation, and
+neither does a grant whose expiry has passed. The importing administrator gains no
+access to a contact through the grants of other users; as an administrator they see the
+domains and the grant list, as they did in the source. Beside the living source
+organization no archived address is the importing administrator's, so every archived
+member, the first administrator too, is a placeholder there, and their grants restore
+the same way.
+
+What differs from the source in a restored domain and grant: the `label` (`Contact `
+and the contact's id, which is a new id when the installation still holds the source's
+contacts, see "Generated columns"), a domain's `created_at` (the restore stamps it
+again) and the names the accounts carry in the importing organization. The trigger also
+writes its own audit event (`person_data.domain_prepared`, `person_data.grant_prepared`)
+for the restore insert, naming the importing administrator as the actor of that act and
+the restored row as its entity; for a grant restored as revoked it is also a
+`person_data.grant_prepared`, never a revocation. The archived events, which keep the
+archived actors, are restored beside it.
 
 **Dunning notices.** A scoped dunning notice is restored with its immutable
 scope context (`dunning_scope_context`: scope, period, lease or plan, and for an

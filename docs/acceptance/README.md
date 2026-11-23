@@ -101,9 +101,61 @@ cd <repository>/backend && . ../scripts/test-env.sh && uv run --locked --extra d
 It knows the fictional Lindenallee declaration only, exits with 1 when an import does not reach review and
 changes nothing outside the instance's organization.
 
+`--inventory-answer` changes what the stand-in extraction model's inventory says, for a user check of what an inventory answer
+can cause; every import the run processes gets that answer. `relation-to-unmatched-document` makes the declaration REFERENCES a
+document (`Aufteilungsplan`) that matches none of the import's documents: the import reaches „Fachliche Prüfung“, and the review shows the hint in
+„Hinweise zum Import“. `unknown-document` makes the inventory name a document that is not in the import: the import fails with
+`UNKNOWN_INVENTORY_DOCUMENT` before any extraction call (the output lists the `inventory` call only), and the import page
+explains it in German. With the option, the exit status is 0 when every import ended in the state the option stands for
+(`NEEDS_REVIEW`, or `FAILED` with that code), otherwise 1.
+
+The invoice path needs the same stand-in for the worker and a little around it, which
+`python -m tests.offline_invoice_processing <form>` does, run like the command above (from `backend/`, test
+database settings sourced). The launching session calls it between the tester's phases, never the tester. It uses the
+fakes of the building-insurance journey twin: the reading model returns what the scan prints (Musterversicherung AG,
+RE-2026-0042, 15.01.2026, 312,00 EUR, IBAN DE02 1203 0000 0000 2020 51) and the extraction model fills the proposal from it. Every
+form refuses with a message and exit status 1 when no instance of `acceptance-env.sh` is running, `process` and `discard` also
+when that run does not hold the test database lock; none of them touches the instance's app.
+
+| Form | When | What it does |
+| --- | --- | --- |
+| `fixtures` | before the tester starts | Writes a scan, a second scan that differs by one pixel (a copy would be refused as a duplicate), an XRechnung and a ZUGFeRD PDF into the instance's `dist/assets` and prints their `/assets/<name>` paths, which a page script in the tester's browser fetches. |
+| `stub start` | before the tester sets up the provider | Starts the model-list stub on `127.0.0.1:18111` (never `localhost`, which the app may resolve to `::1`) and prints what to enter: provider „OpenAI-kompatible API“, base URL `http://127.0.0.1:18111/v1`, any key; the list holds `gpt-5.4-mini` and `gpt-5.6-luna`. It runs detached until `stub stop`, and ends by itself when `acceptance-env.sh stop` has removed the run's record. |
+| `process --organization "<name>"` | after each tester phase that queued invoices | Runs the invoice worker over the organization's queue, oldest waiting attempt first, until nothing is claimed, and prints one line per attempt: the invoice, the outcome and the model each stage was asked (`invoice <id> attempt 1: succeeded; reading gpt-5.4-mini (page 1); extraction gpt-5.6-luna (pages 1)`, `no model asked` for a structured invoice), which the session quotes as the provider record. |
+| `process … --fail-extraction` | after the phase that queued the scan whose extraction must fail | As above, but the extraction model times out after the reading was paid, for every scan this run processes. The worker takes the oldest waiting attempt first, so run `process` after the first scan, then let the tester upload the second one and run it with the option. |
+| `stub stop`, `discard` | after the last phase, before `acceptance-env.sh stop` | `stub stop` ends the stub after checking that the recorded PID is still that process (start time and command line), and says when it was already gone. `discard` removes the run's model metering rows and model-read proposals (migrations 0197 and 0198) from the shared test database, which `stop` leaves behind and which make a later migration-chain test refuse the downgrade. |
+
+`process` refuses an unknown organization, an installation whose `HV_INVOICE_EXTRACTION_ENABLED` is false and a queue with nothing
+waiting. An organization without AI setup is processed like any other: each of its scans ends with the product's own outcome, and the
+line shows it with `no model asked` (`invoice <id> attempt 1: unavailable (ai_import_disabled); no model asked`). The key the instance
+stored cannot be read with the command's own settings (the instance has a random session secret), so the command replaces
+`ai_settings_service._cipher` by a stand-in that returns fixed bytes; the switch, the confirmation, the models and the budget are the
+product's own, so what the tester has not set up shows as the product's outcome. No real provider is called.
+
 The tester gets the URL and the sign-in, nothing else. While an instance runs, no backend test
 process may use the test database, because the lock stays with the run until `stop`. Production
 (`docker-compose.prod.yml`) is never involved.
+
+## Handing an export archive to the import form
+
+The test browser can neither save a download nor fill a file field. For a blind run of a change to
+the organization export or import, the launching session puts
+[`scripts/acceptance/handoff-export-archive.js`](../../scripts/acceptance/handoff-export-archive.js)
+and two calls into the tester's brief, with one key per run (for example `archive-<PR>`). The
+tester pastes the whole file with the call appended, in one evaluation (the functions do not
+survive into the next one), on each page that needs a call:
+
+- `await capture("<key>")` in the source organization, before „Daten exportieren“. It stays active
+  until the page reloads and keeps the archive in the browser instead of downloading it. Afterwards
+  `await stored("<key>")` shows its name, type and size, because the export shows no message.
+- `await deliver("<key>")` on the users page of the target organization, after its sign-in and once
+  the import block is shown (it says so when the file field is not there yet: wait, call again), then
+  a real click on „Daten importieren“.
+
+The tester reports what each call returned (key, name, type, size). Source and target must be the
+same origin in the same browser profile, and runs share the store, so a key is never reused. The
+script reads no page content, makes no network call and clicks nothing;
+`make test-acceptance-handoff` tests its refusals and a round trip without a browser.
 
 ## Runs and rounds per PR
 
@@ -128,7 +180,7 @@ rounds ([AGENTS.md](../../AGENTS.md), "Work comes from issues").
 After every run, including a failed or abandoned run, the launching session must remove the
 disposable acceptance stack completely using the
 [label-filtered cleanup commands](../operations/acceptance-cleanup.md), or, for a per-PR instance,
-run `scripts/acceptance-env.sh stop`.
+run `scripts/acceptance-env.sh stop` (after an invoice run `stub stop` and `discard` first, while the run still holds the test database lock).
 Stop every background process and dev server the run started; remove its scratch directories,
 temporary screenshots and inactive lock files. Remove its worktree and local branch only after
 the PR is merged or closed, following [Worktrees and cleanup](../../AGENTS.md#worktrees-and-cleanup).

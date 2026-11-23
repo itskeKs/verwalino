@@ -161,6 +161,33 @@ describe("Teilungserklärung review", () => {
     expect(screen.getByText("Konflikte")).toBeVisible();
   });
 
+  it("shows the hints that belong to no proposal above the proposals, and nothing else there", async () => {
+    const hint = {
+      id: "hint", code: "DOCUMENT_RELATION_TARGET_UNMATCHED", severity: "INFO", resolution_status: "OPEN", candidate_id: null,
+      message: "Das Dokument „Teilungserklärung Watelerstraße“ verweist auf „Aufteilungsplan“ (Seite 5). Der Verweis konnte keinem hochgeladenen Dokument zugeordnet werden; die Beziehung wurde nicht übernommen.",
+    };
+    const ofCandidate = { id: "own", code: "WARN", severity: "WARNING", message: "Eigener Hinweis", resolution_status: "OPEN", candidate_id: "candidate-1" };
+    const resolved = { id: "done", code: "OLD", severity: "WARNING", message: "Erledigt", resolution_status: "RESOLVED", candidate_id: null };
+    mockReviewData([candidate({ issues: [ofCandidate] })], { ...approveablePreview, issues: [hint, ofCandidate, resolved] });
+    renderReview();
+
+    const block = (await screen.findByRole("heading", { name: "Hinweise zum Import" })).closest("section") as HTMLElement;
+    expect(block).toHaveTextContent(`Hinweis: ${hint.message}`);
+    expect(block).not.toHaveTextContent("Eigener Hinweis");
+    expect(block).not.toHaveTextContent("Erledigt");
+    // The block comes first; the proposal's own issue stays at its proposal.
+    expect(block.compareDocumentPosition(screen.getByRole("heading", { name: "Klärungsbedarf" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getAllByText("Prüfen: Eigener Hinweis")).toHaveLength(1);
+  });
+
+  it("shows no block of import hints when the import has none", async () => {
+    mockReviewData();
+    renderReview();
+
+    await screen.findByRole("heading", { name: "Stammdaten" });
+    expect(screen.queryByRole("heading", { name: "Hinweise zum Import" })).not.toBeInTheDocument();
+  });
+
   it("opens the authorized source at its one-based page with the document title", async () => {
     mockReviewData();
     renderReview();

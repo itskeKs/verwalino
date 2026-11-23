@@ -33,11 +33,33 @@ Feature: Organization export import
     And the archive is imported into an empty organization
     Then the imported task list shows both tasks with their titles, due dates and status and the first one linked to the imported property
 
+  Scenario: A rent payment a clerk booked on a scope-classified bank account is restored with the clerk as its reviewer
+    Given a separate organization has a rent payment that a clerk booked on a scope-classified bank account for export
+    When its administrator downloads the organization archive
+    And the archive is imported into an empty organization after its source organization was deleted
+    Then the imported organization has equal entity counts and normalized content
+    And the imported payments list shows the clerk's payment of 700.00 on 15.03.2026 and the tenant account shows the archived totals
+    And the restored binding of that payment names the clerk's account, which cannot sign in, as its reviewer
+
   Scenario: An organization whose owner contact has a data domain is restored with its label
     Given a separate organization has an owner contact with a data domain for export
     When its administrator downloads the organization archive
     And the archive is imported into an empty organization after its source organization was deleted
     Then the imported owner contact shows its data domain labelled after the contact's imported identifier
+
+  Scenario: A contact data domain and its grant that a second administrator made are restored with that administrator as creator and grantor
+    Given a separate organization has a contact data domain and a grant to its administrator that a second administrator made for export
+    When its administrator downloads the organization archive
+    And the archive is imported into an empty organization after its source organization was deleted
+    Then the imported contact shows its data domain and its grant with the archived reasons and rights
+    And the restored domain and grant name the second administrator's account, which cannot sign in, as creator and grantor
+
+  Scenario: A contact data grant to a clerk and a revoked grant are restored, and the clerk's account stays deactivated
+    Given a separate organization has a contact data domain granted to its clerk and another one whose grant was revoked again for export
+    When its administrator downloads the organization archive
+    And the archive is imported into an empty organization after its source organization was deleted
+    Then the imported contacts show both domains with the clerk's grants, their rights and reasons, the revoked one shown as revoked
+    And the clerk's account is listed as deactivated
 
   Scenario: The owner notices of a special levy are restored with the owner accounts
     Given a separate organization has a WEG with two roof repair levies, an issued owner notice and a draft for export

@@ -1618,7 +1618,10 @@ async def _seed_pipeline_import(
     status: str = "QUEUED",
     mode: str = "NEW_PROPERTY",
     target_property_id: uuid.UUID | None = None,
+    second_pdf: bytes | None = None,
+    second_title: str = "Nachtrag 1",
 ) -> tuple[WorkerLease, str, _MemoryStore]:
+    """Seed a queued import of one document; ``second_pdf`` adds a second one, titled ``second_title`` (sequence 2)."""
     org_id = organization_id or seed_data["org_a_id"]
     initiated_by = (
         seed_data["user_a_admin_id"]
@@ -1670,6 +1673,37 @@ async def _seed_pipeline_import(
             )
         )
         await session.flush()
+        stored = {key: pdf}
+        if second_pdf is not None:
+            second_id = uuid.uuid4()
+            stored[f"memory/{second_id}.pdf"] = second_pdf
+            session.add(
+                PropertyDocument(
+                    id=second_id,
+                    organization_id=org_id,
+                    doc_type="AMENDMENT",
+                    title=second_title,
+                    original_filename="nachtrag.pdf",
+                    mime_type="application/pdf",
+                    content_byte_size=len(second_pdf),
+                    content_sha256=compute_sha256(second_pdf),
+                    storage_uri=f"memory/{second_id}.pdf",
+                    storage_backend="TEST",
+                    page_count=1,
+                    uploaded_by=initiated_by,
+                )
+            )
+            await session.flush()
+            session.add(
+                DeclarationImportDocument(
+                    organization_id=org_id,
+                    import_id=import_id,
+                    document_id=second_id,
+                    sequence_no=2,
+                    document_role="AMENDMENT",
+                )
+            )
+            await session.flush()
         item = await session.get(DeclarationImport, import_id)
         request = await queue_fixture(session, item, initiated_by)
         item.status = status
@@ -1680,7 +1714,7 @@ async def _seed_pipeline_import(
     return (
         WorkerLease(org_id, import_id, 1, token, datetime.now(timezone.utc) + timedelta(minutes=30), request),
         str(document_id),
-        _MemoryStore({key: pdf}),
+        _MemoryStore(stored),
     )
 
 
@@ -2686,6 +2720,215 @@ async def test_invented_inventory_relation_quote_remains_bound_after_recheck(see
     assert item is not None and item.status == "NEEDS_REVIEW"
     assert len(blockers) == 1
     assert blockers[0].candidate_id is not None
+
+
+class _InventoryRelationProvider(_RecordingProvider):
+    """An inventory answer that lists the given documents; the first one relates to each (type, target) pair.
+
+    With ``every_document_relates`` each listed document does, citing its own first page. The inventory that
+    reconcile is sent is kept, so a test sees what the later steps work with.
+    """
+
+    def __init__(
+        self,
+        keys: list[str],
+        relations: list[tuple[str, str]] = (),
+        *,
+        own_keys: list[str] | None = None,
+        every_document_relates: bool = False,
+    ) -> None:
+        super().__init__(keys[0])
+        self.reconcile_inventory: DocumentInventoryOutput | None = None
+        entries = [
+            {"document_key": key, "document_type": "DECLARATION", "title": "Teilung"}
+            for key in (own_keys if own_keys is not None else keys)
+        ]
+        for entry in entries if every_document_relates else entries[:1]:
+            entry["relations"] = [
+                {
+                    "relation_type": kind,
+                    "target_document_key": target,
+                    "evidence": [{"document_key": entry["document_key"], "pdf_page": 1, "quote": "Teilungserklärung"}],
+                }
+                for kind, target in relations
+            ]
+        self.inventory_output = DocumentInventoryOutput(documents=entries)
+
+    async def reconcile(self, inventory, core, rules, *, max_output_tokens):
+        self.reconcile_inventory = inventory
+        return await super().reconcile(inventory, core, rules, max_output_tokens=max_output_tokens)
+
+
+async def _import_state(lease: WorkerLease):
+    """The import row, its run, its relation candidates and the issues of the import."""
+    async with get_tenant_session(lease.organization_id) as session:
+        item = await session.scalar(select(DeclarationImport).where(DeclarationImport.id == lease.import_id))
+        run = await session.scalar(
+            select(DeclarationExtractionRun).where(DeclarationExtractionRun.import_id == lease.import_id)
+        )
+        relation_candidates = (
+            await session.execute(
+                select(DeclarationCandidate)
+                .where(DeclarationCandidate.import_id == lease.import_id)
+                .where(DeclarationCandidate.candidate_type == "DOCUMENT_RELATION")
+            )
+        ).scalars().all()
+        issues = (
+            await session.execute(
+                select(DeclarationCandidateIssue)
+                .where(DeclarationCandidateIssue.import_id == lease.import_id)
+            )
+        ).scalars().all()
+    return item, run, relation_candidates, issues
+
+
+async def _second_document_key(lease: WorkerLease) -> str:
+    """The document key (its id) of the import's second document."""
+    async with get_tenant_session(lease.organization_id) as session:
+        return str(
+            await session.scalar(
+                select(DeclarationImportDocument.document_id)
+                .where(DeclarationImportDocument.import_id == lease.import_id)
+                .where(DeclarationImportDocument.sequence_no == 2)
+            )
+        )
+
+
+_UNMATCHED = "DOCUMENT_RELATION_TARGET_UNMATCHED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("relation_type", "sentence"),
+    [
+        ("REFERENCES", "verweist auf „Aufteilungsplan“ (Seite 1)."),
+        ("AMENDS", "ändert „Aufteilungsplan“ (Seite 1)."),
+        ("SUPPLEMENTS", "ergänzt „Aufteilungsplan“ (Seite 1)."),
+    ],
+)
+async def test_a_relation_to_a_document_outside_the_import_is_left_out_and_reaches_the_review_as_a_hint(
+    seed_data, relation_type, sentence
+) -> None:
+    lease, document_key, store = await _seed_pipeline_import(
+        seed_data, make_text_pdf("Teilungserklärung\nHauptstraße 1")
+    )
+    provider = _InventoryRelationProvider([document_key], [(relation_type, "Aufteilungsplan")])
+
+    await DeclarationPipeline(provider, store=store).run(lease)
+
+    item, _run, relation_candidates, issues = await _import_state(lease)
+    assert item is not None and (item.status, item.error_code) == ("NEEDS_REVIEW", None)
+    assert provider.calls == ["inventory", "extract_core", "extract_rules", "reconcile"]
+    # No candidate for the relation; one import-level hint that names the document, the relation and the page.
+    assert relation_candidates == []
+    assert [(issue.code, issue.severity, issue.candidate_id, issue.resolution_status) for issue in issues] == [
+        (_UNMATCHED, "INFO", None, "OPEN")
+    ]
+    assert issues[0].message == (
+        f"Das Dokument „Teilung“ {sentence} Der Verweis konnte keinem hochgeladenen Dokument "
+        "zugeordnet werden; die Beziehung wurde nicht übernommen."
+    )
+    assert issues[0].details_json == {"document_key": document_key, "pdf_page": 1}
+    # The inventory that the later steps use no longer contains the relation.
+    assert provider.reconcile_inventory is not None
+    assert [document.relations for document in provider.reconcile_inventory.documents] == [[]]
+
+
+@pytest.mark.asyncio
+async def test_two_left_out_relations_give_two_hints_and_a_relation_between_uploaded_documents_stays(seed_data) -> None:
+    lease, first_key, store = await _seed_pipeline_import(
+        seed_data,
+        make_text_pdf("Teilungserklärung\nHauptstraße 1"),
+        second_pdf=make_text_pdf("Nachtrag\nHauptstraße 1"),
+    )
+    second_key = await _second_document_key(lease)
+    provider = _InventoryRelationProvider(
+        [first_key, second_key],
+        [("SUPPLEMENTS", second_key), ("REFERENCES", "Aufteilungsplan"), ("AMENDS", "Nachtrag 7")],
+    )
+
+    await DeclarationPipeline(provider, store=store).run(lease)
+
+    item, _run, relation_candidates, issues = await _import_state(lease)
+    assert item is not None and item.status == "NEEDS_REVIEW"
+    assert [candidate.stable_key for candidate in relation_candidates] == [
+        f"relation:{first_key}:SUPPLEMENTS:{second_key}"
+    ]
+    assert [(issue.code, issue.candidate_id) for issue in issues] == [(_UNMATCHED, None)] * 2
+    assert sorted(issue.message.split(" (Seite")[0] for issue in issues) == [
+        "Das Dokument „Teilung“ verweist auf „Aufteilungsplan“",
+        "Das Dokument „Teilung“ ändert „Nachtrag 7“",
+    ]
+    # The inventory is sorted by document id, which is random: compare by document, not by position.
+    assert provider.reconcile_inventory is not None
+    assert {
+        document.document_key: [(relation.relation_type, relation.target_document_key) for relation in document.relations]
+        for document in provider.reconcile_inventory.documents
+    } == {first_key: [("SUPPLEMENTS", second_key)], second_key: []}
+
+
+@pytest.mark.asyncio
+async def test_two_left_out_relations_stay_two_issues_when_their_hint_text_is_the_same(seed_data) -> None:
+    # Two uploaded documents with the same title each refer to the same name on page 1: the hints read the same.
+    lease, first_key, store = await _seed_pipeline_import(
+        seed_data,
+        make_text_pdf("Teilungserklärung\nHauptstraße 1"),
+        second_pdf=make_text_pdf("Nachtrag\nHauptstraße 1"),
+        second_title="Teilung",
+    )
+    second_key = await _second_document_key(lease)
+    provider = _InventoryRelationProvider(
+        [first_key, second_key], [("REFERENCES", "Aufteilungsplan")], every_document_relates=True
+    )
+
+    await DeclarationPipeline(provider, store=store).run(lease)
+
+    item, _run, relation_candidates, issues = await _import_state(lease)
+    assert item is not None and item.status == "NEEDS_REVIEW"
+    assert relation_candidates == []
+    assert [(issue.code, issue.candidate_id) for issue in issues] == [(_UNMATCHED, None)] * 2
+    assert len({issue.message for issue in issues}) == 1
+    assert sorted(issue.details_json["document_key"] for issue in issues) == sorted([first_key, second_key])
+
+
+@pytest.mark.asyncio
+async def test_an_inventory_entry_of_a_document_outside_the_import_fails_before_any_extraction_call(seed_data) -> None:
+    lease, document_key, store = await _seed_pipeline_import(
+        seed_data, make_text_pdf("Teilungserklärung\nHauptstraße 1")
+    )
+    provider = _InventoryRelationProvider([document_key], own_keys=[document_key, "not-a-document-of-the-import"])
+
+    await DeclarationPipeline(provider, store=store).run(lease)
+
+    item, run, relation_candidates, issues = await _import_state(lease)
+    assert provider.calls == ["inventory"]
+    # Only the inventory call is in the accounting: no extraction reservation was made, none is left.
+    assert item is not None
+    assert (item.status, item.error_code, item.input_tokens, item.output_tokens, item.attempt_count) == (
+        "FAILED", "UNKNOWN_INVENTORY_DOCUMENT", 13, 7, 1
+    )
+    assert run is not None and (run.status, run.input_tokens, run.output_tokens) == ("FAILED", 13, 7)
+    assert (relation_candidates, issues) == ([], [])
+
+
+@pytest.mark.asyncio
+async def test_an_inventory_that_misses_a_document_of_the_import_fails_before_any_extraction_call(seed_data) -> None:
+    lease, first_key, store = await _seed_pipeline_import(
+        seed_data,
+        make_text_pdf("Teilungserklärung\nHauptstraße 1"),
+        second_pdf=make_text_pdf("Nachtrag\nHauptstraße 1"),
+    )
+    provider = _InventoryRelationProvider([first_key])
+
+    await DeclarationPipeline(provider, store=store).run(lease)
+
+    item, run, _candidates, _issues = await _import_state(lease)
+    assert provider.calls == ["inventory"]
+    assert item is not None
+    assert (item.status, item.error_code, item.input_tokens, item.output_tokens) == (
+        "FAILED", "MISSING_INVENTORY_DOCUMENT", 13, 7
+    )
+    assert run is not None and (run.input_tokens, run.output_tokens) == (13, 7)
 
 
 @pytest.mark.asyncio

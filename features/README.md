@@ -106,7 +106,7 @@ scenario's length (`world.give_second_factor`, or `confirmed_second_factor` in a
 its session, because one factor accepts one code per 30 seconds; a scenario about the sign-in itself
 answers the code step once. `HV_DEPLOYMENT_MODE=hosted make test-browser` therefore runs the browser
 scenarios in hosted mode; `property_listing.feature` is `@selfhost` because its 55 properties exceed
-the hosted allowance of 20. Browser scenarios do not send mail; the backend shards and the nightly workflow provision
+the hosted allowance of 20. Browser scenarios do not send mail; the backend shards, the hosted scenario jobs and the nightly workflow provision
 the same digest-pinned Mailpit service for the mail scenarios.
 
 **Where each mode runs.** Changing the pytest process's mode only selects tags; the
@@ -117,7 +117,7 @@ fixtures and Mailpit sit in the pytest process's reach.
 | Where | selfhost | hosted |
 |---|---|---|
 | Developer machine | `make test-bdd`, `make test-browser`, `make test-scenarios-report` | `make test-bdd-hosted` (API scenarios), `HV_DEPLOYMENT_MODE=hosted make test-browser` and `HV_DEPLOYMENT_MODE=hosted make test-scenarios-report` |
-| PR CI (`tests-on-pr.yaml`) | `Backend shard n/4` (`make test-backend`, including the `@selfhost` scenarios) and `Browser` (`make test-browser`) | the same shards' step `Hosted API scenarios` (`make test-bdd-hosted`: `@hosted` and untagged scenarios, own Postgres and Mailpit) |
+| PR CI (`tests-on-pr.yaml`) | `Backend shard n/6` (`make test-backend`, including the `@selfhost` scenarios) and `Browser` (`make test-browser`) | `Backend hosted scenarios n/4` (`make test-bdd-hosted`: `@hosted` and untagged scenarios, own Postgres and Mailpit) |
 | Nightly (`nightly-scenarios.yaml`) | leg `selfhost`: all API and browser features against the installer's stack; `@hosted` scenarios skip by mode and the ones that need local fixtures skip by target (see [external targets](#external-disposable-targets)) | leg `hosted`: all API and browser features through `make test-scenarios-report` on the local stack in hosted mode, with Postgres and Mailpit |
 
 The `save_lifecycle.feature` browser journey saves units, people, profiles, leases and bank

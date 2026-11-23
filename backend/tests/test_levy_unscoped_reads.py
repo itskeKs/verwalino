@@ -1,10 +1,15 @@
-"""An organization with a special levy answers unscoped reads like classified data does (#722, #739, #816)."""
+"""An organization with a special levy answers unscoped reads, exports and SEPA routes like classified data does (#722, #739, #816, #840, #867)."""
+import csv
 import importlib
+import io
+import json
+import re
 import uuid
 
 import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
+from lxml import etree
 from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -12,7 +17,9 @@ from tests.conftest import APP_RW_URL, MIGRATOR_SYNC_URL
 from tests.test_financial_scope_boundary import actor, scope_seed as scope_seed
 from tests.test_invoice_extraction_worker import worker_tenant as worker_tenant
 from tests.test_property_source_enforcement import synthetic_enforcement
+from tests.test_scope_grants import bind
 from tests.test_scope_payment_reconciliation import read_value
+from tests.test_sepa_export import CREDITOR, IBAN as TENANT_IBAN, NS, account_url, creditor, export_body, mandate
 from tests.test_special_levy import client, create, levy_db as levy_db, levy_fixture as levy_fixture, new_owner, query
 
 pytestmark = pytest.mark.asyncio
@@ -258,6 +265,7 @@ async def add_year_books_without_scope(db, ids):
         await db.execute(text("""INSERT INTO payment(id,organization_id,property_id,bank_account_id,amount,direction,value_date,payment_type,tenant_profile_id,period_year,period_month,status)
             VALUES (gen_random_uuid(),:org,:other_property,:b_bank,:amount,'IN','2025-06-03',:kind,:b_tenant,2025,6,'booked')"""), {**ids, 'kind': kind, 'amount': amount})
     category = await db.scalar(text("SELECT id FROM cost_category WHERE code='GRUNDSTEUER' AND plan_version=1"))
+    ids.update(b_category=category)
     await db.execute(text("""INSERT INTO cost_entry(id,organization_id,property_id,cost_category_id,cost_category_plan_version,invoice_date,service_period_from,service_period_to,gross_amount,tenant_apportionable,status,source,confirmed_at,confirmed_by)
         VALUES (gen_random_uuid(),:org,:other_property,:category,1,'2025-06-01','2025-01-01','2025-12-31',250,'UMLAGEFAEHIG','confirmed','MANUAL',now(),:actor)"""), {**ids, 'category': category})
     await db.commit()
@@ -669,3 +677,444 @@ def test_0199_replaces_the_overload_and_downgrade_restores_the_function_of_0193(
                 savepoint.rollback()
     finally:
         engine.dispose()
+
+
+DOWNLOADS = ('property_year_csv', 'anlage_v_csv', 'datev_sources', 'datev_preview', 'datev_csv')
+YEAR_CSV_HEADER = ['Objekt', 'Jahr', 'Bereich', 'Zahlungstyp', 'Kategorie', 'Umlagefähigkeit', 'Betrag (EUR)']
+
+
+def datev_config(ids):
+    """A DATEV batch for 2025 of the property without a scope: its bank account, both rent payment types and its property tax."""
+    return dict(property_id=str(ids['other_property']), period_start='2025-01-01', period_end='2025-12-31',
+                fiscal_year_start='2025-01-01', chart='SKR03', advisor_number='12345', client_number='123', account_length=4,
+                bank_accounts={str(ids['b_bank']): '1111'}, payment_accounts={'KALTMIETE': '2222', 'NK_VORAUSZAHLUNG': '2223'},
+                category_accounts={str(ids['b_category']): {'account': '3333', 'counter_account': '4444'}},
+                gross_accounts_reviewed=True)
+
+
+async def downloads(api, ids, key='other_property', **scope):
+    """What one property offers for download, as (status, body) pairs: the two CSV exports of the annual overview, the
+    DATEV sources, and the DATEV preview and file of the year. A refusal's body is its JSON, a download's its bytes (the
+    generation time in the first line of the DATEV file left out)."""
+    property_id = str(ids[key])
+    year = {'property_id': property_id, 'year': 2025, **scope}
+    config = {**datev_config(ids), 'property_id': property_id, **scope}
+    answers = {
+        'property_year_csv': await api.get('/api/reports/property-year.csv', params=year),
+        'anlage_v_csv': await api.get('/api/reports/property-year/anlage-v.csv', params=year),
+        'datev_sources': await api.get('/api/reports/datev/sources', params={'property_id': property_id, **PERIOD, **scope}),
+        'datev_preview': await api.post('/api/reports/datev/preview', json=config),
+    }
+    digest = answers['datev_preview'].json().get('source_digest', '0' * 64)
+    answers['datev_csv'] = await api.post('/api/reports/datev.csv', json={**config, 'expected_source_digest': digest})
+    assert answers.keys() == set(DOWNLOADS)
+
+    def body(name):
+        answer = answers[name]
+        if answer.headers['content-type'].startswith('application/json'):
+            return answer.json()
+        return answer.content.split(b'\r\n', 1)[1] if name == 'datev_csv' else answer.content
+    return {name: (answers[name].status_code, body(name)) for name in DOWNLOADS}
+
+
+def csv_rows(content):
+    return list(csv.reader(io.StringIO(content.decode('utf-8-sig'), newline=''), delimiter=';'))
+
+
+def downloads_before_the_levy(answers, label):
+    """What the property without a scope offers whether or not the organization holds a levy: 600.00 income (500.00
+    rent, 100.00 advance), 250.00 property tax and 350.00 balance, from one bank account and three bookings."""
+    assert {name: status for name, (status, _) in answers.items()} == dict.fromkeys(DOWNLOADS, 200), answers
+    assert csv_rows(answers['property_year_csv'][1]) == [YEAR_CSV_HEADER,
+        ['Test', '2025', 'Einnahmen', 'KALTMIETE', '', '', '500,00'],
+        ['Test', '2025', 'Einnahmen', 'NK_VORAUSZAHLUNG', '', '', '100,00'],
+        ['Test', '2025', 'Ausgaben', '', label, 'UMLAGEFAEHIG', '250,00'],
+        ['Test', '2025', 'Einnahmen gesamt', '', '', '', '600,00'],
+        ['Test', '2025', 'Ausgaben gesamt', '', '', '', '250,00'],
+        ['Test', '2025', 'Saldo', '', '', '', '350,00']]
+    anlage_v = csv_rows(answers['anlage_v_csv'][1])
+    assert anlage_v[0] == ['Objekt', 'Jahr', 'Bereich', 'Zuordnung', 'Bezeichnung', 'Hinweis', 'Betrag (EUR)']
+    # Whatever the Anlage V mapping assigns, it adds up to the figures of the annual overview.
+    reconciled = {(row[2], row[4]): row[6] for row in anlage_v if row[3] == 'Abgleich'}
+    assert {key: amount for key, amount in reconciled.items() if key[1] == 'Jahresübersicht gesamt'} == {
+        ('Einnahmen', 'Jahresübersicht gesamt'): '600,00', ('Werbungskosten', 'Jahresübersicht gesamt'): '250,00'}, anlage_v
+    assert {amount for (_, label), amount in reconciled.items() if label == 'Differenz'} == {'0,00'}, anlage_v
+    sources = answers['datev_sources'][1]
+    assert (sources['payment_total'], sources['cost_total'], sources['payment_types']) == ('600.00', '250.00', ['KALTMIETE', 'NK_VORAUSZAHLUNG'])
+    assert [bank['label'] for bank in sources['banks']] == ['Musterhaus']
+    preview = answers['datev_preview'][1]
+    assert (preview['payment_total'], preview['cost_total']) == ('600.00', '250.00')
+    assert sorted((row['amount'], row['side'], row['account'], row['counter_account']) for row in preview['rows']) == [
+        ('100.00', 'S', '1111', '2223'), ('250.00', 'S', '3333', '4444'), ('500.00', 'S', '1111', '2222')]
+    assert len(csv_rows(answers['datev_csv'][1])) == 4  # the column headings and three postings
+
+
+async def label_of_the_category(db, ids):
+    return await db.scalar(text('SELECT label FROM cost_category WHERE id=:b_category'), ids)
+
+
+async def test_levy_leaves_the_downloads_of_a_property_without_a_scope_as_before(levy_db, levy_fixture):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_year_books_without_scope(levy_db, ids)
+    async with client(ids) as api:
+        before = await downloads(api, ids)
+        downloads_before_the_levy(before, await label_of_the_category(levy_db, ids))
+        await create(api, ids)
+        assert await downloads(api, ids) == before
+
+
+REFUSED_FOR_THE_LEVY_PROPERTY = {'detail': 'Select an exact accounting scope for this property'}
+
+
+async def grant_export(db, ids, scope):
+    """The clerk's grant on a scope also lets the clerk export: the active grant is revoked and replaced by one with `export`."""
+    old = await db.scalar(text("SELECT capabilities FROM scope_grant WHERE scope_id=:grant_scope AND user_id=:clerk AND revoked_at IS NULL"), {**ids, 'grant_scope': ids[scope]})
+    await db.execute(text("UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE scope_id=:grant_scope AND user_id=:clerk AND revoked_at IS NULL"), {**ids, 'grant_scope': ids[scope]})
+    await db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:grant_scope,:clerk,:capabilities,:actor,'Export test')"),
+                     {**ids, 'grant_scope': ids[scope], 'capabilities': [*old, 'export']})
+    await db.commit()
+
+
+async def test_levy_still_refuses_the_downloads_of_what_the_levy_or_a_scope_concerns(levy_db, levy_fixture):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_year_books_without_scope(levy_db, ids)
+    await add_scope_only_property(levy_db, ids)
+    await grant_export(levy_db, ids, 'd_scope')
+    async with client(ids) as api:
+        scoped_before = await downloads(api, ids, 'd_property', accounting_scope_id=str(ids['d_scope']))
+        assert {name: status for name, (status, _) in scoped_before.items()}['property_year_csv'] == 200, scoped_before
+        await add_levy_only_property(api, levy_db, ids)
+        await create(api, ids)
+        # The levy's own properties, one of them with the levy as its only classified finance: no download without the scope.
+        for key in ('property', 'c_property'):
+            answers = await downloads(api, ids, key)
+            assert answers == dict.fromkeys(DOWNLOADS, (409, REFUSED_FOR_THE_LEVY_PROPERTY)), (key, answers)
+        # A property that has a scope of its own is downloaded through that scope, as before the levy, and not without it.
+        assert await downloads(api, ids, 'd_property') == dict.fromkeys(DOWNLOADS, (409, {'detail': SCOPE_REQUIRED}))
+        assert await downloads(api, ids, 'd_property', accounting_scope_id=str(ids['d_scope'])) == scoped_before
+        # The property without a scope is downloaded.
+        assert {status for status, _ in (await downloads(api, ids)).values()} == {200}
+
+
+async def test_report_scope_source_access_answers_an_export_for_one_property(levy_db, levy_fixture, seed_data):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_scope_only_property(levy_db, ids)
+    async with client(ids) as api:
+        await add_levy_only_property(api, levy_db, ids)
+        assert await property_answer(ids, capability='export', subject=ids['other_property'])
+        await create(api, ids)
+    export = "SELECT report_scope_source_access(:org,NULL,'export')"
+    # The export of the whole organization, which names no property, is refused as it was before this change.
+    assert not await read_value(export, ids, actor_key='clerk')
+    assert not await property_answer(ids, capability='export')
+    # The property without a scope and without classified finance: as before the levy, and an id of no property of the organization too.
+    assert await property_answer(ids, capability='export', subject=ids['other_property'])
+    assert await property_answer(ids, capability='export', subject=uuid.uuid4())
+    assert await property_answer(ids, capability='export', subject=seed_data['org_b_id'])
+    # The levy's property, one whose only classified finance is the levy, and one with a scope of its own stay refused.
+    for key in ('property', 'c_property', 'd_property'):
+        assert not await property_answer(ids, capability='export', subject=ids[key]), key
+    # No single subject, or a scope: answered by the three-argument function, whatever property the call names.
+    assert not await property_answer(ids, capability='export', subject=ids['other_property'], lease=ids['b_lease'])
+    scoped = await read_value("SELECT report_scope_source_access(:org,:scope,'export')", ids, actor_key='clerk')
+    assert await property_answer(ids, sphere=ids['scope'], capability='export', subject=ids['other_property']) == scoped
+    # A caller of another organization gets no exemption for the levy organization's property.
+    engine = create_async_engine(APP_RW_URL)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:user,true)"),
+                                     {'org': str(seed_data['org_b_id']), 'user': str(seed_data['user_b_admin_id'])})
+            assert not await connection.scalar(text("SELECT report_scope_source_access(:org,NULL,'export',NULL,NULL,:subject)"),
+                                               {'org': ids['org'], 'subject': ids['other_property']})
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.parametrize('had_export', [False, True], ids=['never_had_export', 'export_revoked'])
+async def test_caller_without_export_access_to_the_levy_scope_downloads_the_property_without_a_scope_without_levy_data(levy_db, levy_fixture, had_export):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_year_books_without_scope(levy_db, ids)
+    if had_export:
+        await grant_export(levy_db, ids, 'scope')
+    async with client(ids) as api:
+        before = await downloads(api, ids)
+        downloads_before_the_levy(before, await label_of_the_category(levy_db, ids))
+        levy = await create(api, ids)
+    if had_export:
+        # The clerk loses every grant on the levy's scope, the export grant included.
+        await levy_db.execute(text('UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE scope_id=:scope AND user_id=:clerk AND revoked_at IS NULL'), ids)
+        await levy_db.commit()
+    async with client(ids) as caller:
+        answers = await downloads(caller, ids)
+        assert answers == before
+        for _, body in answers.values():
+            assert levy['id'] not in str(body) and '3000.00' not in str(body) and '1200.00' not in str(body)
+        # Nothing of the levy's property, nor of its scope, is offered to the caller.
+        assert await downloads(caller, ids, 'property') == dict.fromkeys(DOWNLOADS, (409, REFUSED_FOR_THE_LEVY_PROPERTY))
+        scoped = await downloads(caller, ids, 'property', accounting_scope_id=str(ids['scope']))
+        assert scoped == dict.fromkeys(DOWNLOADS, (404, {'detail': 'Accounting scope not accessible'}))
+
+
+async def test_foreign_organization_downloads_nothing_of_the_property_without_a_scope(levy_db, levy_fixture, client_b_admin):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_year_books_without_scope(levy_db, ids)
+    async with client(ids) as api:
+        await create(api, ids)
+    answers = await downloads(client_b_admin, ids)
+    assert answers == dict.fromkeys(DOWNLOADS, (404, {'detail': 'Property not found'}))
+    scoped = await downloads(client_b_admin, ids, 'property', accounting_scope_id=str(ids['scope']))
+    assert scoped == dict.fromkeys(DOWNLOADS, (404, {'detail': 'Property not found'}))
+
+
+async def test_caller_who_may_read_but_not_export_is_answered_as_before_the_levy(levy_db, levy_fixture):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_year_books_without_scope(levy_db, ids)
+    await add_scope_only_property(levy_db, ids)
+    scoped = {'accounting_scope_id': str(ids['d_scope'])}
+    async with client(ids) as api:
+        # The clerk reads the property through its scope, where the grant has `read` and no `export`.
+        assert (await api.get('/api/reports/property-year', params={'property_id': str(ids['d_property']), 'year': 2025, **scoped})).status_code == 200
+        before = await downloads(api, ids, 'd_property', **scoped)
+        assert {status for status, _ in before.values()} == {404}, before
+        await create(api, ids)
+        assert await downloads(api, ids, 'd_property', **scoped) == before
+        # A property without a scope is still downloaded, which the clerk's export right on no scope does not change.
+        assert {status for status, _ in (await downloads(api, ids)).values()} == {200}
+
+
+async def test_enforced_sources_refuse_the_downloads_of_the_property_without_a_scope_as_before_the_levy(levy_db, levy_fixture, scope_seed):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_year_books_without_scope(levy_db, ids)
+    async with synthetic_enforcement(scope_seed), client(ids) as api:
+        before = await downloads(api, ids)
+    async with client(ids) as api:
+        await create(api, ids)
+    async with synthetic_enforcement(scope_seed), client(ids) as api:
+        # An enforced organization hides and refuses everything of a property by itself, so the levy adds nothing to its answers.
+        assert await downloads(api, ids) == before
+        assert {status for status, _ in before.values()} == {404}, before
+
+
+SEPA = '/api/payments/sepa'
+SEPA_ROUTES = ('GET /api/payments/sepa/accounts/{bank_id}', 'PUT /api/payments/sepa/accounts/{bank_id}/creditor',
+               'POST /api/payments/sepa/accounts/{bank_id}/mandates', 'PUT /api/payments/sepa/mandates/{mandate_id}',
+               'POST /api/payments/sepa/mandates/{mandate_id}/revoke', 'POST /api/payments/sepa/preview', 'POST /api/payments/sepa.xml')
+SEPA_REFUSED = (404, {'detail': 'Complete rent sources not accessible'})
+BANK_IBAN = 'DE02200505501015871393'
+GENERATED = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{64}')
+
+
+def test_the_sepa_routes_of_the_levy_tests_are_the_sepa_routes_of_the_app():
+    """A new SEPA route fails here until the levy tests call it too."""
+    from fastapi.routing import APIRoute, iter_route_contexts
+    from app.main import app
+    routes = {f'{method} {context.path}' for context in iter_route_contexts(app.routes)
+              if isinstance(context.original_route, APIRoute) and context.path.startswith(SEPA) for method in context.methods}
+    assert routes == set(SEPA_ROUTES)
+
+
+async def add_sepa_account(db, ids, key, property_key, *, tenant=None):
+    """An operating account `<key>_bank` of a property, bound to no accounting scope, and the tenant `<key>_tenant` it
+    collects from: the given `(tenant profile, person)`, or a new one with a lease of 500.00 rent and 100.00 advance on a
+    new unit. The tenant has an IBAN and an address."""
+    if tenant is None:
+        unit, person, profile = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        values = {**ids, 'sepa_unit': unit, 'sepa_person': person, 'sepa_tenant': profile, 'sepa_lease': uuid.uuid4(),
+                  'sepa_property': ids[property_key], 'number': f'S-{key}'}
+        await db.execute(text("INSERT INTO unit(id,organization_id,property_id,number,usage_type,mea) VALUES (:sepa_unit,:org,:sepa_property,:number,'WOHNUNG',100)"), values)
+        await db.execute(text("INSERT INTO person(id,organization_id,first_name,last_name,street,zip_code,city) VALUES (:sepa_person,:org,'Sepa','Tenant','','','')"), values)
+        await db.execute(text("INSERT INTO tenant_profile(id,organization_id,person_id,notes) VALUES (:sepa_tenant,:org,:sepa_person,'')"), values)
+        await db.execute(text("INSERT INTO lease_agreement(id,organization_id,unit_id,tenant_profile_id,valid_from,base_rent,advance_payment,notes) VALUES (:sepa_lease,:org,:sepa_unit,:sepa_tenant,'2025-01-01',500,100,'')"), values)
+    else:
+        profile, person = tenant
+    await db.execute(text("UPDATE person SET iban=:iban,street='Testweg 1',zip_code='12345',city='Teststadt' WHERE id=:person"), {'iban': TENANT_IBAN, 'person': person})
+    ids.update({f'{key}_tenant': profile, f'{key}_bank': uuid.uuid4()})
+    await db.execute(text("INSERT INTO bank_account(id,organization_id,property_id,account_type,label,iban) VALUES (:bank,:org,:property,'LAUFEND','SEPA account',:iban)"),
+                     {**ids, 'bank': ids[f'{key}_bank'], 'property': ids[property_key], 'iban': BANK_IBAN})
+    await db.commit()
+
+
+async def add_classified_property(db, ids):
+    """A rented property with an accounting scope of its own and a bank account bound to it: classified finance, no levy."""
+    ids.update(e_property=uuid.uuid4(), e_scope=uuid.uuid4(), e_bound_bank=uuid.uuid4())
+    await db.execute(text("INSERT INTO property(id,organization_id,name,street,zip_code,city,management_type) VALUES (:e_property,:org,'Classified','','','','MISCH')"), ids)
+    await db.execute(text("INSERT INTO accounting_scope(id,organization_id,property_id,scope_type,label,valid_from,whole_property,origin,created_by) VALUES (:e_scope,:org,:e_property,'MIET','Classified','2025-01-01',true,'REVIEWED',:actor)"), ids)
+    await db.execute(text("INSERT INTO bank_account(id,organization_id,property_id,account_type,label,iban) VALUES (:e_bound_bank,:org,:e_property,'LAUFEND','Bound','DE02200505501015871393')"), ids)
+    await bind(db, ids, property=ids['e_property'], scope=ids['e_scope'], bank=ids['e_bound_bank'])
+    await db.commit()
+
+
+def xml_facts(content):
+    """What a collection file says that does not change between two accounts with the same tenant: transactions, amounts, date, IBANs."""
+    root = etree.fromstring(content)
+    return {tag: sorted(root.xpath(f'//p:{tag}/text()', namespaces=NS)) for tag in ('NbOfTxs', 'CtrlSum', 'InstdAmt', 'ReqdColltnDt', 'IBAN')}
+
+
+async def add_sepa_mandate(db, ids, key):
+    """A creditor and a mandate of the account `<key>_bank` as rows, for an account that no route can configure; the id of the mandate."""
+    values = {**ids, 'bank': ids[f'{key}_bank'], 'row_tenant': ids[f'{key}_tenant'], 'mandate': uuid.uuid4(), 'reference': f'ROW-{key.upper()}',
+              'creditor': CREDITOR, 'fingerprint': '0' * 64}
+    await db.execute(text("INSERT INTO sepa_creditor(organization_id,bank_account_id,creditor_id,name,country,town,bank_fingerprint,bank_authorized) VALUES (:org,:bank,:creditor,'Synthetic Vermietung','DE','Teststadt',:fingerprint,true)"), values)
+    await db.execute(text("INSERT INTO sepa_mandate(id,organization_id,bank_account_id,tenant_profile_id,creditor_id,reference,signed_on,sequence_type,debtor_country,source_fingerprint,original_reference) VALUES (:mandate,:org,:bank,:row_tenant,:creditor,:reference,'2026-01-01','FRST','DE',:fingerprint,'Synthetic paper original')"), values)
+    await db.commit()
+    return str(values['mandate'])
+
+
+async def configure_sepa_account(api, ids, key, reference):
+    """The creditor and one mandate of an account through its routes, before the levy; the id of the mandate."""
+    w = {'bank': ids[f'{key}_bank'], 'tenant': ids[f'{key}_tenant']}
+    configured = await api.put(f'{account_url(w)}/creditor', json=creditor())
+    assert configured.status_code == 200, configured.text
+    created = await api.post(f'{account_url(w)}/mandates', json=mandate(w, reference=reference))
+    assert created.status_code == 201, created.text
+    assert (await api.get(account_url(w))).status_code == 200
+    return created.json()['id']
+
+
+async def sepa_routes(api, ids, key, reference, *, mandate_id=None):
+    """Every SEPA route of the account `<key>_bank`, as (status, body) pairs: the creditor, a mandate, the page, the usage of the
+    mandate, the preview, the collection file and the revocation of the mandate. The two routes of an existing mandate take
+    `mandate_id`, or the mandate the call created, or an id of nothing. Generated ids and digests, and the mandate
+    reference, are left out of a body, and a collection file is read for what it says."""
+    w = {'bank': ids[f'{key}_bank'], 'tenant': ids[f'{key}_tenant']}
+    sent = {'PUT /api/payments/sepa/accounts/{bank_id}/creditor': await api.put(f'{account_url(w)}/creditor', json=creditor())}
+    created = await api.post(f'{account_url(w)}/mandates', json=mandate(w, reference=reference))
+    sent['POST /api/payments/sepa/accounts/{bank_id}/mandates'] = created
+    mandate_id = mandate_id or (created.json()['id'] if created.status_code == 201 else str(uuid.uuid4()))
+    sent['GET /api/payments/sepa/accounts/{bank_id}'] = await api.get(account_url(w))
+    sent['PUT /api/payments/sepa/mandates/{mandate_id}'] = await api.put(f'{SEPA}/mandates/{mandate_id}', json={'sequence_type': 'FRST', 'last_used_on': None})
+    run = export_body(w)
+    preview = await api.post(f'{SEPA}/preview', json=run)
+    sent['POST /api/payments/sepa/preview'] = preview
+    digest = preview.json().get('source_digest', '0' * 64)
+    sent['POST /api/payments/sepa.xml'] = await api.post('/api/payments/sepa.xml', json={**run, 'expected_source_digest': digest})
+    sent['POST /api/payments/sepa/mandates/{mandate_id}/revoke'] = await api.post(f'{SEPA}/mandates/{mandate_id}/revoke')
+    assert sent.keys() == set(SEPA_ROUTES)
+
+    def body(answer):
+        if answer.headers.get('content-type', '').startswith('application/xml'):
+            return xml_facts(answer.content)
+        return json.loads(GENERATED.sub('<generated>', json.dumps(answer.json()).replace(reference, '<reference>'))) if answer.content else None
+    return {name: (answer.status_code, body(answer)) for name, answer in sent.items()}
+
+
+def sepa_before_the_levy(answers):
+    """What an account without a scope answers whether or not the organization holds a levy: the October 2026 rent of 500.00 and
+    an advance of 100.00 is collected from the one tenant with an active mandate."""
+    assert {name: status for name, (status, _) in answers.items()} == dict(zip(SEPA_ROUTES, (200, 200, 201, 200, 204, 200, 200)))
+    page = answers['GET /api/payments/sepa/accounts/{bank_id}'][1]
+    assert [(row['name'], row['iban']) for row in page['tenants']] == [('Plain Tenant', TENANT_IBAN)]
+    assert page['creditor']['creditor_id'] == CREDITOR
+    assert [(row['reference'], row['revoked_at']) for row in page['mandates']] == [('<reference>', None)]
+    preview = answers['POST /api/payments/sepa/preview'][1]
+    assert preview['total'] == '600.00' and [row['amount'] for row in preview['rows']] == ['600.00']
+    assert answers['POST /api/payments/sepa.xml'][1] == {'NbOfTxs': ['1', '1'], 'CtrlSum': ['600.00', '600.00'], 'InstdAmt': ['600.00'],
+        'ReqdColltnDt': ['2026-10-30'], 'IBAN': sorted([BANK_IBAN, TENANT_IBAN])}
+    assert answers['POST /api/payments/sepa/mandates/{mandate_id}/revoke'] == (204, None)
+
+
+async def test_levy_leaves_the_sepa_routes_of_an_account_without_a_scope_as_before(levy_db, levy_fixture):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    for key in ('m', 'm2'):
+        await add_sepa_account(levy_db, ids, key, 'other_property', tenant=(ids['b_tenant'], ids['b_person']))
+    async with client(ids) as api:
+        before = await sepa_routes(api, ids, 'm', 'BEFORE-LEVY')
+        sepa_before_the_levy(before)
+        await create(api, ids)
+        # A second account of the same property is configured, shown, previewed, exported and revoked as the first was.
+        assert await sepa_routes(api, ids, 'm2', 'AFTER-LEVY') == before
+
+
+@pytest.mark.parametrize('key', ['levy_property', 'scope_of_its_own', 'classified_finance'])
+async def test_levy_still_refuses_the_sepa_routes_of_an_account_without_a_scope_where_the_levy_or_a_scope_concerns_its_property(levy_db, levy_fixture, key):
+    ids = levy_fixture
+    if key == 'levy_property':
+        # The levy is created first, as it needs every account of its property classified; an account bound to no scope on that
+        # property is the legacy row the gate still has to refuse, with the tenant of the levy's property.
+        await add_lease_and_plan(levy_db, ids)
+        async with client(ids) as api:
+            await create(api, ids)
+        await add_sepa_account(levy_db, ids, 'x', 'property', tenant=(ids['tenant'], ids['tenant_person']))
+    else:
+        if key == 'scope_of_its_own':
+            await add_scope_only_property(levy_db, ids)
+            await add_sepa_account(levy_db, ids, 'x', 'd_property')
+        else:
+            await add_classified_property(levy_db, ids)
+            await add_sepa_account(levy_db, ids, 'x', 'e_property')
+        async with client(ids) as api:
+            await create(api, ids)
+    mandate_id = await add_sepa_mandate(levy_db, ids, 'x')
+    async with client(ids) as api:
+        # Every route is refused, the two that take a mandate with an existing one: the account has no scope the clerk could be served through.
+        assert await sepa_routes(api, ids, 'x', 'AFTER-LEVY', mandate_id=mandate_id) == dict.fromkeys(SEPA_ROUTES, SEPA_REFUSED)
+
+
+async def test_levy_still_refuses_a_source_check_of_a_sepa_read_that_names_no_property(levy_db, levy_fixture):
+    """No SEPA route is organization-wide: each names a bank account, and a bank account always has a property. What the gate
+    asks without a property is what it always asked, and the levy still refuses it."""
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    async with client(ids) as api:
+        await create(api, ids)
+    assert not await read_value("SELECT report_scope_source_access(:org,NULL,'read',NULL,NULL,NULL)", ids, actor_key='clerk')
+    assert not await read_value("SELECT report_scope_source_access(:org,NULL,'read')", ids, actor_key='clerk')
+    assert await property_answer(ids, subject=ids['other_property'])
+    assert await levy_db.scalar(text("SELECT is_nullable FROM information_schema.columns WHERE table_name='bank_account' AND column_name='property_id'")) == 'NO'
+
+
+async def test_caller_without_access_to_the_levy_scope_uses_the_sepa_routes_of_the_account_without_a_scope_without_levy_data(levy_db, levy_fixture):
+    ids = levy_fixture
+    await add_lease_and_plan(levy_db, ids)
+    await add_property_without_scope(levy_db, ids)
+    for key in ('m', 'm2'):
+        await add_sepa_account(levy_db, ids, key, 'other_property', tenant=(ids['b_tenant'], ids['b_person']))
+    async with client(ids) as api:
+        before = await sepa_routes(api, ids, 'm', 'BEFORE-LEVY')
+        sepa_before_the_levy(before)
+        levy = await create(api, ids)
+    await add_sepa_account(levy_db, ids, 'x', 'property', tenant=(ids['tenant'], ids['tenant_person']))
+    mandate_id = await add_sepa_mandate(levy_db, ids, 'x')
+    await levy_db.execute(text('UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE scope_id=:scope AND user_id=:clerk AND revoked_at IS NULL'), ids)
+    await levy_db.commit()
+    async with client(ids) as blind:
+        answers = await sepa_routes(blind, ids, 'm2', 'AFTER-LEVY')
+        assert answers == before
+        for name, (_, body) in answers.items():
+            assert levy['id'] not in str(body) and '3000.00' not in str(body) and '10000.00' not in str(body), name
+        # The account of the levy's own property that is bound to no scope is refused with the plain 404, which says nothing of the levy.
+        refused = await sepa_routes(blind, ids, 'x', 'REFUSED', mandate_id=mandate_id)
+        assert refused == dict.fromkeys(SEPA_ROUTES, SEPA_REFUSED)
+        # The account that is bound to the levy's scope is as hidden from the caller as the scope is: it is not found.
+        hidden = await blind.get(f"{SEPA}/accounts/{ids['bank']}")
+        assert (hidden.status_code, hidden.json()) == (404, {'detail': 'Bank account not accessible'})
+
+
+async def test_foreign_organization_reaches_no_sepa_route_of_the_account_without_a_scope(levy_db, levy_fixture, client_b_admin):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_sepa_account(levy_db, ids, 'm', 'other_property', tenant=(ids['b_tenant'], ids['b_person']))
+    async with client(ids) as api:
+        mandate_id = await configure_sepa_account(api, ids, 'm', 'BEFORE-LEVY')
+        await create(api, ids)
+    answers = await sepa_routes(client_b_admin, ids, 'm', 'FOREIGN', mandate_id=mandate_id)
+    bank, unknown_mandate = {'detail': 'Bank account not accessible'}, {'detail': 'Mandate not accessible'}
+    assert answers == {
+        'PUT /api/payments/sepa/accounts/{bank_id}/creditor': (404, bank),
+        'POST /api/payments/sepa/accounts/{bank_id}/mandates': (404, bank),
+        'GET /api/payments/sepa/accounts/{bank_id}': (404, bank),
+        'PUT /api/payments/sepa/mandates/{mandate_id}': (404, unknown_mandate),
+        'POST /api/payments/sepa/preview': (404, bank),
+        'POST /api/payments/sepa.xml': (404, bank),
+        'POST /api/payments/sepa/mandates/{mandate_id}/revoke': (404, unknown_mandate),
+    }
+    for _, body in answers.values():
+        assert TENANT_IBAN not in str(body) and '600.00' not in str(body)

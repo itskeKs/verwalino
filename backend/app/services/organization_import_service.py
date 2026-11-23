@@ -43,11 +43,43 @@ MAX_DECODED_METADATA_BYTES = 64 * 1024**2
 # inactive placeholder after the import, and the importing administrator did not make the request.
 NOT_RESTORED_ENTITIES = frozenset({
     'legal_document_assent', 'organization_ai_confirmation', 'property_creation_receipt', 'master_import_batch'})
+# Rows whose insert guard binds an actor column to the signed-in user, although another user made the row. The archived
+# actor stays (ADR 0016): the insert of that one row names the row and its actor in a transaction-local setting, which only
+# the guard of that table reads, and the setting is reset right after the insert. Table: (setting, actor column, (row
+# column, key) naming the row). A test fails when a setting name appears in any other file under `backend/app`.
+ARCHIVED_ACTOR_MARKERS = {
+    'dunning_scope_context': ('app.organization_import_dunning_context', 'created_by', ('dunning_notice_id', 'notice_id')),
+    'accounting_scope_binding': ('app.organization_import_scope_binding', 'reviewed_by', ('id', 'binding_id')),
+    'person_data_domain': ('app.organization_import_person_data_domain', 'created_by', ('id', 'domain_id')),
+    'person_data_grant': ('app.organization_import_person_data_grant', 'granted_by', ('id', 'grant_id')),
+}
+# A grant is restored as the archive has it (ADR 0016): besides its grantor the setting names its grantee, and every grant
+# is named, because a grant by the importing administrator may still be a grant to a placeholder, revoked, or expired.
+# Table: the further columns its setting names, by key.
+ARCHIVED_ROW_MARKERS = {'person_data_grant': {'user_id': 'user_id'}}
 logger = logging.getLogger(__name__)
 
 
 def refuse(message, **details):
     raise HTTPException(422, {'message': message, **details})
+
+
+def archived_actor_marker(name, row, importer):
+    """(setting, JSON) that names the row of `name` about to be inserted and its archived actor; None when the
+    importer is that actor, the table has no such guard or an identifier the setting needs is not valid. The row of a
+    table in `ARCHIVED_ROW_MARKERS` is always named."""
+    setting, column, (identity, key) = ARCHIVED_ACTOR_MARKERS.get(name, (None, None, (None, None)))
+    further = ARCHIVED_ROW_MARKERS.get(name, {})
+    if setting is None or (row.get(column) in (None, str(importer)) and not further):
+        return None
+    try:
+        named = {key: str(uuid.UUID(row[identity])), column: str(uuid.UUID(row[column]))}
+        named.update({setting_key: str(uuid.UUID(row[source])) for setting_key, source in further.items()})
+    except (KeyError, TypeError, ValueError, AttributeError):
+        # A null, missing or malformed identifier names no row. The row is inserted like any other row, the database
+        # refuses it and the import answers with IMPORT_INTEGRITY_REFUSAL, as it did before every grant was named.
+        return None
+    return setting, json.dumps(named)
 
 
 def _metadata_size(value):
@@ -614,18 +646,20 @@ async def import_organization(db, auth, source):
                         previous_scope = await db.scalar(text("SELECT current_setting('app.current_scope_id',true)"))
                         await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
                             {'scope': row[scope_column]})
-                    # A context another user prepared keeps its archived preparer (ADR 0016), which
-                    # `protect_dunning_context` accepts only for an inactive placeholder of this
-                    # organization that this marker names together with the context's own notice.
-                    other_preparer = name == 'dunning_scope_context' and row['created_by'] != str(auth.user_id)
-                    if other_preparer:
-                        await db.execute(text("SELECT set_config('app.organization_import_dunning_context',:marker,true)"),
-                            {'marker': json.dumps({'notice_id': row['dunning_notice_id'], 'created_by': row['created_by']})})
+                    # A context another user prepared, a binding another user reviewed, and a contact data domain or
+                    # grant another user made keep their archived actor (ADR 0016): `protect_dunning_context`,
+                    # `scope_insert` and `protect_person_data_setup` accept it only for an inactive placeholder of this
+                    # organization that the marker names together with this row. A contact data grant also keeps its
+                    # grantee, its revocation and the time it was made, which the marker of that row opens.
+                    marker = archived_actor_marker(name, row, auth.user_id)
+                    if marker:
+                        await db.execute(text('SELECT set_config(:setting,:marker,true)'),
+                                         {'setting': marker[0], 'marker': marker[1]})
                     await db.execute(text(f'INSERT INTO public."{name}" ({columns}) SELECT {projection} '
                         f'FROM json_populate_record(NULL::public."{name}",CAST(:row AS json)) v'),
                         {'row': json_bytes(row).decode()})
-                    if other_preparer:
-                        await db.execute(text("SELECT set_config('app.organization_import_dunning_context','',true)"))
+                    if marker:
+                        await db.execute(text("SELECT set_config(:setting,'',true)"), {'setting': marker[0]})
                     if scope_column:
                         await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
                             {'scope': previous_scope or ''})

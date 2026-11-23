@@ -20,6 +20,7 @@ from app.core.rbac import ScopeCapability
 from app.core.tenant import AuthContext
 from app.repositories.datev_export_repo import DatevExportRepository
 from app.services.authorization_service import AuthorizationService
+from app.services.financial_scope_service import FinancialScopeService
 from app.services.report_service import ReportService
 
 # Exact headings from the official version-13 example; positions are not inferred.
@@ -147,12 +148,11 @@ class DatevExportService:
     async def require_export(self, property_id, scope_id):
         if scope_id is not None:
             await AuthorizationService(self.session, self.auth).require(scope_id, ScopeCapability.EXPORT)
-        for sql, params in [
-            ("SELECT property_financial_disclosure_access(:org,:property,'export')", {'property':property_id}),
-            ("SELECT report_scope_source_access(:org,:scope,'export')", {'scope':scope_id}),
-        ]:
-            if not await self.session.scalar(text(sql), {'org':self.auth.organization_id, **params}):
-                raise HTTPException(404, 'Complete financial export sources not accessible')
+        scopes = FinancialScopeService(self.session, self.auth.organization_id, self.auth.user_id)
+        if not (await self.session.scalar(text("SELECT property_financial_disclosure_access(:org,:property,'export')"),
+                                          {'org': self.auth.organization_id, 'property': property_id})
+                and await scopes.report_sources_open(scope_id, ScopeCapability.EXPORT, property_id=property_id)):
+            raise HTTPException(404, 'Complete financial export sources not accessible')
 
     async def load(self, property_id, start, end, scope_id):
         prop, sphere = await ReportService(self.session, self.auth.organization_id, self.auth.user_id).property_period(

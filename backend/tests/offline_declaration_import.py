@@ -7,6 +7,11 @@ journey, which know the fictional Lindenallee declaration (docs/acceptance/data)
 organization's saved settings the way the worker takes them (the job's first run wins on a resume), so the records
 printed at the end show which model was asked for which page. Test tree only: no product switch, no configuration key.
 
+``--inventory-answer`` changes what the stand-in extraction model's inventory says, for the user check of the failures and
+hints that an inventory answer can cause: ``relation-to-unmatched-document`` (the declaration REFERENCES a document that
+matches none of the import's: the import reaches the review with a hint) or ``unknown-document`` (the answer names a document of its
+own that is not in the import: the import fails before any extraction call). Without it the answer is the plain one.
+
 The stored API key is neither decrypted nor used here (an instance has its own session secret, and no provider is
 called), so the saved key only has to exist, as for the real worker.
 
@@ -15,7 +20,8 @@ from what the administrator saved under Einstellungen; the instance has the queu
 
     cd <repository>/backend && . ../scripts/test-env.sh && uv run --locked --extra dev --extra ops \\
       python -m tests.offline_declaration_import --organization "<name or id>" \\
-      --documents "$(sed -n 's/^scratch=//p' /tmp/hausverwaltung-acceptance.lock/instance)/documents"
+      --documents "$(sed -n 's/^scratch=//p' /tmp/hausverwaltung-acceptance.lock/instance)/documents" \\
+      [--inventory-answer relation-to-unmatched-document|unknown-document]
 """
 from __future__ import annotations
 
@@ -24,7 +30,7 @@ import asyncio
 import os
 import sys
 import uuid
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from decimal import Decimal
 from unittest.mock import patch
@@ -45,6 +51,11 @@ from app.workers.declaration_import import DeclarationImportWorker, WorkerResult
 from tests.declaration_fixtures import ModelRecording, SlowReadingProvider, lindenallee_reading_blocks
 
 MAX_IMPORTS = 25
+# The inventory answers besides the plain one, and the state every import is expected to end in for each.
+INVENTORY_ANSWERS = {
+    "relation-to-unmatched-document": ("NEEDS_REVIEW", None),
+    "unknown-document": ("FAILED", "UNKNOWN_INVENTORY_DOCUMENT"),
+}
 
 
 def _usage(model: str) -> ProviderUsage:
@@ -53,8 +64,12 @@ def _usage(model: str) -> ProviderUsage:
     return ProviderUsage(17, 11, Decimal("0.000001") if model_price(model, "openai") else Decimal("0"), 1)
 
 
-def fictional_provider(document_id, usage: ProviderUsage | None = None):
-    """The offline extraction provider for the fictional Lindenallee declaration: its units and shares."""
+def fictional_provider(document_id, usage: ProviderUsage | None = None, inventory_answer: str | None = None):
+    """The offline extraction provider for the fictional Lindenallee declaration: its units and shares.
+
+    ``inventory_answer`` is one of ``INVENTORY_ANSWERS``: the inventory then relates to a document that was not
+    uploaded, or names a document of its own that is not in the import.
+    """
     from app.declarations.fake_provider import FakeDeclarationProvider
     from app.declarations.schemas import (
         CoreExtractionOutput, DocumentInventoryOutput, EvidencePayload, FactPayload, IntegerValue, MeaFraction,
@@ -77,8 +92,14 @@ def fictional_provider(document_id, usage: ProviderUsage | None = None):
         fact(subject,'usage_type',TextValue(kind='TEXT',value=kind),'Wohnung' if kind=='WOHNUNG' else 'Garage')
         fact(subject,'location',TextValue(kind='TEXT',value=location),location)
         fact(subject,'mea',MeaFraction(kind='MEA',numerator=share,denominator=1000),str(share))
+    entry = {'document_key':document_id,'document_type':'DECLARATION','title':'Fiktive Teilungserklärung'}
+    if inventory_answer == 'relation-to-unmatched-document':
+        entry['relations'] = [{'relation_type':'REFERENCES','target_document_key':'Aufteilungsplan',
+            'evidence':[{'document_key':document_id,'pdf_page':1,'quote':'WEG Lindenallee 12'}]}]
+    elif inventory_answer == 'unknown-document':
+        entry['document_key'] = 'not-a-document-of-the-import'
     return FakeDeclarationProvider(
-        inventory_output=DocumentInventoryOutput(documents=[{'document_key':document_id,'document_type':'DECLARATION','title':'Fiktive Teilungserklärung'}]),
+        inventory_output=DocumentInventoryOutput(documents=[entry]),
         core_output=CoreExtractionOutput(facts=facts), rules_output=RuleExtractionOutput(rules=[]),
         reconciliation_output=ReconciliationOutput(facts=facts,rules=[],mea_set_status='COMPLETE'), recheck_output=TargetedRecheckOutput(),
         usage=usage)
@@ -131,9 +152,9 @@ async def _saved_settings(db, organization_id):
 class _OfflineWorker(DeclarationImportWorker):
     """The real worker; only the pipeline's providers are the offline ones, built per claimed import."""
 
-    def __init__(self, store: DocumentStore, gate, **options) -> None:
+    def __init__(self, store: DocumentStore, gate, inventory_answer: str | None = None, **options) -> None:
         super().__init__(**options)
-        self._store, self._gate = store, gate
+        self._store, self._gate, self._inventory_answer = store, gate, inventory_answer
         self.records: list[ImportRecords] = []
 
     async def _run_claimed(self, lease: WorkerLease) -> WorkerResult:
@@ -148,7 +169,7 @@ class _OfflineWorker(DeclarationImportWorker):
                 .order_by(DeclarationImportDocument.sequence_no).limit(1))
         extraction_model, reading_model = identities or (effective.model, effective.document_model)
         key = str(document_id)
-        extraction = ModelRecording(fictional_provider(key, _usage(extraction_model)), extraction_model)
+        extraction = ModelRecording(fictional_provider(key, _usage(extraction_model), self._inventory_answer), extraction_model)
         reader = FakeDocumentReadingProvider(transcripts={(key, 1): lindenallee_reading_blocks()}, usage=_usage(reading_model))
         records = ImportRecords(lease.import_id, reading_model, extraction_model, reader.reads, extraction.calls)
         self.records.append(records)
@@ -167,14 +188,18 @@ def _saved_settings_without_the_key():
         yield
 
 
-async def process_queued_imports(organization_id: uuid.UUID, *, store: DocumentStore, gate=None) -> OfflineRun:
+async def process_queued_imports(
+    organization_id: uuid.UUID, *, store: DocumentStore, gate=None, inventory_answer: str | None = None
+) -> OfflineRun:
     """Process every queued declaration import of the organization once and return what the providers were asked.
 
-    ``gate`` makes the page reading slow like a real model call, so that the lease has to be renewed meanwhile.
+    ``gate`` makes the page reading slow like a real model call, so that the lease has to be renewed meanwhile;
+    ``inventory_answer`` is one of ``INVENTORY_ANSWERS``.
     """
     results: list[WorkerResult] = []
     with _saved_settings_without_the_key():
-        worker = _OfflineWorker(store, gate, **({"sleep": gate.release_after_renewal} if gate is not None else {}))
+        worker = _OfflineWorker(
+            store, gate, inventory_answer, **({"sleep": gate.release_after_renewal} if gate is not None else {}))
         for _ in range(MAX_IMPORTS):
             results.append(await worker.run_once(organization_id=organization_id))
             if results[-1].code in {"IDLE", "DECLARATION_IMPORT_DISABLED", "SCHEMA_NOT_READY"}:
@@ -200,7 +225,9 @@ def _organization_id(name_or_id: str) -> uuid.UUID:
     return ids[0]
 
 
-async def _main(organization_id: uuid.UUID, store: DocumentStore) -> OfflineRun:
+@asynccontextmanager
+async def offline_worker_engine():
+    """The worker role of the disposable test database as this process's worker engine (shared with the invoice command)."""
     from sqlalchemy.engine import make_url
     from sqlalchemy.ext.asyncio import create_async_engine
     from app.core.config import settings
@@ -210,25 +237,35 @@ async def _main(organization_id: uuid.UUID, store: DocumentStore) -> OfflineRun:
     engine = create_async_engine(make_url(settings.database_url).set(username="app_worker", password="worker_secret"))
     override_worker_engine(engine)
     try:
-        return await process_queued_imports(organization_id, store=store)
+        yield
     finally:
         override_worker_engine(None)
         await engine.dispose()
+
+
+async def _main(organization_id: uuid.UUID, store: DocumentStore, inventory_answer: str | None) -> OfflineRun:
+    async with offline_worker_engine():
+        return await process_queued_imports(organization_id, store=store, inventory_answer=inventory_answer)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--organization", required=True, help="name or id of the organization")
     parser.add_argument("--documents", required=True, help="the document storage root of the instance")
+    parser.add_argument("--inventory-answer", choices=sorted(INVENTORY_ANSWERS),
+                        help="what the stand-in inventory says: a relation to a document that matches none of the import's, or a document "
+                             "that is not in the import (the import then fails before any extraction call)")
     arguments = parser.parse_args(argv)
     from app.core.config import settings
     from app.core.declaration_test_database import require_disposable_database_settings
     from app.core.storage import LocalFsDocumentStore
 
     require_disposable_database_settings(settings)
-    run = asyncio.run(_main(_organization_id(arguments.organization), LocalFsDocumentStore(arguments.documents)))
+    run = asyncio.run(_main(_organization_id(arguments.organization), LocalFsDocumentStore(arguments.documents),
+                            arguments.inventory_answer))
     print("\n".join(run.lines()))
-    return 0 if run.imports and all(item.status == "NEEDS_REVIEW" for item in run.imports) else 1
+    expected = INVENTORY_ANSWERS.get(arguments.inventory_answer, ("NEEDS_REVIEW", None))
+    return 0 if run.imports and all((item.status, item.error_code) == expected for item in run.imports) else 1
 
 
 if __name__ == "__main__":

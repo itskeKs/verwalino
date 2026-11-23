@@ -87,6 +87,43 @@ def export_organization_with_form_property(world, rent_world, export_client):
     world.data["form_property"], world.data["form_payment"] = prop, payment.json()["id"]
 
 
+@given("a separate organization has a rent payment that a clerk booked on a scope-classified bank account for export")
+def export_organization_with_clerk_payment(world, rent_world, export_client):
+    from tests.bdd.steps.browser_setup import create
+    world.actor = export_client
+    world.data["export_source"] = rent_world
+    # No person data domain and no property creation receipt, so the counts compare entity by entity.
+    scope = create(world, "/api/accounting-scopes", {"property_id": str(rent_world["property"]), "scope_type": "MIET",
+        "label": "Mieten Probeweg", "valid_from": "2026-01-01", "valid_to": "2026-12-31", "whole_property": True}, keyed=True)
+    for user, capabilities in ((rent_world["admin"], ["read", "prepare", "approve", "confirm", "export"]),
+                               (rent_world["clerk"], ["read", "prepare", "confirm"])):
+        create(world, f"/api/accounting-scopes/{scope['id']}/grants", {"user_id": str(user), "capabilities": capabilities,
+            "reason": "Synthetic rent booking"}, keyed=True)
+    bank = create(world, "/api/bank-accounts", {"property_id": str(rent_world["property"]), "account_type": "LAUFEND",
+        "label": "Mietkonto Probeweg"})
+    create(world, f"/api/accounting-scopes/{scope['id']}/bindings", {
+        "resource_type": "bank_account", "resource_id": bank["id"], "reason": "Konto der Mieten"})
+    # The clerk records the payment in the payment form and books it; the database names the clerk as the
+    # reviewer of the payment's binding.
+    clerk = api_client(rent_world, "clerk")
+    try:
+        created = world.send(clerk, "POST", "/api/payments", json={
+            "bank_account_id": bank["id"], "direction": "IN", "amount": "700.00", "value_date": "2026-03-15",
+            "payment_type": "KALTMIETE", "tenant_profile_id": str(rent_world["tenant"]),
+            "lease_agreement_id": str(rent_world["lease"]), "period_year": 2026, "period_month": 3})
+        assert created.status_code == 201, world.describe_response()
+        booked = world.send(clerk, "POST", f"/api/payments/{created.json()['id']}/book")
+        assert booked.status_code == 200, world.describe_response()
+    finally:
+        world.run(clerk.aclose())
+    world.data.update(scope=scope, clerk_payment=created.json()["id"])
+    account = world.act("GET", f"/api/payments/mietkonto/lease/{rent_world['lease']}", params={
+        "accounting_scope_id": scope["id"], "period_start": "2026-01-01", "period_end": "2026-12-31"})
+    assert account.status_code == 200, world.describe_response()
+    world.data["clerk_account"] = {key: account.json()[key] for key in ("soll_total", "ist_total", "balance")}
+    assert world.data["clerk_account"]["ist_total"] == "700.00"
+
+
 @given("a separate organization has a task on its property and a task without a property from the task form for export")
 def export_organization_with_form_tasks(world, rent_world, export_client):
     world.actor = export_client
@@ -118,6 +155,38 @@ def export_organization_with_person_data_domain(world, rent_world, export_client
                        json={"person_id": person.json()["id"], "reason_code": "INITIAL_SETUP"})
     assert domain.status_code == 201, world.describe_response()
     world.data["contact"], world.data["contact_domain"] = person.json()["id"], domain.json()["id"]
+
+
+@given("a separate organization has a contact data domain and a grant to its administrator that a second administrator made for export")
+def export_organization_with_second_administrators_contact_setup(world, rent_world, rent_db, export_client, confirmed_second_factor):
+    from tests.test_person_data_domain_restore import contact_setup
+    from tests.test_scope_binding_restore import second_administrator
+    # The second administrator adds the contact Anna Berg, prepares its data domain and grants it to the first
+    # administrator, with the requests the contact pages send (an Idempotency-Key on the domain and on the grant).
+    source = world.run(second_administrator(rent_db, rent_world, confirmed_second_factor))
+    world.actor = export_client
+    world.data["export_source"] = source
+    person, domain, grant = world.run(contact_setup(source))
+    world.data.update(contact=person, contact_domain=domain["id"], contact_grant=grant["id"])
+
+
+@given("a separate organization has a contact data domain granted to its clerk and another one whose grant was revoked again for export")
+def export_organization_with_grants_to_its_clerk(world, rent_world, rent_db, export_client):
+    from sqlalchemy import text
+    from tests.test_person_data_domain_restore import contact_setup, listed
+    world.actor = export_client
+    world.data["export_source"] = rent_world
+    # The clerk has a name of their own in the user list; the administrator grants the data domain of Anna Berg to them,
+    # prepares the data domain of Bernd Weber, grants it to them as well and revokes that grant again.
+    world.run(rent_db.execute(text('UPDATE "user" SET display_name=:name WHERE id=:clerk'),
+                              {"name": "Clara Clerk", "clerk": rent_world["clerk"]}))
+    world.run(rent_db.commit())
+    contacts = [world.run(contact_setup(rent_world, maker="admin", grantee="clerk", name=name))
+                for name in (("Anna", "Berg"), ("Bernd", "Weber"))]
+    person, domain, grant = contacts[1]
+    revoked = world.act("POST", f"/api/person-data-domains/{domain['id']}/grants/{grant['id']}/revoke")
+    assert revoked.status_code == 204, world.describe_response()
+    world.data["clerk_contacts"] = [(contact, world.run(listed(rent_world, contact))) for contact, _, _ in contacts]
 
 
 @given("a separate organization has a WEG with two roof repair levies, an issued owner notice and a draft for export")
@@ -296,6 +365,46 @@ def imported_payments_are_linked(world):
     assert {rows[original]['amount'], rows[storno]['amount']} == {'700.00'}
 
 
+@then("the imported payments list shows the clerk's payment of 700.00 on 15.03.2026 and the tenant account shows the archived totals")
+def imported_clerk_payment(world):
+    mapping = world.data['import_result']['id_map']
+    source = world.data['export_source']
+    async def look():
+        async with api_client(world.data['import_target']) as target:
+            return await target.get('/api/payments'), await target.get(
+                f"/api/payments/mietkonto/lease/{mapping['lease_agreement'][str(source['lease'])]}",
+                params={'accounting_scope_id': mapping['accounting_scope'][world.data['scope']['id']],
+                        'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    payments, account = world.run(look())
+    assert payments.status_code == 200 and account.status_code == 200, (payments.text, account.text)
+    paid = {row['id']: row for row in payments.json()}[mapping['payment'][world.data['clerk_payment']]]
+    assert (paid['amount'], paid['value_date'], paid['status']) == ('700.00', '2026-03-15', 'booked')
+    assert {key: account.json()[key] for key in ('soll_total', 'ist_total', 'balance')} == world.data['clerk_account']
+
+
+@then("the restored binding of that payment names the clerk's account, which cannot sign in, as its reviewer")
+def restored_binding_names_the_clerk(world):
+    from sqlalchemy import text
+    mapping = world.data['import_result']['id_map']
+    clerk = mapping['user'][str(world.data['export_source']['clerk'])]
+    async def reviewer():
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from tests.conftest import MIGRATOR_URL
+        engine = create_async_engine(MIGRATOR_URL)
+        try:
+            async with engine.connect() as connection:
+                return (await connection.execute(text(
+                    'SELECT b.reviewed_by::text,u.is_active,u.password_hash FROM accounting_scope_binding b '
+                    'JOIN "user" u ON u.organization_id=b.organization_id AND u.id=b.reviewed_by '
+                    'WHERE b.organization_id=:org AND b.payment_id=:payment'),
+                    {'org': world.data['import_target']['org'],
+                     'payment': uuid.UUID(mapping['payment'][world.data['clerk_payment']])})).one()
+        finally:
+            await engine.dispose()
+    row = world.run(reviewer())
+    assert tuple(row) == (clerk, False, '!') and clerk != str(world.data['import_target']['admin'])
+
+
 @then('the imported property list shows the form property and its payment of 700.00 on 15.03.2026')
 def imported_form_property(world):
     mapping = world.data['import_result']['id_map']
@@ -339,6 +448,59 @@ def imported_person_data_domain(world):
     assert answer.status_code == 200, answer.text
     assert [(row['id'], row['label']) for row in answer.json()['items']] == [
         (mapping['person_data_domain'][world.data['contact_domain']], f'Contact {contact}')]
+
+
+@then("the imported contact shows its data domain and its grant with the archived reasons and rights")
+def imported_contact_setup(world):
+    from tests.test_person_data_domain_restore import listed
+    mapping = world.data['import_result']['id_map']
+    contact = mapping['person'][world.data['contact']]
+    domains, grants = world.run(listed(world.data['import_target'], contact))
+    assert [(row['id'], row['reason_code'], row['label']) for row in domains] == [
+        (mapping['person_data_domain'][world.data['contact_domain']], 'TEAM_ACCESS', f'Contact {contact}')]
+    assert [(row['id'], row['user_id'], row['capabilities'], row['reason_code'], row['expires_at'], row['revoked_at'])
+            for row in grants] == [(mapping['person_data_grant'][world.data['contact_grant']],
+                                    str(world.data['import_target']['admin']), ['export', 'read'], 'TEAM_ACCESS', None, None)]
+
+
+@then("the restored domain and grant name the second administrator's account, which cannot sign in, as creator and grantor")
+def restored_contact_setup_names_the_second_administrator(world, rent_db):
+    from tests.test_person_data_domain_restore import actors
+    mapping = world.data['import_result']['id_map']
+    second = mapping['user'][str(world.data['export_source']['second_admin'])]
+    found = world.run(actors(rent_db, world.data['import_target']))
+    assert second != str(world.data['import_target']['admin'])
+    assert {kind: (str(row.actor), row.is_active, row.password_hash) for kind, row in found.items()} == {
+        'domain': (second, False, '!'), 'grant': (second, False, '!')}
+
+
+@then("the imported contacts show both domains with the clerk's grants, their rights and reasons, the revoked one shown as revoked")
+def imported_grants_to_the_clerk(world):
+    from tests.test_organization_import import in_target_ids
+    from tests.test_person_data_domain_restore import listed, without_stamp
+    mapping = world.data['import_result']['id_map']
+    clerk = mapping['user'][str(world.data['export_source']['clerk'])]
+    for source_contact, (source_domains, source_grants) in world.data['clerk_contacts']:
+        domains, grants = world.run(listed(world.data['import_target'], mapping['person'][source_contact]))
+        assert without_stamp(domains) == without_stamp(in_target_ids(source_domains, mapping))
+        assert grants == in_target_ids(source_grants, mapping)
+        assert [(row['user_id'], row['user_display_name'], row['capabilities'], row['reason_code'], row['expires_at'])
+                for row in grants] == [(clerk, 'Clara Clerk', ['export', 'read'], 'TEAM_ACCESS', None)]
+    live, revoked = (grants[0] for _, (_, grants) in world.data['clerk_contacts'])
+    assert live['revoked_at'] is None and revoked['revoked_at'] is not None
+
+
+@then("the clerk's account is listed as deactivated")
+def imported_clerk_is_deactivated(world):
+    mapping = world.data['import_result']['id_map']
+    clerk = mapping['user'][str(world.data['export_source']['clerk'])]
+    async def users():
+        async with api_client(world.data['import_target']) as target:
+            return await target.get('/api/users')
+    answer = world.run(users())
+    assert answer.status_code == 200, answer.text
+    assert [(row['display_name'], row['is_active'], row['role']) for row in answer.json() if row['id'] == clerk] == [
+        ('Clara Clerk', False, 'CLERK')]
 
 
 @then('the imported owner notices and owner accounts show the archived levy amounts')

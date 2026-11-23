@@ -123,6 +123,33 @@ Common precheck errors are `PDF_SIZE_LIMIT_EXCEEDED`,
 `OCR_TIMEOUT`, `OCR_UNAVAILABLE` and `OCR_FAILED` are no longer produced; imports that stored
 `OCR_TIMEOUT` before 0196 keep it and stay retryable.
 
+### The inventory against the documents of the import
+
+The inventory passes (the first pass over every batch) answer which documents the import holds and how they
+relate. The merged answer is checked against the import's documents right after them, before the first
+`extract_core` call, so that an answer that cannot belong to the import costs no extraction request (no
+reservation is made, none is left in the run's usage):
+
+- An entry whose own `document_key` is not a document of the import fails the import with
+  `UNKNOWN_INVENTORY_DOCUMENT`; a document of the import without an entry fails it with
+  `MISSING_INVENTORY_DOCUMENT`. Both are final (no `RETRY_WAIT`); the import page explains them in German and
+  names the next step (start a new import, contact the operator if it repeats).
+- A **relation** (`AMENDS`, `SUPPLEMENTS`, `REFERENCES`) whose `target_document_key` is not a document of the
+  import is no failure: a declaration regularly names documents that were not uploaded (an Aufteilungsplan, an
+  earlier deed, a Nachtrag), and the name the model gave a target may match none of the uploaded ones. The relation
+  is left out of the inventory that every later step reads (reconciliation, evidence validation, the relation
+  candidates), so no candidate is created for it, and the run records one issue per left-out relation, code
+  `DOCUMENT_RELATION_TARGET_UNMATCHED`, severity `INFO`, bound to no candidate (`candidate_id` is null;
+  `details_json` holds `document_key` and `pdf_page` of the relation's evidence where the answer names a page of
+  the import). Its German text names the document the relation was read in, the relation in plain words (`ändert`,
+  `ergänzt`, `verweist auf`) and the other document as the answer names it, and says that the reference could not
+  be matched to an uploaded document and the relation was not taken over; it does not say that the document was
+  not uploaded, because the pipeline cannot know that. The review page lists such issues in „Hinweise zum Import“;
+  they never block the approval. The evidence of a left-out relation is not validated, so it cannot fail the import.
+  The text is not fixed: it quotes the name the model gave for the target (up to 120 characters) and the title or
+  file name of the source document. These rows are stored in `declaration_candidate_issue` like the import's other
+  evidence, exported and erased with it, and nothing logs them.
+
 ## Reading Stage (ADR 0017)
 
 `DocumentReadingProvider.read_page` (`declarations/provider.py`) takes one rendered PNG page
@@ -644,12 +671,12 @@ prices are enforced; unknown-price models remain selectable and the page explain
 that they are not limited. Known requests explicitly use the standard service tier
 and no implicit SDK retry. Monetary unknowns are recorded as unpriced zero estimates,
 not as a claim that OpenAI is free. Token/time limits remain bounded. The extraction
-harness version is `5` (compatible endpoints `8`, Anthropic fingerprint `v5`), with wire schema version `2`. The adapter converts only
+harness version is `6` (compatible endpoints `8`, Anthropic fingerprint `v5`), with wire schema version `2`. The adapter converts only
 the two known, disjoint `kind` unions to `anyOf` after the SDK's strict-schema
 transformation. Parsing, reservations and schema fingerprints use that same
 wire model; inherited local validation remains unchanged. Offline SDK transport
-checks verify serialization, not live provider acceptance. Pass metadata uses `default`
-when reasoning is omitted for a model with no known effort contract.
+checks verify serialization, not live provider acceptance. Pass metadata states the
+reasoning effort that the answered request carried (`default` when none was sent, see below).
 
 The native OpenAI adapter receives each response through the SDK's `responses.create`, with the request body
 the SDK's `responses.parse` sent before, and validates usage, refusal and completion before it parses the output
@@ -657,6 +684,23 @@ text with the SDK's own parser: `parse` validates the text first, so an answer c
 raised there and lost its status and usage. The compatible and Anthropic transports are unchanged. The version `5`
 changes the harness fingerprint of the native requests and, for `gpt-5.6-luna`, their explicit prompt-cache key, so the
 first request of each pass after an upgrade writes a new cache prefix; a stored run keeps the harness version it ran with.
+
+**Reasoning effort (native OpenAI requests).** Every request of the native adapter, in every stage that uses it (the
+declaration passes, the page reading, the invoice extraction and the inbox extraction), carries a reasoning effort:
+`medium` for `gpt-5.6-luna`, `none` for `gpt-5.4-mini` and `low` for every other model, because a model that reasons
+spends its reasoning tokens on the same output allowance as its answer. The effort is a documented constant, not a
+setting (an effort passed when the adapter is constructed, which no deployed path does, still wins). When OpenAI rejects exactly that
+parameter, the same request is sent once more without it, inside the same call: the rejection is a 400 whose error
+object names the request field `reasoning` or `reasoning.effort` and whose `code` is `unsupported_parameter`,
+`unsupported_value`, `invalid_value` or `unknown_parameter` (the structured fields, never the message text). The rejected request was not
+processed and reports no usage, so the call keeps its one reservation and is settled at the usage of the request that
+was answered; a failure of the second request is classified as any other, and a schema repair after the fallback
+does not send the parameter again. The rule is the same for every model, so `gpt-5.6-luna` and `gpt-5.4-mini` are retried
+without the effort only when their own request is rejected by those structured fields. The pass ledger row states the
+effort of the answered request: `low` (or the model's known effort), and `default` for a request that was sent without
+one, as after the fallback. The compatible and Anthropic transports never send a reasoning parameter. The version `6`
+changes the harness fingerprint and the explicit prompt-cache key of `gpt-5.6-luna` requests in the same way as the
+version `5` did; the cache key does not name the effort, so the fallback request keeps the key of the rejected one.
 
 Prompt version `declaration-v4` also tells the extraction passes that a page may be a
 transcript with `[table]` blocks and `[unreadable]` markers (the reading stage's own prompt

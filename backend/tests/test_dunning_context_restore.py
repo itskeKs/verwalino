@@ -355,7 +355,10 @@ APP_ROOT = Path(__file__).resolve().parents[1] / 'app'
 
 
 @pytest.mark.no_db
-def test_only_the_organization_import_sets_the_restore_marker():
-    """The guard trusts the marker, so no other code may set it (ADR 0016)."""
-    writers = sorted(str(path.relative_to(APP_ROOT)) for path in APP_ROOT.rglob('*.py') if MARKER in path.read_text())
+@pytest.mark.parametrize('marker', [MARKER, 'app.organization_import_scope_binding', 'app.organization_import_person_data_domain',
+                                    'app.organization_import_person_data_grant'])
+def test_only_the_organization_import_sets_the_restore_marker(marker):
+    """The guard trusts the marker, so no other code may set it (ADR 0016): the dunning context's, the scope binding's and
+    the contact data domain's and grant's."""
+    writers = sorted(str(path.relative_to(APP_ROOT)) for path in APP_ROOT.rglob('*.py') if marker in path.read_text())
     assert writers == ['services/organization_import_service.py']

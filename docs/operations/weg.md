@@ -93,13 +93,35 @@ lines and levy allocations. The read of one property is answered the same way wh
 has no classified finance and no accounting scope, so there is nothing to select: the annual
 overview of such a property (`GET /api/reports/property-year` and the readers that share it) and
 the matching of the bank transactions of its unscoped bank accounts show what they showed before
-the levy (#816); a property with a scope of its own is still read through that scope. The
-decision is one database function,
+the levy (#816), and so do its downloads: the two CSV exports of the annual overview
+(`GET /api/reports/property-year.csv` and `.../anlage-v.csv`) and the DATEV sources, preview and
+file (`GET /api/reports/datev/sources`, `POST /api/reports/datev/preview` and `/datev.csv`) have
+the content they had before the levy (#840). So do the SEPA routes of a bank account of such a
+property that no accounting scope is bound to (`/api/payments/sepa/...`: the account page, the
+creditor, the mandates and their change or revocation, the preview and the collection file): the
+property of the account is named, so the direct debits of its tenants can still be prepared (#867).
+A property with a scope of its own is still read and exported through that scope, and without it is
+refused. The decision is one database function,
 `report_scope_source_access(org, sphere, capability, lease, owner, property)` (migrations 0193 and
-0199, the sixth argument is optional), next to the three-argument function that exports, SEPA and
-the source policies keep calling; the two CSV exports of the annual overview are among those callers
-and stay refused (404 „Complete report sources not exportable“) for a property without a scope
-while a levy exists. Reads with the levy's scope are unchanged. The existing
+0199, the sixth argument is optional), next to the three-argument function that the source
+policies keep calling. Reads, the two kinds of download and the SEPA routes ask it through
+`FinancialScopeService.report_sources_open`, the downloads with the capability `export` and the
+property they concern, the SEPA routes with the capability `read` and the property of the bank
+account. The downloads of the levy's own property and of a property that has classified finance or
+a scope of its own are refused without the scope as the reads are, and so are the SEPA routes of an
+account bound to no scope on such a property (404 „Complete rent sources not accessible“); an
+account that is bound to a scope is served through that scope, as before. The function still
+refuses an unscoped export that names no property, and the same holds for a SEPA call that would
+name none, though none exists: every SEPA route names one bank account, and a bank account always
+belongs to a property. A caller without access to the levy's scope gets no levy data from any SEPA
+route: the page, the preview and the file of an account without a scope hold only that account, its
+tenants and their mandates, and the account bound to the levy's scope is not found (404 „Bank
+account not accessible“). The levy itself is exported only
+through its scope, with export access to it and to its sources, so a caller without that access gets
+no levy data: without the export right on the scope the answer is 404 „Accounting scope not
+accessible“, and with it but without access to the scope's sources 404 „Complete report sources not
+exportable“ for the CSV exports and „Complete financial export sources not accessible“ for DATEV.
+Reads with the levy's scope are unchanged. The existing
 owner account counts the share once as `SONDERZAHLUNG` in the
 due month, even without an economic plan; regularly booked special payments
 reduce the open amount. Under `/sonderumlagen`, property and read scope are

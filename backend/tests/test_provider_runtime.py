@@ -152,6 +152,40 @@ async def test_compatible_inventory_reservation_schema_and_metadata_match_actual
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["openai_compatible", "anthropic"])
+async def test_a_model_the_native_provider_does_not_know_gets_no_reasoning_effort_and_no_second_request_on_the_other_transports(name):
+    """The low effort for unknown models and its one fallback belong to the native OpenAI transport only."""
+    import json
+    from app.declarations.provider import DocumentInput, PageInput, ProviderFailure
+    effective = EffectiveAiSettings(provider=name, api_key=SecretStr("synthetic-key"), model="gpt-6.2-sol",
+                                    base_url="http://localhost:11434/v1" if name == "openai_compatible" else None)
+    provider = create_extraction_provider(effective)
+    await provider._client.close()
+    seen = []
+    def respond(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(400, json={"error": {"message": "synthetic", "type": "invalid_request_error", "param": "reasoning.effort", "code": "unsupported_parameter"}})
+    def keys(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                yield key
+                yield from keys(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from keys(child)
+    provider._client = ProviderClient(provider=name, api_key="synthetic-key", base_url=effective.base_url, transport=httpx.MockTransport(respond))
+    try:
+        assert provider._reasoning_effort("gpt-6.2-sol") is None
+        with pytest.raises(ProviderFailure) as caught:
+            await provider.inventory([DocumentInput("doc", [PageInput("doc", 1, "Synthetic text", 1.0)])], max_output_tokens=100)
+        assert len(seen) == 1, "a rejection that names the reasoning parameter is final here"
+        assert not any("reasoning" in key for key in keys(seen[0]))
+        assert caught.value.code == "OPENAI_REQUEST_FAILED" and caught.value.metadata.reasoning_effort == "default"
+    finally:
+        await provider._client.close()
+
+
+@pytest.mark.asyncio
 async def test_string_shaped_404_is_permanent_sanitized_and_never_retried():
     from openai import APIStatusError
     seen=[]
