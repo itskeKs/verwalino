@@ -105,9 +105,11 @@ policies keep calling. Reads and the two kinds of download ask it through
 property they concern. The downloads of the levy's own property and of a property that has
 classified finance or a scope of its own are refused without the scope as the reads are, and the
 function still refuses an unscoped export that names no property. The levy itself is exported only
-through its scope, with export access to it and to its sources (404 „Complete report sources not
-exportable“ for the CSV exports, „Complete financial export sources not accessible“ for DATEV), so
-a caller without that access gets no levy data. Reads with the levy's scope are unchanged. The existing
+through its scope, with export access to it and to its sources, so a caller without that access gets
+no levy data: without the export right on the scope the answer is 404 „Accounting scope not
+accessible“, and with it but without access to the scope's sources 404 „Complete report sources not
+exportable“ for the CSV exports and „Complete financial export sources not accessible“ for DATEV.
+Reads with the levy's scope are unchanged. The existing
 owner account counts the share once as `SONDERZAHLUNG` in the
 due month, even without an economic plan; regularly booked special payments
 reduce the open amount. Under `/sonderumlagen`, property and read scope are
