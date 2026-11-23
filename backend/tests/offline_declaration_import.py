@@ -11,6 +11,9 @@ printed at the end show which model was asked for which page. Test tree only: no
 hints that an inventory answer can cause: ``relation-to-unmatched-document`` (the declaration REFERENCES a document that
 matches none of the import's: the import reaches the review with a hint) or ``unknown-document`` (the answer names a document of its
 own that is not in the import: the import fails before any extraction call). Without it the answer is the plain one.
+The plain answer uses the key the pages carry, as a real request allows it. The stand-in provider has no request and
+therefore no request schema, so ``unknown-document`` contradicts that schema on purpose: a real transport would turn
+such an answer into a schema failure (issue #876), and this form is what reaches the pipeline's own check behind it.
 
 The stored API key is neither decrypted nor used here (an instance has its own session secret, and no provider is
 called), so the saved key only has to exist, as for the real worker.

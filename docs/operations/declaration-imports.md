@@ -126,9 +126,18 @@ Common precheck errors are `PDF_SIZE_LIMIT_EXCEEDED`,
 ### The inventory against the documents of the import
 
 The inventory passes (the first pass over every batch) answer which documents the import holds and how they
-relate. The merged answer is checked against the import's documents right after them, before the first
+relate. The instruction and the request schema tell the model what an entry is: one entry for every uploaded
+file, under that file's `document_key` as it is labelled on the pages, and no entry for any other key. A PDF that holds
+several deeds (a declaration with its amendments, supplements or plans) is still one entry, typed and titled by its
+main deed; a deed inside a file gets no entry and no relation of its own, and the extraction passes still read every
+page of the file. What a user sees is that file as one document of the import: the review's document relations come
+only from these entries, between two uploaded files, and a relation to a document that was not uploaded is the hint
+described below ([Inventory keys](#organization-settings-0178) says how each transport enforces this).
+
+The merged answer is checked against the import's documents right after the passes, before the first
 `extract_core` call, so that an answer that cannot belong to the import costs no extraction request (no
-reservation is made, none is left in the run's usage):
+reservation is made, none is left in the run's usage). Since the request schema allows only the keys of the
+request, this check is the last defence for an answer that got past it:
 
 - An entry whose own `document_key` is not a document of the import fails the import with
   `UNKNOWN_INVENTORY_DOCUMENT`; a document of the import without an entry fails it with
@@ -671,7 +680,7 @@ prices are enforced; unknown-price models remain selectable and the page explain
 that they are not limited. Known requests explicitly use the standard service tier
 and no implicit SDK retry. Monetary unknowns are recorded as unpriced zero estimates,
 not as a claim that OpenAI is free. Token/time limits remain bounded. The extraction
-harness version is `6` (compatible endpoints `8`, Anthropic fingerprint `v5`), with wire schema version `2`. The adapter converts only
+harness version is `7` (compatible endpoints `9`, Anthropic fingerprint `v6`), with wire schema version `3`. The adapter converts only
 the two known, disjoint `kind` unions to `anyOf` after the SDK's strict-schema
 transformation. Parsing, reservations and schema fingerprints use that same
 wire model; inherited local validation remains unchanged. Offline SDK transport
@@ -702,7 +711,23 @@ one, as after the fallback. The compatible and Anthropic transports never send a
 changes the harness fingerprint and the explicit prompt-cache key of `gpt-5.6-luna` requests in the same way as the
 version `5` did; the cache key does not name the effort, so the fallback request keeps the key of the rejected one.
 
-Prompt version `declaration-v4` also tells the extraction passes that a page may be a
+**Inventory keys (harness `7`, schema `3`, prompt `declaration-v5`; issue #876).** Every request of the inventory pass
+names the keys it may be answered with. The request of each batch carries the instruction (`INVENTORY_PROMPT`) and a
+schema in which an entry's `document_key` allows exactly the `document_key` labels of the pages of that request, so a
+batch that holds only some pages of a file still answers with that file's key; `target_document_key` stays free text.
+This holds for the native OpenAI, the compatible and the Anthropic transport alike. The reservation is estimated over
+that schema, and an answer with another key is a schema failure like any other (one repair request, then
+`PROVIDER_SCHEMA_FAILURE`), also from a server that does not enforce the schema, because the answer is validated
+against the same type. The fingerprints of the pass (`schema_sha256`, `harness_sha256`, the cache key) stay those of
+the static contract: the keys of a request are request data like its pages and differ with every import, and a
+fingerprint that followed them could no longer be compared between two imports of the same case (the recorded
+evaluation compares them). The pass ledger therefore shows one `schema_sha256` for the inventory of every import.
+A run keeps the prompt, schema and harness version it ran with. An import that ran under the earlier versions and is
+retried after the deploy opens a new run under the current ones and asks for its inventory again (no model answer is
+stored); the earlier run and its ledger rows are not changed. The first request of each pass after an upgrade writes a
+new cache prefix.
+
+Prompt version `declaration-v4` (kept by `declaration-v5`) also tells the extraction passes that a page may be a
 transcript with `[table]` blocks and `[unreadable]` markers (the reading stage's own prompt
 is `reading-v1`). It supplies the exact fixed-core subject-prefix and
 field pairs to core extraction, reconciliation and recheck. The instructions

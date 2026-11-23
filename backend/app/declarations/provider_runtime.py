@@ -308,7 +308,7 @@ class CompatibleDeclarationProvider(OpenAiDeclarationProvider):
         self._price_provider = effective.provider
         super().__init__(client=ProviderClient(provider=effective.provider, api_key=effective.api_key.get_secret_value(), base_url=effective.base_url), primary_model=effective.model, escalation_model=effective.model, token_encoder=_ByteEncoder(), configured_settings=configured_settings, timeout_seconds=endpoint_request_timeout(effective.provider, effective.request_timeout_seconds))
         if effective.provider == "openai_compatible":
-            self._harness_version = "8"
+            self._harness_version = "9"
 
     def _configured_rates(self, configured):
         price = model_price(self._primary_model, self._price_provider)
@@ -326,14 +326,16 @@ class CompatibleDeclarationProvider(OpenAiDeclarationProvider):
 
     def _fingerprints(self, developer_prompt, output_type):
         from app.declarations.observability import fingerprint_static_contract
-        schema = self._sdk_text_format(output_type)["schema"]
+        from app.declarations.schemas import static_output_type
+        # The static contract: the keys an inventory request allows are request data, like its pages.
+        schema = self._sdk_text_format(static_output_type(output_type))["schema"]
         if self._provider_name == "anthropic":
             schema = _anthropic_schema(schema)
         if self._provider_name == "openai_compatible":
             developer_prompt += "\n\n" + _schema_instruction(schema)
-            harness = "declaration-openai_compatible-v8|structured-output|schema-in-system|core-contract-reminder|subject-key-syntax|utf8-byte-reservation|no-tools|bounded-schema-repair|fixed-pass-manager"
+            harness = "declaration-openai_compatible-v9|structured-output|schema-in-system|core-contract-reminder|subject-key-syntax|utf8-byte-reservation|no-tools|bounded-schema-repair|fixed-pass-manager|inventory-document-key-enum"
         else:
-            harness = f"declaration-{self._provider_name}-v5|structured-output|utf8-byte-reservation|no-tools|bounded-schema-repair|fixed-pass-manager"
+            harness = f"declaration-{self._provider_name}-v6|structured-output|utf8-byte-reservation|no-tools|bounded-schema-repair|fixed-pass-manager|inventory-document-key-enum"
         return fingerprint_static_contract(developer_prompt=developer_prompt, schema=schema, harness=harness)
 
     def _estimate_input_tokens(self, pass_id, model, developer_prompt, input_payload, output_type, max_output_tokens):
