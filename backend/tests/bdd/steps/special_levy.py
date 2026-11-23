@@ -1,4 +1,6 @@
 """Special-levy authority and frozen shares through the ordinary API and UI."""
+import csv
+import io
 import os
 import re
 from datetime import date, timedelta
@@ -179,6 +181,33 @@ def annual_overview_without_scope(world):
     assert answer.status_code == 200, world.describe_response()
     overview = answer.json()
     assert (overview['income_total'], overview['expense_total'], overview['balance']) == ('700.00', '250.00', '450.00'), overview
+
+
+def annual_overview_csv_files(world):
+    """The two CSV exports of the annual overview of Sonnenweg 5 for 2026, as the bytes the manager downloads."""
+    files = {}
+    for name, path in (('overview', 'property-year.csv'), ('anlage_v', 'property-year/anlage-v.csv')):
+        answer = world.act('GET', f'/api/reports/{path}', params={'property_id': world.data['plain_property']['id'], 'year': 2026})
+        assert answer.status_code == 200, world.describe_response()
+        files[name] = answer.content
+    return files
+
+
+@given('the manager downloaded the annual overview CSV and the Anlage V CSV of Sonnenweg 5 for 2026')
+def csv_files_before_the_levy(world):
+    world.data['csv_files'] = annual_overview_csv_files(world)
+
+
+@then('the two CSV downloads of Sonnenweg 5 for 2026 are the same as before the levy')
+def csv_files_after_the_levy(world):
+    assert annual_overview_csv_files(world) == world.data['csv_files']
+
+
+@then('the annual overview CSV of Sonnenweg 5 shows 700 euros income, 250 euros expenses and 450 euros balance')
+def csv_totals_without_scope(world):
+    rows = list(csv.reader(io.StringIO(annual_overview_csv_files(world)['overview'].decode('utf-8-sig')), delimiter=';'))
+    assert {row[2]: row[-1] for row in rows if row[2] in ('Einnahmen gesamt', 'Ausgaben gesamt', 'Saldo')} == {
+        'Einnahmen gesamt': '700,00', 'Ausgaben gesamt': '250,00', 'Saldo': '450,00'}, rows
 
 
 @when("Berta's ownership entry is corrected to start on 1 August 2026")

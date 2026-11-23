@@ -93,13 +93,21 @@ lines and levy allocations. The read of one property is answered the same way wh
 has no classified finance and no accounting scope, so there is nothing to select: the annual
 overview of such a property (`GET /api/reports/property-year` and the readers that share it) and
 the matching of the bank transactions of its unscoped bank accounts show what they showed before
-the levy (#816); a property with a scope of its own is still read through that scope. The
-decision is one database function,
+the levy (#816), and so do its downloads: the two CSV exports of the annual overview
+(`GET /api/reports/property-year.csv` and `.../anlage-v.csv`) and the DATEV sources, preview and
+file (`GET /api/reports/datev/sources`, `POST /api/reports/datev/preview` and `/datev.csv`) have
+the content they had before the levy (#840). A property with a scope of its own is still read and
+exported through that scope, and without it is refused. The decision is one database function,
 `report_scope_source_access(org, sphere, capability, lease, owner, property)` (migrations 0193 and
-0199, the sixth argument is optional), next to the three-argument function that exports, SEPA and
-the source policies keep calling; the two CSV exports of the annual overview are among those callers
-and stay refused (404 „Complete report sources not exportable“) for a property without a scope
-while a levy exists. Reads with the levy's scope are unchanged. The existing
+0199, the sixth argument is optional), next to the three-argument function that SEPA and the source
+policies keep calling. Reads and the two kinds of download ask it through
+`FinancialScopeService.report_sources_open`, the downloads with the capability `export` and the
+property they concern. The downloads of the levy's own property and of a property that has
+classified finance or a scope of its own are refused without the scope as the reads are, and the
+function still refuses an unscoped export that names no property. The levy itself is exported only
+through its scope, with export access to it and to its sources (404 „Complete report sources not
+exportable“ for the CSV exports, „Complete financial export sources not accessible“ for DATEV), so
+a caller without that access gets no levy data. Reads with the levy's scope are unchanged. The existing
 owner account counts the share once as `SONDERZAHLUNG` in the
 due month, even without an economic plan; regularly booked special payments
 reduce the open amount. Under `/sonderumlagen`, property and read scope are
