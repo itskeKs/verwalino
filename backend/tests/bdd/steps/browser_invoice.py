@@ -204,15 +204,21 @@ def upload_structured(world):
     world.data["invoices"] = [_upload(world, *_structured(kind)) for kind in ("xrechnung", "zugferd")]
 
 
+def _printed_lines() -> list[str]:
+    """What the scanned invoice prints, line by line: what the reading model reads from its one page."""
+    _name, iban, _amount = _statement_line()
+    return [INSURER, "Wohngebäudeversicherung 2026, Musterstr 1", "Rechnung RE-2026-0042 vom 15.01.2026", "Gesamtbetrag 312,00 EUR",
+            f"IBAN {_printed_iban(iban)}"]
+
+
 def _printed_invoice():
-    name, iban, _amount = _statement_line()
-    return FakeDocumentReadingProvider(transcripts={("invoice", 1): [
-        ReadingBlock(kind="TEXT", text=INSURER),
-        ReadingBlock(kind="TEXT", text="Wohngebäudeversicherung 2026, Musterstr 1"),
-        ReadingBlock(kind="TEXT", text="Rechnung RE-2026-0042 vom 15.01.2026"),
-        ReadingBlock(kind="TEXT", text="Gesamtbetrag 312,00 EUR"),
-        ReadingBlock(kind="TEXT", text=f"IBAN {_printed_iban(iban)}"),
-    ]}, usage=READING_USAGE)
+    return FakeDocumentReadingProvider(transcripts={("invoice", 1): [ReadingBlock(kind="TEXT", text=line) for line in _printed_lines()]},
+                                       usage=READING_USAGE)
+
+
+def _extraction_failure() -> ProviderFailure:
+    """The extraction model times out after the reading was paid: the request was sent and consumed 300 input tokens."""
+    return ProviderFailure("PROVIDER_TIMEOUT", False, "timed out", usage=ProviderUsage(300, 0, Decimal("0.000225"), 1))
 
 
 @when("the worker processes the scan with the offline models")
@@ -222,8 +228,7 @@ def process_scan(world):
 
 @when("the worker processes the scan while the extraction model fails")
 def process_scan_failing(world):
-    failure = ProviderFailure("PROVIDER_TIMEOUT", False, "timed out", usage=ProviderUsage(300, 0, Decimal("0.000225"), 1))
-    _process(world, reader=_printed_invoice(), extractor=FakeInvoiceExtractionProvider(failure=failure))
+    _process(world, reader=_printed_invoice(), extractor=FakeInvoiceExtractionProvider(failure=_extraction_failure()))
 
 
 @when("the worker processes both without any model")
