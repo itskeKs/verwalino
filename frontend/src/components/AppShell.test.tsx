@@ -109,7 +109,7 @@ it("keeps page control focus when navigation changes at the desktop breakpoint",
 it.each([true, false])("offers the Meldungen with their count in the top bar of every page (desktop: %s)", async desktop => {
   vi.spyOn(endpoints, "listMeldungen").mockResolvedValue({ items: [{
     kind: "DECLARATION_IMPORT", id: "import-1", title: "Teilungserklärung einlesen", subject: "Lindenallee 12", state: "RUNNING",
-    state_label: "Läuft: Angaben auslesen", at: "2026-11-23T13:05:00Z", target: "/teilungserklaerung/import/import-1",
+    state_label: "Läuft: Angaben auslesen", at: "2026-11-23T13:05:00Z", target: "/teilungserklaerung/import/import-1", stage: null,
   }] });
   shell(desktop);
 

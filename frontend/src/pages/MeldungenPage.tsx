@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { Badge, type BadgeTone } from "../components/ui/badge";
 import { useMeldungen } from "../components/meldungen/useMeldungen";
 import { formatDateTime } from "../lib/format";
+import { INTAKE_STAGE_LABELS, type IntakeStage } from "../lib/intakeStages";
 import type { MeldungState } from "../api/types";
 
 const TONES: Record<MeldungState, BadgeTone> = {
@@ -10,6 +11,9 @@ const TONES: Record<MeldungState, BadgeTone> = {
   REVIEW: "warning",
   FAILED: "destructive",
 };
+
+// The word for how far a Posteingang batch has come, from the table the batch page reads; a key it does not know says nothing.
+const stageLabel = (stage: string | null) => stage !== null && Object.prototype.hasOwnProperty.call(INTAKE_STAGE_LABELS, stage) ? INTAKE_STAGE_LABELS[stage as IntakeStage] : null;
 
 /** The Meldungen of the signed-in user: one row for each, leading to the page of its subject. */
 export function MeldungenPage() {
@@ -36,7 +40,8 @@ export function MeldungenPage() {
                   <Badge tone={TONES[item.state]}>{item.state_label}</Badge>
                 </span>
                 <span className="text-sm break-words">{item.subject}</span>
-                {item.at && <span className="text-sm text-muted-foreground">Gestartet: {formatDateTime(item.at)}</span>}
+                {stageLabel(item.stage) && <span className="text-sm">Stufe: {stageLabel(item.stage)}</span>}
+                {item.at && <span className="text-sm text-muted-foreground">{item.kind === "INTAKE_BATCH" ? "Eingang vom" : "Gestartet:"} {formatDateTime(item.at)}</span>}
               </Link>
             </li>
           ))}

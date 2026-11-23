@@ -2652,11 +2652,12 @@ call; before = the page of `main`, whose bar and raw stage name this replaces):
 | Finished while the page is open | not shown (opened the review at once) | [view](docs/assets/design/declaration-status/finished-after-1280.png) | not shown | [view](docs/assets/design/declaration-status/finished-after-360.png) |
 | Failed (text unchanged) | [view](docs/assets/design/declaration-status/failed-before-1280.png) | [view](docs/assets/design/declaration-status/failed-after-1280.png) | [view](docs/assets/design/declaration-status/failed-before-360.png) | [view](docs/assets/design/declaration-status/failed-after-360.png) |
 
-### Meldungen (#871)
+### Meldungen (#871, #872)
 
 „Meldungen“ is what the signed-in user is asked to look at, read from rows that already exist (no table of its own, no read
-state). The first kind is the Teilungserklärung import the user started and that is not finished; nobody else is told about it,
-an administrator included.
+state). The first kind is the Teilungserklärung import the user started and that is not finished; the second is the Posteingang
+batch the user uploaded that has a file waiting, processed or failed (#872); nobody else is told about either, an administrator
+included.
 
 - **Entry** (`components/meldungen/MeldungenLink.tsx`, in the topbar of every page, in front of „Einstellungen“): a lucide `Bell`,
   the word „Meldungen“ and the count as a pill (`.topbar-count`). The word is hidden below 1024 px like „Einstellungen“; the icon
@@ -2671,6 +2672,12 @@ an administrator included.
   waiting `default` („Wartet auf Verarbeitung“, „Neuer Versuch ist eingeplant“), running `primary` („Läuft: {step}“, taken from the
   status page's step labels, „Wird übernommen“), review `warning` („Wartet auf Ihre Prüfung“, leads to „Teilungserklärung prüfen“),
   failed `destructive` („Verarbeitung fehlgeschlagen“). Every other row leads to the status page of the import.
+- **Posteingang batch row** (kind `INTAKE_BATCH`, same `card` and `Badge`): the title „Dokumentenstapel“ (the batch page's `h1`), the
+  badge (waiting `default` „Wartet auf Verarbeitung“, running `primary` „Läuft“, failed `destructive` „Verarbeitung fehlgeschlagen“),
+  the number of files („3 Dateien“, „1 Datei“), „Stufe: {stage}“ with the stage in the words of the batch page („Dateiprüfung“,
+  „Dokumentvorbereitung“, „Auswertung“) and „Eingang vom TT.MM.JJJJ, HH:MM Uhr“ (the batch page's own phrase for the upload). The row
+  leads to `/posteingang/{batch}`. A stage the table has no word for shows no „Stufe:“ line. The stage words are one table,
+  `frontend/src/lib/intakeStages.ts`, which the batch page also reads; the rows of both kinds are sorted together, newest first.
 - **States.** No answer yet: „Meldungen werden geladen…“ (`role="status"`). Empty: only „Keine Meldungen vorhanden.“ (`empty-hint`).
   A request that failed: „Die Meldungen konnten nicht geladen werden.“ (`role="alert"`, `error-text`) with „Erneut laden“; the last
   answer stays on screen when there was one.
@@ -2681,7 +2688,9 @@ an administrator included.
   nothing waiting or running causes no request between two navigations; there is no push channel.
 
 The entry and the list read one answer (`MeldungenProvider` in `AppShell`). Which statuses are a Meldung, and every word they
-say, come from `backend/app/declarations/progress.py` (the table of the status page); a test fails for a status without a decision.
+say, come from `backend/app/declarations/progress.py` (the table of the status page); a test fails for a status without a decision. The
+same holds for a Posteingang batch: which state of a file is a Meldung is `INTAKE_FILE_STATES` in `backend/app/services/meldungen_service.py`,
+and a test fails for a status or stage of the batch page's function without a decision or without a word in `intakeStages.ts`.
 
 Synthetic organization on the test database (the fictional Lindenallee imports in the four states; before = the frame of `main`,
 which has no entry):
@@ -2694,6 +2703,18 @@ which has no entry):
 | Meldungen without any | none | [view](docs/assets/design/meldungen/list-empty-after-1280.png) | none | [view](docs/assets/design/meldungen/list-empty-after-360.png) |
 | Status page of the running import, with the way back | [view](docs/assets/design/meldungen/status-before-1280.png) | [view](docs/assets/design/meldungen/status-after-1280.png) | [view](docs/assets/design/meldungen/status-before-360.png) | [view](docs/assets/design/meldungen/status-after-360.png) |
 | Warm topbar below 768 px with the count 4 | none | none | none | [view](docs/assets/design/meldungen/frame-warm-after-360.png) |
+
+Posteingang batches (#872): the same synthetic organization with one import waiting for review and four batches, uploaded and
+processed on the test database (before = the same data with no source for batches, which is what `main` answers):
+
+| Screen | Before, 1280 px | After, 1280 px | Before, 360 px | After, 360 px |
+| --- | --- | --- | --- | --- |
+| Objekte with one import and four batches (the count 5 instead of 1) | [view](docs/assets/design/meldungen/batches-frame-before-1280.png) | [view](docs/assets/design/meldungen/batches-frame-after-1280.png) | [view](docs/assets/design/meldungen/batches-frame-before-360.png) | [view](docs/assets/design/meldungen/batches-frame-after-360.png) |
+| Meldungen: the import and four batches (waiting for the inspection, running at the preparation, running at the extraction, failed) | [view](docs/assets/design/meldungen/batches-list-before-1280.png) | [view](docs/assets/design/meldungen/batches-list-after-1280.png) | [view](docs/assets/design/meldungen/batches-list-before-360.png) | [view](docs/assets/design/meldungen/batches-list-after-360.png) |
+| Row of a batch that waits for the inspection („Wartet auf Verarbeitung“, „Stufe: Dateiprüfung“) | none | [view](docs/assets/design/meldungen/batches-row-waiting-after-1280.png) | none | [view](docs/assets/design/meldungen/batches-row-waiting-after-360.png) |
+| Row of a batch that is prepared („Läuft“, „Stufe: Dokumentvorbereitung“) | none | [view](docs/assets/design/meldungen/batches-row-preparation-after-1280.png) | none | [view](docs/assets/design/meldungen/batches-row-preparation-after-360.png) |
+| Row of a batch that is extracted („Läuft“, „Stufe: Auswertung“) | none | [view](docs/assets/design/meldungen/batches-row-extraction-after-1280.png) | none | [view](docs/assets/design/meldungen/batches-row-extraction-after-360.png) |
+| Row of a batch with a failed file („Verarbeitung fehlgeschlagen“, „Stufe: Dateiprüfung“) | none | [view](docs/assets/design/meldungen/batches-row-failed-after-1280.png) | none | [view](docs/assets/design/meldungen/batches-row-failed-after-360.png) |
 
 ### Hausgeld booking on the economic plan (#186)
 

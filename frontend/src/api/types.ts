@@ -276,20 +276,22 @@ export interface DeclarationImport {
 /** What a Meldung is in: waiting or running (the import is started and not ended), waiting for the user's review, or failed. */
 export type MeldungState = "WAITING" | "RUNNING" | "REVIEW" | "FAILED";
 
-/** One thing the signed-in user is asked to look at; the first kind is the Teilungserklärung import the user started. */
+/** One thing the signed-in user is asked to look at: a Teilungserklärung import the user started, or a Posteingang batch the user uploaded. */
 export interface Meldung {
-  kind: "DECLARATION_IMPORT";
+  kind: "DECLARATION_IMPORT" | "INTAKE_BATCH";
   id: string;
   title: string;
-  /** What it is about: the property, or the new property with the titles of its documents. */
+  /** What it is about: the property, or the new property with the titles of its documents; for a batch, the number of its files. */
   subject: string;
   state: MeldungState;
   /** The server's German state text. */
   state_label: string;
-  /** When the import was started (or last retried); null when no start was recorded. */
+  /** When the import was started (or last retried), or the batch was uploaded; null when no start was recorded. */
   at: string | null;
   /** The path of the application page that shows what the Meldung is about. */
   target: string;
+  /** How far a Posteingang batch has come, a key of the batch page's table of stage words (`lib/intakeStages.ts`); null for an import. */
+  stage: string | null;
 }
 
 export type DeclarationImportCreate =
