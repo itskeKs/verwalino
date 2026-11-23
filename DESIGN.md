@@ -2675,8 +2675,10 @@ an administrator included.
   A request that failed: „Die Meldungen konnten nicht geladen werden.“ (`role="alert"`, `error-text`) with „Erneut laden“; the last
   answer stays on screen when there was one.
 - **Refresh.** The frame asks on every navigation, once more when an import page sees the import's status change, and, only while a
-  Meldung waits or runs and the tab is visible, every 20 seconds (`MELDUNGEN_POLL_MS`). A user with nothing waiting or running
-  causes no request between two navigations; there is no push channel.
+  Meldung waits or runs and the tab is visible, every 20 seconds (`MELDUNGEN_POLL_MS`), until a request fails (a session that ended,
+  a server error) or the answer has not changed for 15 minutes (`MELDUNGEN_POLL_END_MS`, so an import that stays queued does not keep
+  a tab asking); the next navigation, a status change an import page reports and showing the tab again ask once more. A user with
+  nothing waiting or running causes no request between two navigations; there is no push channel.
 
 The entry and the list read one answer (`MeldungenProvider` in `AppShell`). Which statuses are a Meldung, and every word they
 say, come from `backend/app/declarations/progress.py` (the table of the status page); a test fails for a status without a decision.

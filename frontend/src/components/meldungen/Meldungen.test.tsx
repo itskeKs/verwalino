@@ -5,7 +5,7 @@ import * as endpoints from "../../api/endpoints";
 import type { Meldung } from "../../api/types";
 import { MeldungenPage } from "../../pages/MeldungenPage";
 import { MeldungenLink } from "./MeldungenLink";
-import { MELDUNGEN_POLL_MS, MeldungenProvider } from "./MeldungenProvider";
+import { MELDUNGEN_POLL_END_MS, MELDUNGEN_POLL_MS, MeldungenProvider } from "./MeldungenProvider";
 
 afterEach(() => {
   cleanup();
@@ -135,12 +135,15 @@ describe("the list of Meldungen", () => {
 
 describe("the refresh while the page stays where it is", () => {
   async function render_(items: Meldung[]) {
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
     const list = vi.spyOn(endpoints, "listMeldungen").mockResolvedValue({ items });
     await act(async () => { frame(); });
     return list;
   }
   const tick = (times: number) => act(async () => { vi.advanceTimersByTime(MELDUNGEN_POLL_MS * times); });
+  /** One interval after the other, so that every answer arrives before the next interval is due, as in a browser. */
+  const tickEach = async (times: number) => { for (let i = 0; i < times; i++) await tick(1); };
+  const polls = MELDUNGEN_POLL_END_MS / MELDUNGEN_POLL_MS;
 
   it("asks again at a slow interval while a Meldung waits or runs", async () => {
     const list = await render_([meldung()]);
@@ -173,5 +176,65 @@ describe("the refresh while the page stays where it is", () => {
     Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
     await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
     expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops asking after a request failed, however the answer before it read, and asks again on the next navigation", async () => {
+    // The session ended or the server failed while an import was running: no request every 20 seconds for as long as the tab is visible.
+    const list = await render_([meldung()]);
+    list.mockRejectedValue(new Error("401"));
+
+    await tick(1);
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("alert")).toHaveTextContent("Die Meldungen konnten nicht geladen werden.");
+    await tick(5);
+    expect(list).toHaveBeenCalledTimes(2);
+
+    list.mockResolvedValue({ items: [meldung()] });
+    await act(async () => { fireEvent.click(screen.getByRole("link", { name: "Aufgaben" })); });
+    expect(list).toHaveBeenCalledTimes(3);
+    expect(screen.queryByRole("alert")).toBeNull();
+    await tick(1);
+    expect(list).toHaveBeenCalledTimes(4);
+  });
+
+  it("asks again after a request failed and the tab is shown again, and the poll goes on once that request is answered", async () => {
+    const list = await render_([meldung()]);
+    list.mockRejectedValueOnce(new Error("offline"));
+    await tick(1);
+    expect(list).toHaveBeenCalledTimes(2);
+
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    expect(list).toHaveBeenCalledTimes(3);
+    await tick(1);
+    expect(list).toHaveBeenCalledTimes(4);
+  });
+
+  it("ends the poll when the answer has not changed for the documented time, and a navigation starts it again", async () => {
+    // An import that stays queued (no worker runs) is the same answer every time.
+    const list = await render_([waiting()]);
+
+    await tickEach(Math.floor(polls / 2));
+    expect(list.mock.calls.length).toBeGreaterThan(polls / 2);
+    await tickEach(Math.ceil(polls / 2));
+    const atEnd = list.mock.calls.length;
+    await tickEach(5);
+    expect(list).toHaveBeenCalledTimes(atEnd);
+
+    await act(async () => { fireEvent.click(screen.getByRole("link", { name: "Aufgaben" })); });
+    expect(list).toHaveBeenCalledTimes(atEnd + 1);
+    await tick(2);
+    expect(list).toHaveBeenCalledTimes(atEnd + 3);
+  });
+
+  it("does not end the poll while the answers keep changing", async () => {
+    let step = 0;
+    const list = vi.spyOn(endpoints, "listMeldungen").mockImplementation(
+      async () => ({ items: [meldung({ state_label: `Läuft: Schritt ${++step}` })] }),
+    );
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    await act(async () => { frame(); });
+
+    await tickEach(polls * 2);
+    expect(list).toHaveBeenCalledTimes(polls * 2 + 1);
   });
 });
