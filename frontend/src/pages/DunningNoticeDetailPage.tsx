@@ -46,6 +46,14 @@ const LEVEL_LABELS: Record<number, string> = {
   3: "Letzte Mahnung",
 };
 
+/** The premium that was applied and the unit usage it follows from; the PDF carries the same sentence. */
+function premiumRule(premium: 5 | 9) {
+  const head = "Der Aufschlag richtet sich nach der Nutzung der Einheit: ";
+  return premium === 9
+    ? `${head}Die Einheit wird gewerblich genutzt, deshalb wurden 9 Prozentpunkte angewendet (Annahme: kein Verbraucher). Für jede andere Einheit gelten 5 Prozentpunkte.`
+    : `${head}Die Einheit wird nicht gewerblich genutzt, deshalb wurden 5 Prozentpunkte angewendet. Für eine gewerblich genutzte Einheit gelten 9 Prozentpunkte (Annahme: kein Verbraucher).`;
+}
+
 export function DunningNoticeDetailPage() {
   const { dunningId } = useParams<{ dunningId: string }>();
   const navigate = useNavigate();
@@ -379,7 +387,10 @@ export function DunningNoticeDetailPage() {
       {notice.interest_snapshot && <section className="card" style={{ marginBottom: "1.5rem" }}>
         <h2>Eingefrorene Zinsberechnung</h2>
         {notice.interest_snapshot.premium
-          ? <p>Basiszinssatz + {notice.interest_snapshot.premium} Prozentpunkte (§ 288 Abs. {notice.interest_snapshot.premium === 9 ? 2 : 1} BGB)</p>
+          ? <>
+            <p>Basiszinssatz + {notice.interest_snapshot.premium} Prozentpunkte (§ 288 Abs. {notice.interest_snapshot.premium === 9 ? 2 : 1} BGB)</p>
+            {notice.interest_snapshot.premium_rule === "unit_usage" && <p>{premiumRule(notice.interest_snapshot.premium)}</p>}
+          </>
           : <>
             <p>Basiszinssatz: {notice.interest_snapshot.base_interest_rate} %</p>
             <p>Jahreszinssatz: {notice.interest_snapshot.annual_rate} % (Basiszinssatz + 5 Prozentpunkte)</p>

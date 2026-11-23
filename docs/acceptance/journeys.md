@@ -249,9 +249,12 @@ a July notice opens with 850 EUR principal. Its April
 scenario checks the explicit `Zinsbeginn: 08.04.2026` in the issued detail at
 both widths and in the downloaded PDF. The separate
 [interest/PDF scenario](../../features/dunning_interest.feature) checks frozen
-amounts, both published rates, the issued PDF, and the ledger's separate notice information.
+amounts, both published rates, the issued PDF, and the ledger's separate notice information. For a
+residential and a commercial unit it also checks that the issued detail (at 1280 and 360 px) and the
+PDF name the applied premium (5 or 9 points) and that it follows from the unit's usage.
 The [organization settings scenarios](../../features/dunning_settings.feature) also verify
-the second-level fee and the residential and commercial premiums. The
+the second-level fee and the residential and commercial premiums, and that the PDF and the notice
+data state the unit's usage as the rule. The
 [manual plan journey](../../features/journeys/economic_plan_reserve.feature)
 checks cancellation, reopening and finalization at both widths.
 

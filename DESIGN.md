@@ -828,6 +828,24 @@ issue times on 5 November 2026 and the explicitly stored 8 April interest start:
 | Before | [View](docs/assets/design/dunning-notice/before-1280.png) | [View](docs/assets/design/dunning-notice/before-360.png) |
 | After | [View](docs/assets/design/dunning-notice/after-1280.png) | [View](docs/assets/design/dunning-notice/after-360.png) |
 
+A tenant notice's `Eingefrorene Zinsberechnung` card names the applied premium and the usage it
+follows from in one sentence below `Basiszinssatz + N Prozentpunkte (§ 288 Abs. 1|2 BGB)`; the
+`Verzugszinsen` paragraph of the PDF carries the same sentence. For a commercial unit: „Der Aufschlag
+richtet sich nach der Nutzung der Einheit: Die Einheit wird gewerblich genutzt, deshalb wurden 9
+Prozentpunkte angewendet (Annahme: kein Verbraucher). Für jede andere Einheit gelten 5
+Prozentpunkte.“ For any other unit: „… Die Einheit wird nicht gewerblich genutzt, deshalb wurden 5
+Prozentpunkte angewendet. Für eine gewerblich genutzte Einheit gelten 9 Prozentpunkte (Annahme:
+kein Verbraucher).“ A notice that stored no rule (issued earlier, and every owner notice) shows
+the line without the sentence; its PDF is unchanged.
+
+Synthetic commercial-unit notice (April rent 700,00 EUR, 600,00 EUR paid, second reminder as of
+31 October 2026, 5,91 EUR interest) from the shared test database:
+
+| Premium rule | 1280 px | 360 px |
+|---|---|---|
+| Before | [View](docs/assets/design/dunning-premium-rule/before-9-points-1280.png) | [View](docs/assets/design/dunning-premium-rule/before-9-points-360.png) |
+| After | [View](docs/assets/design/dunning-premium-rule/after-9-points-1280.png) | [View](docs/assets/design/dunning-premium-rule/after-9-points-360.png) |
+
 When a draft is issued, the API freezes the payment destination together with the
 addressee names: the single eligible active current account (LAUFEND) with IBAN
 for the notice's property and accounting scope is used automatically; with

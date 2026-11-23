@@ -1317,6 +1317,7 @@ class TestT35Interest:
         assert notice["interest_amount"] == "6.70"
         assert notice["total_amount"] == "606.70"
         assert [item["days"] for item in notice["interest_snapshot"]["items"]] == [56, 56]
+        assert (notice["interest_snapshot"]["premium"], notice["interest_snapshot"]["premium_rule"]) == (5, "unit_usage")
         response = await client_a_admin.post(f'/api/dunning/{notice["id"]}/issue')
         assert response.status_code == 200, response.text
         response = await client_a_admin.get(f'/api/dunning/{notice["id"]}/pdf')
@@ -1325,6 +1326,7 @@ class TestT35Interest:
             text = "\n".join(page.extract_text() for page in pdf.pages)
         for value in ("Basiszinssatz", "2,27", "7,27", "30.04.2025", "56", "6,70", "606,70"):
             assert value in text
+        assert "deshalb wurden 5 Prozentpunkte angewendet" in " ".join(text.split())
 
     @pytest.mark.asyncio
     async def test_missing_rate_returns_conflict_without_creating_a_draft(

@@ -21,7 +21,13 @@ from decimal import Decimal
 from pathlib import Path
 
 from app.core.pdf import render_pdf
-from app.engine.dunning import NOTICE_FORMAT_KEY, SEGMENTED_NOTICE_FORMAT
+from app.engine.dunning import (
+    COMMERCIAL_PREMIUM,
+    NOTICE_FORMAT_KEY,
+    PREMIUM_RULE_UNIT_USAGE,
+    SEGMENTED_NOTICE_FORMAT,
+    STANDARD_PREMIUM,
+)
 from app.models.dunning_notice import DunningNotice
 
 
@@ -298,9 +304,21 @@ def build_dunning_html(
 </html>"""
 
 
+def _premium_rule(premium: int) -> str:
+    """The sentence that says which premium was applied and that it follows from the unit's usage."""
+    head = "Der Aufschlag richtet sich nach der Nutzung der Einheit: "
+    if premium == COMMERCIAL_PREMIUM:
+        return (f"{head}Die Einheit wird gewerblich genutzt, deshalb wurden {COMMERCIAL_PREMIUM} Prozentpunkte "
+                f"angewendet (Annahme: kein Verbraucher). Für jede andere Einheit gelten {STANDARD_PREMIUM} Prozentpunkte. ")
+    return (f"{head}Die Einheit wird nicht gewerblich genutzt, deshalb wurden {STANDARD_PREMIUM} Prozentpunkte angewendet. "
+            f"Für eine gewerblich genutzte Einheit gelten {COMMERCIAL_PREMIUM} Prozentpunkte (Annahme: kein Verbraucher). ")
+
+
 def _segmented_interest(snapshot: dict) -> str:
     premium = snapshot["premium"]
     paragraph = 2 if premium == 9 else 1
+    # Only a snapshot that stored the rule names it: older notices and owner notices render as before.
+    rule = _premium_rule(premium) if snapshot.get("premium_rule") == PREMIUM_RULE_UNIT_USAGE else ""
     reference = date.fromisoformat(snapshot["reference_date"]).strftime("%d.%m.%Y")
     rows = []
     for item in snapshot["items"]:
@@ -322,7 +340,7 @@ def _segmented_interest(snapshot: dict) -> str:
             )
     return (
         f"<h2>Verzugszinsen</h2><p>Basiszinssatz + {_esc(str(premium))} Prozentpunkte (§ 288 Abs. {paragraph} BGB). "
-        f"Stichtag: {reference}. Je Abschnitt: Hauptforderung × Jahreszinssatz / 100 × Tage / 365.</p>"
+        f"{rule}Stichtag: {reference}. Je Abschnitt: Hauptforderung × Jahreszinssatz / 100 × Tage / 365.</p>"
         "<table class='lines'><thead><tr><th>Position</th><th>Zinszeitraum</th>"
         "<th>Basis / jährlich</th><th>Tage</th><th>Hauptforderung</th><th>Zinsen</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
