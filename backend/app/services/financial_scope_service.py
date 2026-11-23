@@ -98,9 +98,18 @@ class FinancialScopeService:
         await self.require_report_sources(scope_id)
         return sphere
 
+    async def report_sources_open(self, scope_id, capability=ScopeCapability.READ, *, lease_id=None, owner_id=None, property_id=None):
+        """Whether the complete sources of a report or an export are open to the caller: the one decision of reads and exports.
+
+        An unscoped call that concerns exactly one lease, one owner or one property names it, as `select_read_scope` does.
+        """
+        # The capability is a member of a closed enum and is spelled into the statement, as in every other source check.
+        return bool(await self.session.scalar(
+            text(f"SELECT report_scope_source_access(:org,:scope,'{capability.value}',:lease,:owner,:property)"),
+            {'org': self.org_id, 'scope': scope_id, 'lease': lease_id, 'owner': owner_id, 'property': property_id}))
+
     async def require_report_sources(self, scope_id, *, lease_id=None, owner_id=None, property_id=None):
-        if await self.session.scalar(text("SELECT report_scope_source_access(:org,:scope,'read',:lease,:owner,:property)"),
-                {'org': self.org_id, 'scope': scope_id, 'lease': lease_id, 'owner': owner_id, 'property': property_id}):
+        if await self.report_sources_open(scope_id, lease_id=lease_id, owner_id=owner_id, property_id=property_id):
             return
         if scope_id is None and await self.levy_refuses_unscoped_read():
             raise ScopeRequired()
