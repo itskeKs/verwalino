@@ -117,7 +117,7 @@ fixtures and Mailpit sit in the pytest process's reach.
 | Where | selfhost | hosted |
 |---|---|---|
 | Developer machine | `make test-bdd`, `make test-browser`, `make test-scenarios-report` | `make test-bdd-hosted` (API scenarios), `HV_DEPLOYMENT_MODE=hosted make test-browser` and `HV_DEPLOYMENT_MODE=hosted make test-scenarios-report` |
-| PR CI (`tests-on-pr.yaml`) | `Backend shard n/4` (`make test-backend`, including the `@selfhost` scenarios) and `Browser` (`make test-browser`) | `Backend hosted scenarios n/4` (`make test-bdd-hosted`: `@hosted` and untagged scenarios, own Postgres and Mailpit) |
+| PR CI (`tests-on-pr.yaml`) | `Backend shard n/6` (`make test-backend`, including the `@selfhost` scenarios) and `Browser` (`make test-browser`) | `Backend hosted scenarios n/4` (`make test-bdd-hosted`: `@hosted` and untagged scenarios, own Postgres and Mailpit) |
 | Nightly (`nightly-scenarios.yaml`) | leg `selfhost`: all API and browser features against the installer's stack; `@hosted` scenarios skip by mode and the ones that need local fixtures skip by target (see [external targets](#external-disposable-targets)) | leg `hosted`: all API and browser features through `make test-scenarios-report` on the local stack in hosted mode, with Postgres and Mailpit |
 
 The `save_lifecycle.feature` browser journey saves units, people, profiles, leases and bank

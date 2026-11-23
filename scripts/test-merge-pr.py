@@ -47,7 +47,7 @@ ISSUE_BODY_TICKED = ISSUE_BODY.replace("- [ ] the first box", "- [x] the first b
     "- [ ] the second box", "- [x] the second box")
 
 PASSED = [
-    {"__typename": "CheckRun", "name": "Backend shard 1/4", "status": "COMPLETED", "conclusion": "SUCCESS"},
+    {"__typename": "CheckRun", "name": "Backend shard 1/6", "status": "COMPLETED", "conclusion": "SUCCESS"},
     {"__typename": "CheckRun", "name": "Website", "status": "COMPLETED", "conclusion": "SKIPPED"},
     {"__typename": "StatusContext", "context": "legacy/status", "state": "SUCCESS"},
 ]

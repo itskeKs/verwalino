@@ -166,7 +166,7 @@ Pytest includes these stderr diagnostics with the named failure; synthetic conte
 verify the dump, but do not identify the holder from the historical CI hangs.
 Keep targeted runs short (`timeout 1500 make test-backend PYTEST_ARGS="…"`); a legitimately
 longer test needs an explicit `@pytest.mark.timeout(...)` with a reason.
-CI runs four backend shards with a 30-minute limit each, and the hosted API scenarios as four
+CI runs six backend shards with a 30-minute limit each, and the hosted API scenarios as four
 further jobs; local `make test` still runs the whole backend suite in one process.
 
 Hosted signup acceptance sends real SMTP to the local Mailpit inbox. Start it once with
@@ -264,7 +264,7 @@ green:
 
 | Job | What it proves |
 |---|---|
-| `backend-shards` | four disjoint pytest selections, each against its own Postgres 16 and Mailpit |
+| `backend-shards` | six disjoint pytest selections, each against its own Postgres 16 and Mailpit |
 | `backend-hosted` | the hosted-mode BDD scenarios (`make test-bdd-hosted`) in four disjoint selections, each against its own Postgres 16 and Mailpit |
 | `backend-checks` | ruff, every `app` module importing from the runtime install (no dev extra, as in the image), installer/Caddy checks and the collection contract, alongside the shards without a database |
 | `backend` (`Backend (ruff, pytest)`) | required summary: fails unless every shard, every hosted scenario job and `backend-checks` succeeded, including cancellation or skipped jobs |
@@ -272,8 +272,8 @@ green:
 | `browser` | locked Chromium, real UI journeys (`make test-browser`) |
 | `docs` | no broken relative links; paired rule parity and Codex hook contracts |
 
-Backend CI uses `pytest-split --splits 4 --group N --splitting-algorithm least_duration`
-with committed timings in `backend/.test_durations`. Each matrix job runs on a separate
+Backend CI uses `pytest-split --splits 6 --group N --splitting-algorithm least_duration`
+(the hosted scenario jobs `--splits 4`) with committed timings in `backend/.test_durations`. Each matrix job runs on a separate
 GitHub-hosted VM, so the existing compose project, container name and loopback ports
 remain isolated without changing the disposable-database guard. Every process rehearses
 migrations and retains the transaction rollback guard from #181. `-p no:randomly` is
@@ -282,7 +282,7 @@ predecessors. The single full-suite ordered window used to investigate #180 no l
 describes CI; reproduce a shard with its selection and the same committed timings.
 
 The parallel `backend-checks` job collects the full suite once and each shard once with
-`pytest --collect-only -q`. `scripts/backend_test_shards.py check 4` compares node-ID
+`pytest --collect-only -q`. `scripts/backend_test_shards.py check 6` compares node-ID
 multisets: the union must equal the full collection and no node may occur twice. Collection
 loads conftest configuration but does not execute the session migration fixture or connect
 to Postgres. To run the contract locally without a database:
@@ -290,7 +290,7 @@ to Postgres. To run the contract locally without a database:
 ```sh
 source scripts/test-env.sh
 cd backend
-uv run --locked --extra dev --extra ops python ../scripts/backend_test_shards.py check 4
+uv run --locked --extra dev --extra ops python ../scripts/backend_test_shards.py check 6
 ```
 
 Every successful CI run, including pushes to `main`, records setup/call/teardown timings
