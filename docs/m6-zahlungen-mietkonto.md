@@ -320,8 +320,8 @@ letters/PDFs are not changed and nothing is sent.
 ### Escalation levels (M7)
 
 The level counts per item. For each item that is overdue now, the service counts the
-already-issued notices of the same person -- for tenants restricted to the same lease --
-whose frozen `included_items` contain that item; item identity is
+already-issued notices of the same person -- for tenants restricted to the same lease, whichever
+accounting scope made them (below) -- whose frozen `included_items` contain that item; item identity is
 `payment_type + period_year + period_month` (the engine's `item_key`, which a notice stores in
 its items and the next notice counts with), plus the due date for a special levy
 (`SONDERZAHLUNG`), because one month can hold several levies and only their due dates tell
@@ -342,6 +342,21 @@ combined notice has been demanded once, whatever level that notice had. The batc
 and individual creation use the same count. The level and fee are frozen with the notice;
 issued notices and their PDFs keep what they were issued with.
 
+A tenant notice counts the demands of its lease across all the accounting scopes that cover the lease
+(#818). The debt belongs to the lease, not to a scope (§2.2, accounting scopes and a lease's Ist, #803), so a
+notice for months that another scope already demanded escalates exactly like a second notice inside one
+scope; only the count crosses the scopes, while amounts, interest and the months a scope may demand stay
+with the scope of the notice. Two rental scopes of 2025 cover one lease with a rent of 600,00 EUR and June is
+open in both: the first scope issues a Zahlungserinnerung for June (level 1, no fee), and the second scope's
+notice for the same June is level 2 with the level-2 fee of the organization (2,50 EUR by default), with a
+principal of 600,00 EUR in both. A draft, a discarded draft, a demand for other months and a demand for
+another lease of the same tenant raise nothing, as inside one scope, and a notice of the selected scope is
+counted once. A member with a grant for one scope still sees no notice of the other: its notices are hidden by
+row security, so the count comes from the database function `lease_item_demand_count` (0203), which answers
+only where the statement itself is admitted and returns one number, never a notice id, scope, date or text.
+The second scope's notice, list, PDF and rent account therefore show nothing of the first scope's notice, only
+a level that counts it. Owner notices (below, #670, #675) and notices without a scope count as before.
+
 Two special levies of one owner that fall due in the same month are two items, told apart by
 their due dates; payments carry a month, not a levy, so they settle the earlier due date first.
 Levy A due 5 June and levy B due 25 June with 3.000,00 EUR each, A reminded on 10 and 12 June and
@@ -359,7 +374,7 @@ An owner's notices count only within the same property (the WEG the notice belon
 owner with a unit in WEG A and one in WEG B who was reminded about the Hausgeld of March in A
 gets a Zahlungserinnerung (level 1) without a fee for the Hausgeld of March in B, and the next
 notice for A is level 2, not level 3, because both WEGs have the same payment type and month.
-Notices of a selected accounting scope are already kept apart by that scope (while a scope is
+Owner notices of a selected accounting scope are already kept apart by that scope (while a scope is
 selected, only its own notices are visible, so special levies, which are always scoped, never
 collide across WEGs); the property separates the notices of an organization without scopes. A new owner
 notice stores its property in the first row of its frozen items as `_dunning_property_id`, hidden
@@ -377,7 +392,7 @@ Notices issued before the lease link was stored carry neither `_dunning_lease_id
 their frozen items nor a scope context. When a new unscoped tenant notice is created, such
 an old notice counts for the tenant, whichever lease it was for, as long as its frozen
 items contain the item. A notice that carries a lease link keeps the
-same-lease rule, and scoped notices are always matched on their scope and lease. Issued
+same-lease rule, and scoped tenant notices are matched on their lease in every scope. Issued
 notices are not changed.
 
 ### 2.3 Expected-amount engine as a pure function

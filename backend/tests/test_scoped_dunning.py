@@ -257,7 +257,7 @@ async def test_scoped_draft_cancellation_retains_context_and_cannot_be_issued(mi
         assert not any(row['id'] == notice_id for row in (await api.get('/api/dunning?status=draft')).json())
 
 
-async def test_other_scopes_do_not_escalate_this_scope(migrator_session, scope_seed):
+async def test_other_scopes_escalate_the_level_of_this_scope_but_not_its_amount(migrator_session, scope_seed):
     ids = await statement_fixture(migrator_session, scope_seed, 'lease')
     await grant(ids, ['read', 'prepare', 'approve'])
     await grant(ids, ['read', 'prepare', 'approve'], 'second_scope')
@@ -269,7 +269,9 @@ async def test_other_scopes_do_not_escalate_this_scope(migrator_session, scope_s
         assert same.status_code == 201 and same.json()['level'] == 2
         other = await api.post('/api/dunning/tenant', json={**tenant_body(ids), 'accounting_scope_id': str(ids['second_scope'])})
         assert other.status_code == 201, other.text
-        assert other.json()['level'] == 1 and other.json()['principal_amount'] == '6700.00'
+        # The issued notice of the first scope counts (its draft does not): level 2 with the level-2 fee (#818, 0203);
+        # the principal is the lease's and the same in both scopes.
+        assert (other.json()['level'], other.json()['fee_amount'], other.json()['principal_amount']) == (2, '2.50', '6700.00')
 
 
 async def test_tenant_recipient_must_match_selected_lease(migrator_session, scope_seed):

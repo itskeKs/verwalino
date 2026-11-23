@@ -5,10 +5,11 @@ Extends TenantRepository with queries for the Mahnwesen (M7).
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any, Mapping, Sequence
 
-from sqlalchemy import Boolean, and_, cast, func, or_, select
+from sqlalchemy import Boolean, and_, cast, func, or_, select, text
 from sqlalchemy.dialects.postgresql import JSONB, JSONPATH
 
 from app.engine.mietkonto import PT_HK_VORAUSZAHLUNG, PT_NK_VORAUSZAHLUNG
@@ -33,6 +34,15 @@ _DEMANDED_ITEM = cast(
     " && ($due_date == null || !exists(@.due_date) || @.due_date == $due_date))",
     JSONPATH,
 )
+
+
+def _item_vars(key: Mapping[str, Any]) -> dict[str, Any]:
+    """The variables of `_DEMANDED_ITEM` for one item key; `lease_item_demand_count` (0203) reads the same ones."""
+    return {
+        "payment_type": key["payment_type"], "period_year": key["period_year"],
+        "period_month": key["period_month"], "due_date": key.get("due_date"),
+        "joint_advance": PT_NK_VORAUSZAHLUNG if key["payment_type"] == PT_HK_VORAUSZAHLUNG else None,
+    }
 
 
 class DunningNoticeRepository(TenantRepository[DunningNotice]):
@@ -105,7 +115,7 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
         """How often the most often demanded of the given items was already demanded.
 
         An item was demanded once per already-issued notice of the same person (the
-        same lease for tenants, mirroring issued_for_lease; the same property for owners)
+        same lease for tenants, in every accounting scope of it, see below; the same property for owners)
         whose frozen included_items contain it -- identity is the engine's item_key (payment_type + period_year +
         period_month, plus the due date of a special levy), so part payments, corrected or
         reversed postings and a moved due date stay the same item while two levies of one
@@ -123,20 +133,26 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
         owner's notices of that property count (PROPERTY_SOURCE_KEY in the first stored item). A
         notice issued before the key existed stores no property and counts for every property;
         without a property_id every notice of the owner counts.
+
+        A tenant notice of an accounting scope counts the demands of the lease in every scope (#818): the debt
+        belongs to the lease, and the other scopes' notices are hidden from this session by row security, so
+        `lease_item_demand_count` (0203) counts them all, the selected scope's included, and returns the number only.
         """
         if not item_keys:
             return 0
+        if lease_id is not None and scope_id is not None:
+            return await self._session.scalar(text(
+                'SELECT lease_item_demand_count(:org, :lease, CAST(:items AS jsonb))'),
+                {'org': self._org_id, 'lease': lease_id,
+                 'items': json.dumps([_item_vars(key) for key in item_keys])})
         if len(item_keys) > ITEM_KEYS_PER_STATEMENT:
             return max([await self.highest_item_demand_count(
                 item_keys=item_keys[start:start + ITEM_KEYS_PER_STATEMENT],
                 tenant_profile_id=tenant_profile_id, owner_profile_id=owner_profile_id,
                 lease_id=lease_id, scope_id=scope_id, property_id=property_id,
             ) for start in range(0, len(item_keys), ITEM_KEYS_PER_STATEMENT)])
-        demanded = [func.jsonb_path_exists(DunningNotice.included_items, _DEMANDED_ITEM, cast({
-            "payment_type": key["payment_type"], "period_year": key["period_year"],
-            "period_month": key["period_month"], "due_date": key.get("due_date"),
-            "joint_advance": PT_NK_VORAUSZAHLUNG if key["payment_type"] == PT_HK_VORAUSZAHLUNG else None,
-        }, JSONB), type_=Boolean) for key in item_keys]
+        demanded = [func.jsonb_path_exists(DunningNotice.included_items, _DEMANDED_ITEM, cast(
+            _item_vars(key), JSONB), type_=Boolean) for key in item_keys]
         # One pass over the person's issued notices, one count column per item.
         stmt = select(*(func.count().filter(item) for item in demanded)).select_from(DunningNotice)
         if lease_id is not None:
@@ -163,10 +179,7 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
             # the link nor a scope context; it counts for the tenant as it always did.
             linked_lease = DunningNotice.included_items[0][LEASE_SOURCE_KEY].astext
             stmt = stmt.where(
-                context.scope_id == scope_id,
-                (context.lease_agreement_id == lease_id if scope_id is not None
-                 else or_(linked_lease == str(lease_id), linked_lease.is_(None))),
-            )
+                context.scope_id.is_(None), or_(linked_lease == str(lease_id), linked_lease.is_(None)))
         return max((await self._session.execute(stmt)).one())
 
     async def update(self, entity: DunningNotice) -> DunningNotice:
