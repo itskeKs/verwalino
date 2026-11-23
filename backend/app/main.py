@@ -24,7 +24,7 @@ from app.api import bank_accounts, bank_transactions
 from app.api import dunning, mail, letters
 from app.api import meetings
 from app.api import fristen, dsgvo
-from app.api import declaration_imports, ai_settings
+from app.api import declaration_imports, ai_settings, meldungen
 from app.api import property_documents, attachments, reports, tasks
 from app.api import property_knowledge, property_data_domains, person_data_domains
 from app.api import property_source_admission_reviews,property_source_classifications
@@ -154,6 +154,7 @@ app.include_router(dsgvo.router)
 
 # Declaration imports must be registered before the production SPA fallback.
 app.include_router(declaration_imports.router)
+app.include_router(meldungen.router)
 app.include_router(ai_settings.router)
 app.include_router(property_documents.router)
 app.include_router(attachments.router)
