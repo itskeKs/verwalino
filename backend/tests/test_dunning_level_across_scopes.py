@@ -80,8 +80,9 @@ async def test_the_second_scopes_notice_for_months_the_first_scope_demanded_is_l
         second = await prepare(api, ids, 'second_scope', reference='2026-02-10')
         # The debt belongs to the lease, so both scopes owe the same amount; only the level and its fee differ.
         assert level(second) == DUNNING
-        assert (first['principal_amount'], first['total_amount']) == ('6700.00', '6700.00')
-        assert (second['principal_amount'], second['total_amount']) == ('6700.00', '6702.50')
+        # 12 x 600.00 owed - 1000.00 paid for June's rent (100.00 + 900.00 into the two scopes) = 6200.00.
+        assert (first['principal_amount'], first['total_amount']) == ('6200.00', '6200.00')
+        assert (second['principal_amount'], second['total_amount']) == ('6200.00', '6202.50')
         assert second['accounting_scope_id'] == str(ids['second_scope'])
         # The other way round: the first scope escalates over the notice of the second one once that is issued.
         assert level(await prepare(api, ids, 'scope', reference='2026-02-11')) == DUNNING
@@ -104,18 +105,27 @@ async def test_a_notice_that_is_not_issued_or_was_discarded_does_not_raise_the_l
 async def test_the_count_is_per_open_item_across_scopes(two_scopes):
     ids = two_scopes
     async with client(ids) as api:
-        # May and June 2025: rent and advance of May, the advance of June (the June rent was paid twice over).
+        # May and June 2025: June's rent was paid twice over (1000.00 for 500.00 owed); the 500.00 settle the oldest
+        # position, May's rent (#806). The notice demands the advance of May and the advance of June.
         await issue(api, await prepare(api, ids, 'scope', period=('2025-05-01', '2025-06-30')))
         for period, expected in {
             ('2025-07-01', '2025-07-31'): REMINDER,  # a month the first scope never demanded
             ('2025-07-01', '2025-08-31'): REMINDER,
-            ('2025-06-01', '2025-06-30'): DUNNING,  # the advance of June was demanded once
-            ('2025-05-01', '2025-05-31'): DUNNING,
-            ('2025-06-01', '2025-07-31'): DUNNING,  # the whole notice takes the highest count of its items
-            ('2025-04-01', '2025-05-31'): DUNNING,
+            ('2025-05-01', '2025-05-31'): DUNNING,  # the advance of May was demanded once; its rent never
+            ('2025-04-01', '2025-05-31'): DUNNING,  # the whole notice takes the highest count of its items
             ('2025-03-01', '2025-04-30'): REMINDER,
+            # June's rent settles June's advance (100.00) and 400.00 of July's rent: only July's positions are
+            # open, and no earlier notice demanded them.
+            ('2025-06-01', '2025-07-31'): REMINDER,
         }.items():
             assert level(await prepare(api, ids, 'second_scope', period=period)) == expected, period
+        # June alone owes nothing: the surplus of its rent settles its advance, so there is no notice to make.
+        refused = await api.post('/api/dunning/tenant', json={
+            'tenant_profile_id': str(ids['profile']), 'lease_agreement_id': str(ids['lease']),
+            'accounting_scope_id': str(ids['second_scope']), 'period_start': '2025-06-01',
+            'period_end': '2025-06-30', 'reference_date': '2026-01-15'})
+        assert (refused.status_code, refused.json()['detail']) == (
+            422, 'No overdue items found for this tenant in the given period')
 
 
 async def test_a_demand_for_another_lease_of_the_same_tenant_raises_nothing(two_scopes):

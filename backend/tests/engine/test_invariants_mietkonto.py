@@ -16,7 +16,7 @@ Pure-function tests -- no DB, no server.
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -102,6 +102,61 @@ class TestI6A_SaldoEqualsSollMinusIst:
         assert result.balance == (expected_soll - expected_ist).quantize(CENT)
         # And the sum of per-item open amounts equals the overall balance.
         assert sum((i.open_amount for i in result.open_items), Decimal("0.00")) == result.balance
+
+
+# ===========================================================================
+# I6-G: the set-off of a surplus (#806) only moves Ist between the positions of one statement.
+# ===========================================================================
+class TestI6G_SetOffOnlyMovesIst:
+    @settings(max_examples=300)
+    @given(
+        solls=st.lists(st.tuples(money_amounts(0, 2000), money_amounts(0, 400)), min_size=1, max_size=8),
+        payments=st.lists(
+            st.tuples(st.integers(1, 9), st.sampled_from([PT_KALTMIETE, PT_NK_VORAUSZAHLUNG]),
+                      money_amounts(0, 5000), st.booleans(), st.integers(0, 200)),
+            max_size=12),
+        cutoff=st.integers(0, 330),
+    )
+    def test_set_off_keeps_totals_and_never_overshoots(self, solls, payments, cutoff):
+        lease = _U(806)
+        charges = [
+            ExpectedCharge(2025, month, kind, amount, lease_agreement_id=lease, due_date=date(2025, month, 3))
+            for month, (rent, advance) in enumerate(solls, start=1)
+            for kind, amount in ((PT_KALTMIETE, rent), (PT_NK_VORAUSZAHLUNG, advance))
+        ]
+        inputs = [
+            PaymentInput(_U(1000 + i), kind, "OUT" if refund else "IN", amount, 2025, month,
+                         lease_agreement_id=lease, value_date=date(2025, 1, 1) + timedelta(days=day))
+            for i, (month, kind, amount, refund, day) in enumerate(payments)
+        ]
+        as_of = date(2025, 1, 1) + timedelta(days=cutoff)
+        plain = account_statement(charges, inputs, as_of=as_of, include_payment_dates=True)
+        settled = account_statement(charges, inputs, as_of=as_of, include_payment_dates=True, set_off_surplus=True)
+
+        # Nothing but the split of the same Ist over the positions changes.
+        assert (settled.soll_total, settled.ist_total, settled.balance) == (
+            plain.soll_total, plain.ist_total, plain.balance)
+        assert settled.due_balance + settled.not_yet_due_balance == settled.balance
+        assert sum((i.ist for i in settled.open_items), Decimal("0.00")) == settled.ist_total
+        assert sum((i.open_amount for i in settled.open_items), Decimal("0.00")) == settled.balance
+        for before, after in zip(plain.open_items, settled.open_items):
+            key = (before.period_month, before.payment_type)
+            assert (after.period_month, after.payment_type, after.soll) == (*key, before.soll)
+            assert after.open_amount == after.soll - after.ist
+            # The period of payments and the changes of Ist stay one story.
+            assert sum((d for _, d in after.payment_changes), Decimal("0.00")) - after.ist == (
+                sum((d for _, d in before.payment_changes), Decimal("0.00")) - before.ist)
+            if before.open_amount < 0:
+                assert before.open_amount <= after.open_amount <= 0, key  # a credit only shrinks, never turns
+            elif before.open_amount > 0 and after.is_due:
+                assert 0 <= after.open_amount <= before.open_amount, key
+            else:
+                assert after.open_amount == before.open_amount, key  # not yet due or balanced: untouched
+
+        # A credit and an open due position never remain side by side, and no notice exceeds what the lease owes.
+        due_open = [i.open_amount for i in settled.open_items if i.is_due and i.open_amount > 0]
+        assert not (due_open and any(i.open_amount < 0 for i in settled.open_items))
+        assert sum(due_open, Decimal("0.00")) <= max(settled.balance, Decimal("0.00"))
 
 
 # ===========================================================================

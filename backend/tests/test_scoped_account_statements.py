@@ -104,7 +104,10 @@ async def test_explicit_read_scope_selects_only_its_money(migrator_session, scop
         if kind == 'lease':
             items = await api.get(f"/api/payments/open-items/lease/{ids['lease']}", params=query(ids))
             assert items.status_code == 200, items.text
-            assert sum(float(row['ist']) for row in items.json()) == 1000
+            # 7200.00 owed - 1000.00 paid in both scopes; the 500.00 June's rent did not need settle the oldest
+            # position, so no credit is listed and the listed positions add up to the debt (#806).
+            assert sum(Decimal(row['open_amount']) for row in items.json()) == Decimal('6200.00')
+            assert all(Decimal(row['open_amount']) > 0 for row in items.json())
             assert (await api.get(f"/api/payments/mietkonto/lease/{ids['excluded_lease']}", params=query(ids))).status_code == 404
             bulk = await api.get('/api/payments/open-items', params=query(ids))
             assert bulk.status_code == 200, bulk.text

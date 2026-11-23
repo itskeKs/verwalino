@@ -9,6 +9,6 @@ Feature: Scoped dunning
     And the manager corrects a reporting period outside that scope
     Then the notice form keeps the first scope selected and requires no manual rate
     When the manager creates the scoped notice
-    Then the notice demands the eleven months that neither scope was paid for
+    Then the notice demands what the lease owes in total
     When the manager confirms "Entwurf verwerfen"
     Then the discarded notice remains visible as "Verworfen" after reload

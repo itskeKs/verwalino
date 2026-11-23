@@ -157,6 +157,12 @@ open_item(person, period, type) = expected(person, period, type)  −  Σ assign
 
 - **Soll** (expected amount) is itself derived (§2): from `lease_agreement`/`economic_plan`, monthly basis. **Ist** (actual) is `Σ amount` of the `booked`, **non-reversed** `payment` rows with the same type/period/person.
 - **Accounting scopes and a lease's Ist (#803):** a rent statement (`PaymentService.tenant_statement_in_current_scope`, which the lease statement, open items, tenant dunning, bank matching and the deadline monitor all call) counts **every** booked payment of the lease for the period, whichever accounting scope's account received it. The selected scope still decides whether the caller may open the lease and the period; it does not decide what the lease owes. The payments the caller cannot read through the scope come from the database function `lease_payments_outside_scope` (0194) as amounts with their type, direction, assigned month and value date, never with id, account, counterparty or text, and are shown as one summed amount (`other_scope_ist`, “davon Zahlungen aus anderen Abrechnungskreisen” in Mietkonto, absent when none counts). They follow the same rules as any payment of the lease: booked, not reversed and not a reversal, no deposit (`KAUTION`), assigned to a month inside the requested period, `OUT` reducing. A booked payment of the lease that belongs to no scope counts the same way. Hausgeld payments belong to owners and never reach a lease. Overlapping rental scopes are not refused. Owner accounts and WEG statements keep their own property's payments (#675).
+- **Set-off of a surplus on a lease (#806):** what a position was paid beyond its Soll settles the open positions of the same lease, whatever their type or month, so that the open items, the rent account, the bank matching, the deadline monitor and a tenant dunning notice read the same positions and a notice never demands more than the lease owes in total (owner decision of 2026-11-22, „Älteste zuerst, alle Arten“). The pure engine does it in `account_statement(…, set_off_surplus=True)` after the allocation per month and type, which only the tenant statement asks for:
+  - **Which positions:** the open positions that are due at the reference date of the calculation (`as_of`: the cutoff of the rent account, the reference date of a notice or of the deadline monitor, otherwise today), the oldest due date first; positions with the same due date in the order the open items list them (period, then payment type: heating advance, rent, operating advance). A position that is not yet due is not settled early and does not become arrears earlier. A surplus that is larger than the due debt stays visible as a credit (negative open amount) of the position that holds it.
+  - **Which surplus:** a negative open amount of any position of the statement (a rent, an advance, a payment without a charge), the oldest money first, by the value date of the payment that produced it. A refund (`OUT`) reduces what was paid on its position and with it the surplus, the latest money first; a surplus that a refund takes back settles nothing. A refund booked where nothing is owed is itself an open position (soll 0,00, open > 0) that a surplus can settle.
+  - **What the rows show:** Soll stays; Ist and the open amount move from the position that was paid too much to the position it settles, so `open = Soll − Ist` holds on every row and the sum of Ist is still the Ist of the statement (`soll_total`, `ist_total`, `balance`, `due_balance` + `not_yet_due_balance` do not change). For 500,00 EUR rent and 100,00 EUR advance a month in 2025 and 1.000,00 EUR booked as Kaltmiete for June, the open items show 6.200,00 EUR (12 × 600,00 − 1.000,00): the 500,00 EUR June's rent did not need settle January's rent, so January and June read „ausgeglichen“ and the other months stay open. With 850,00 EUR rent and no advance the open items show 9.200,00 EUR; January stays open with 700,00 EUR. The dashboard and the owner statements (Hausgeld, special levies) do not set off: the dashboard reads totals only, and an owner's credit stays on its position.
+  - **Interest** runs on what is left after the set-off. A position that a surplus settled bears interest on the settled part only until the value date of the payment that produced the surplus, as on a partial payment on that day; a surplus that was there before the due date causes no interest at all.
+  - **Issued notices** keep their stored amounts, positions and PDF; only notices and previews made afterwards use the set-off.
 - `open_item` is computed as a **pure function** (`app/engine/mietkonto.py`) and delivered via a **read-only API endpoint** (list per person/property). No row is materialized per month, there is no generation job, and no second truth that could drift.
 - **M7 delimitation (no anticipation):** Dunning levels/history (M7) need a per-item anchor (a dunning status "sticks" to a specific overdue item). M6 supplies the *computed* overdue items as input; whether M7 materializes a small persisted dunning/status record from them (referencing person/period/type) is **[§18/domain F6-1]** and M7's concern. **M6 does not decide the dunning persistence.**
 
@@ -270,7 +276,7 @@ owners, or 9 for a unit with usage type `GEWERBE`. Each segment accrues
 `principal × annual rate × calendar days / 36500`. Round the sum per item to cents with
 `ROUND_HALF_UP`, then sum the rounded items. Displayed segment amounts use differences between
 rounded running totals so they reconcile to the frozen item amount. Interest accrues on the
-overdue principal only.
+overdue principal only, the principal that is left after a surplus of the lease was set off (§1.4): 600,00 EUR rent due 4 March 2026 and an April rent paid with 1.000,00 EUR on 10 April 2026 leave 200,00 EUR open and accrue 600,00 EUR for 36 days and 200,00 EUR for 22 days to 1 May at 6.27%, 4,47 EUR.
 
 The premium follows from the usage of the unit, not from the tenant. Decision #30 allows 9 points
 only for a debtor who is not a consumer, and the software takes a unit of usage `GEWERBE` to mean
@@ -426,11 +432,12 @@ Each tenant statement row includes `is_due`, computed by the same engine
 classification used for the aggregate. Owner statements also expose the signed
 balance split and per-row `is_due` for their cutoff (see §2.2). The separate
 open-items endpoint retains its existing response. Credits and partial payments
-retain their existing period and type allocation. The engine computes the split
-with an explicit cutoff.
+retain their existing period and type allocation, except that a lease's surplus is
+set off as §1.4 says. The engine computes the split with an explicit cutoff.
 
-The cutoff never clips `period_end`: full-year `soll_total`, `ist_total`, `balance`
-and individual open amounts stay unchanged, including at a mid-month cutoff.
+The cutoff never clips `period_end`: full-year `soll_total`, `ist_total` and `balance`
+stay unchanged, including at a mid-month cutoff. So do the individual open amounts of an owner statement; on a
+lease the cutoff is the reference date of the set-off (§1.4): a surplus settles only the positions due on or before it.
 All currently booked payments assigned to the reporting period count, even when
 their value/booking date is later than the cutoff. This is a due-date view of
 the current statement, not a reconstruction of the historical ledger.
@@ -448,13 +455,13 @@ See §2.2 for the owner statement, owner dunning and the deadline monitor.
 
 ### 3.2 Partial payment → open item
 
-If the tenant pays less than the expected amount (e.g. expected 850.00 €, payment 600.00 €), an **open item** of 250.00 € remains (open > 0). Several partial payments add up (Σ actual). No automatic "offsetting order" across periods in the MVP — the assignment follows the **explicit** `period_year`/`period_month`/`lease_agreement_id` of the payment (assigned manually), not a guessed order of application.
+If the tenant pays less than the expected amount (e.g. expected 850.00 €, payment 600.00 €), an **open item** of 250.00 € remains (open > 0). Several partial payments add up (Σ actual). No automatic "offsetting order" across periods in the MVP — the assignment follows the **explicit** `period_year`/`period_month`/`lease_agreement_id` of the payment (assigned manually), not a guessed order of application. What a payment was paid beyond its month and type is a surplus and is set off against the oldest due open position of the lease, see §1.4 and §3.3.
 
 > **[§18/domain F6-6] Order of application / offsetting.** With several open periods and a payment without an exact month reference, the offsetting order (oldest debt first? § 366 BGB?) is a domain question. **Provisional assumption:** Payments carry their period reference **explicitly** (assigned manually when recorded); no automatic order of application in the MVP. Whether a § 366 BGB offsetting is needed requires domain sign-off.
 
 ### 3.3 Overpayment → credit balance
 
-If the person pays more than the expected amount (e.g. expected 850.00 €, payment 1000.00 €), the open item is **negative** (−150.00 €) = **credit balance**. The credit balance appears as a negative open item/balance; a **refund** to the person is its own `payment` row with `direction='OUT'` (no negative `amount`).
+If the person pays more than the expected amount (e.g. expected 850.00 €, payment 1000.00 €), the open item is **negative** (−150.00 €) = **credit balance**. On a lease the surplus does not stay on its position while other positions are open: it settles the oldest due open positions of the lease first, rent and advance payments alike (§1.4, #806), and only what no due position can take stays a negative open item. Owner accounts keep a credit on its position. The credit balance appears as a negative open item/balance; a **refund** to the person is its own `payment` row with `direction='OUT'` (no negative `amount`).
 
 ### 3.4 Security deposit / deposit account [§18/domain]
 

@@ -423,13 +423,13 @@ async def test_batch_scope_members_and_revoked_replay_fail_closed(migrator_sessi
     ids = await statement_fixture(migrator_session, scope_seed, "lease")
     await grant(ids, ["read", "prepare"])
     body = batch_request(period_end="2025-12-31", reference_date="2026-01-15",
-                         threshold="6500.00", accounting_scope_id=str(ids["scope"]))
+                         threshold="6000.00", accounting_scope_id=str(ids["scope"]))
     async with client(ids) as api:
         preview = await batch_preview(api, body)
         assert [r["lease_agreement_id"] for r in preview["candidates"]] == [str(ids["lease"])]
-        # 11 months of 500.00 rent and 12 x 100.00 advance; June's rent was paid twice over (100.00 + 900.00 into
-        # the accounts of two scopes), which is no credit against another month.
-        assert Decimal(preview["candidates"][0]["principal_amount"]) == Decimal("6700.00")
+        # 12 x (500.00 rent + 100.00 advance) = 7200.00 owed; 1000.00 were paid for June's rent (100.00 + 900.00 into
+        # the accounts of two scopes) and the 500.00 it did not need settle the oldest position: 6200.00 are open.
+        assert Decimal(preview["candidates"][0]["principal_amount"]) == Decimal("6200.00")
         request = selected_batch(body, preview, [ids["lease"]])
         created = await api.post("/api/dunning/batch", json=request)
         assert created.status_code == 201, created.text
@@ -2314,6 +2314,32 @@ async def test_notice_issued_under_the_former_rule_keeps_its_level_and_letter(re
         await _notice(api, w, lease, JANUARY_TO_FEBRUARY, (2, "2.50", "1402.50"))
         assert (await api.get(f"/api/dunning/{legacy_id}")).json() == legacy.json()
         assert (await api.get(f"/api/dunning/{legacy_id}/pdf")).content == legacy_pdf.content
+
+
+@pytest.mark.asyncio
+async def test_an_issued_notice_is_not_recomputed_when_a_later_payment_changes_what_a_new_notice_demands(rent_world):
+    """Issued notices are frozen (GoBD): the set-off of a surplus (#806) reaches new notices only."""
+    w = rent_world
+    async with api_client(w) as api:
+        lease = await _escalation_lease(api, w, "hidden_property", "Set-off 1")
+        account = await _escalation_account(api, w, "hidden_property")
+        # January and February are unpaid on 20 March: 2 x 700.00 demanded and issued.
+        first = await _tenant_notice(api, w, lease, "2026-01-01", "2026-02-28", "2026-03-20")
+        assert (first["level"], first["principal_amount"]) == (1, "1400.00")
+        await _issue_notice(api, first["id"])
+        issued = await api.get(f"/api/dunning/{first['id']}")
+        letter = await api.get(f"/api/dunning/{first['id']}/pdf")
+        assert issued.status_code == letter.status_code == 200
+        # March is paid 1000.00 for 700.00 owed: the 300.00 left settle part of January. A new notice for the same
+        # months demands 3 x 700.00 owed - 1000.00 paid = 1100.00, January with 400.00 and February with 700.00.
+        await _pay_rent(api, w, lease, account, 3, "2026-03-25", amount="1000.00")
+        second = await _tenant_notice(api, w, lease, "2026-01-01", "2026-03-31", "2026-04-20")
+        assert [(row["period_month"], row["open_amount"]) for row in second["included_items"]] == [
+            (1, "400.00"), (2, "700.00")]
+        assert (second["level"], second["principal_amount"], second["total_amount"]) == (2, "1100.00", "1102.50")
+        # The issued notice and its letter stay as they were issued.
+        assert (await api.get(f"/api/dunning/{first['id']}")).json() == issued.json()
+        assert (await api.get(f"/api/dunning/{first['id']}/pdf")).content == letter.content
 
 
 @pytest.mark.asyncio

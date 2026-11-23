@@ -219,7 +219,8 @@ class FristenService:
                     period_end = inc_to
                 if period_start > period_end:
                     continue
-                result = await self._payments.tenant_statement_in_current_scope(lease, period_start, period_end)
+                result = await self._payments.tenant_statement_in_current_scope(
+                    lease, period_start, period_end, as_of=reference_date)
                 overdue = find_overdue_items(
                     list(result.open_items), reference_date, grace_days=0, current_year=date.today().year
                 )

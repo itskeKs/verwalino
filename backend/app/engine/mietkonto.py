@@ -519,6 +519,8 @@ class OpenItem:
 
     open = Soll - zugeordnetes Ist.
       open > 0 -> Rueckstand (owes); open < 0 -> Guthaben; 0 -> ausgeglichen.
+    On a lease the Ist of a position includes what the surplus of another position settled
+    on it (`_set_off_surplus`, #806); the sum of Ist is still the Ist of the statement.
     NOT persisted (ADR-0009): purely computed and returned read-only.
     """
 
@@ -569,10 +571,103 @@ def _ist_key(p: PaymentInput) -> tuple[int | None, int | None, str]:
     return (p.period_year, p.period_month, p.payment_type)
 
 
+def _due_on(item: OpenItem) -> date:
+    """The day a position falls due; a booking without a period is due from the start (as `is_due` reads it)."""
+    if item.period_year is None:
+        return date.min
+    return item.due_date or date(item.period_year, item.period_month or 1, 1)
+
+
+def _surplus_lots(item: OpenItem) -> list[list]:
+    """What a credit position holds as [value date or None, amount] lots, the oldest money first.
+
+    The booked payments of the position, in the order of their value dates, cover its Soll first; what exceeds it
+    after a payment is a lot of that payment's value date. A payment paid back (OUT) takes the latest lots back
+    first. Money without a known value date (no dates asked for, or a booking without one) comes first as one lot
+    without a date, so the lots always add up to the credit.
+    """
+    credit = -item.open_amount
+    lots: list[list] = []
+    paid = held = Decimal("0.00")
+    for day, delta in sorted(item.payment_changes):
+        paid += delta
+        change = max(paid - item.soll, Decimal("0.00")) - held
+        held += change
+        if change > 0:
+            lots.append([day, change])
+        while change < 0 and lots:
+            take = min(-change, lots[-1][1])
+            lots[-1][1] -= take
+            change += take
+            if not lots[-1][1]:
+                lots.pop()
+    known = sum((amount for _, amount in lots), Decimal("0.00"))
+    if known < credit:
+        lots.insert(0, [None, credit - known])
+    while known > credit:
+        take = min(known - credit, lots[-1][1])
+        lots[-1][1] -= take
+        known -= take
+        if not lots[-1][1]:
+            lots.pop()
+    return lots
+
+
+def _set_off_surplus(items: list[OpenItem], as_of: date) -> list[OpenItem]:
+    """Settle the oldest due open positions with the surplus other positions hold (owner decision of #806).
+
+    A credit position (open < 0) is money paid beyond what that position owed. Its lots settle the open
+    positions that are due at `as_of`, the oldest due date first and, on one due date, in the order of the
+    open items; the oldest money is used first. A position that is not yet due is never settled, so a surplus
+    larger than the due debt stays a credit. The positions keep their Soll; Ist and open amount move, the
+    settled part of a payment is named on the position it settles with the value date of the payment that
+    produced the surplus, so that interest on it ends there and not before. Totals stay as they are.
+    """
+    pool = [[day, index, amount] for index, item in enumerate(items) if item.open_amount < 0
+            for day, amount in _surplus_lots(item)]
+    due = sorted((index for index, item in enumerate(items) if item.open_amount > 0 and _due_on(item) <= as_of),
+                 key=lambda index: (_due_on(items[index]), index))
+    if not pool or not due:
+        return items
+    pool.sort(key=lambda lot: (lot[0] or date.min, lot[1]))
+    settled = [Decimal("0.00")] * len(items)
+    moved = [Decimal("0.00")] * len(items)
+    changes: list[dict[date, Decimal]] = [{} for _ in items]
+    pending = iter(pool)
+    lot = next(pending, None)
+    for target in due:
+        need = items[target].open_amount
+        while need > 0 and lot is not None:
+            day, source, amount = lot
+            take = min(need, amount)
+            need -= take
+            settled[target] += take
+            moved[source] += take
+            if day is not None:
+                changes[target][day] = changes[target].get(day, Decimal("0.00")) + take
+                changes[source][day] = changes[source].get(day, Decimal("0.00")) - take
+            lot[2] -= take
+            if not lot[2]:
+                lot = next(pending, None)
+    result = []
+    for index, item in enumerate(items):
+        if not (settled[index] or moved[index]):
+            result.append(item)
+            continue
+        merged = dict(item.payment_changes)
+        for day, delta in changes[index].items():
+            merged[day] = merged.get(day, Decimal("0.00")) + delta
+        result.append(replace(
+            item, ist=_money(item.ist + settled[index] - moved[index]),
+            open_amount=_money(item.open_amount - settled[index] + moved[index]),
+            payment_changes=tuple(sorted((day, delta) for day, delta in merged.items() if delta))))
+    return result
+
+
 def account_statement(
     expected_charges: list[ExpectedCharge],
     payments: list[PaymentInput],
-    *, as_of: date | None = None, include_payment_dates: bool = False,
+    *, as_of: date | None = None, include_payment_dates: bool = False, set_off_surplus: bool = False,
 ) -> MietkontoResult:
     """Soll vs Ist per (period, type) -> offene Posten + Saldo (m6 section 3.1).
 
@@ -588,7 +683,13 @@ def account_statement(
     With as_of, partition the signed open amounts by their existing due dates,
     inclusive of the cutoff. Undated buckets fall back to their period start;
     bookings without a period are due. No payment allocation or total changes.
+
+    set_off_surplus (a lease's statement, #806; needs as_of, the reference date): what a position was paid
+    beyond its Soll settles the oldest due open positions of the statement, whatever their payment type
+    (`_set_off_surplus`). Only the split of the same Ist over the positions changes, never a total.
     """
+    if set_off_surplus and as_of is None:
+        raise ValueError("The set-off of a surplus needs the reference date (as_of)")
     payments = [p for p in payments if p.is_booked and not p.is_reversed and not p.is_reversal]
     elsewhere = [p.signed_amount for p in payments if p.other_scope]
     heating_periods = {(c.period_year, c.period_month) for c in expected_charges if c.payment_type == PT_HK_VORAUSZAHLUNG}
@@ -674,7 +775,8 @@ def account_statement(
         if dates:
             # Payments have a month, not a levy ID: consume that month's money
             # oldest due first, exactly once. Future levies must not accelerate
-            # arrears, and surplus credit remains on the last dated position.
+            # arrears, and surplus credit remains on the last dated position
+            # (until `_set_off_surplus` moves it, where the statement asks for that).
             remaining = ist
             dated_amounts = sorted(dates.items())
             undated = soll - sum(dates.values(), Decimal("0.00"))
@@ -709,6 +811,8 @@ def account_statement(
         else:
             items.append(OpenItem(period_year=key[0], period_month=key[1], payment_type=key[2],
                 soll=soll, ist=ist, open_amount=_money(soll - ist), payment_changes=tuple(changes)))
+    if set_off_surplus:
+        items = _set_off_surplus(items, as_of)
     due_balance = None
     not_yet_due_balance = None
     if as_of is not None:

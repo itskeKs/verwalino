@@ -712,7 +712,10 @@ class PaymentService:
         elsewhere = counted(await self._repo.list_outside_scope_for_lease(lease.id, [p.id for p in payments]))
         inputs = await self._tenant_payment_inputs(lease, rent_changes, counted(payments))
         inputs += [replace(row, other_scope=True) for row in await self._tenant_payment_inputs(lease, rent_changes, elsewhere)]
-        return account_statement(charges, inputs, as_of=as_of or date.today(), include_payment_dates=include_payment_dates)
+        # What a payment paid beyond its position owed settles the lease's oldest due open positions (#806): the open
+        # items, the rent account, the bank matching and a dunning notice all read the same positions.
+        return account_statement(charges, inputs, as_of=as_of or date.today(),
+                                 include_payment_dates=include_payment_dates, set_off_surplus=True)
 
     async def _owner_plan_inputs(self, plan: EconomicPlan):
         """Frozen owner advances, dated ownership and the property of a plan's Hausgeld Soll."""
