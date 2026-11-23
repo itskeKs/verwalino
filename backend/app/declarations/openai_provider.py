@@ -89,6 +89,8 @@ from app.declarations.schemas import (
     RuleExtractionOutput,
     StrictModel,
     TargetedRecheckOutput,
+    inventory_output_type,
+    static_output_type,
 )
 
 
@@ -151,9 +153,10 @@ def png_dimensions(data_url: str) -> tuple[int, int]:
 _PNG_DATA_URL = re.compile(r"^data:image/png;base64,([A-Za-z0-9+/]*={0,2})$")
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _STATIC_HARNESS = (
-    "declaration-responses-v6|structured-output-kind-anyof|store=false|"
+    "declaration-responses-v7|structured-output-kind-anyof|store=false|"
     "no-previous-response-id|fixed-pass-manager|usage-before-output-parse|"
-    "reasoning-effort-low-for-unknown-models|reasoning-rejection-one-fallback"
+    "reasoning-effort-low-for-unknown-models|reasoning-rejection-one-fallback|"
+    "inventory-document-key-enum"
 )
 _SAFE_RESPONSE_IDENTIFIER = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _OPENAI_API_BASE_URL = "https://api.openai.com/v1"
@@ -245,11 +248,16 @@ def _convert_wire_kind_unions(schema: dict[str, Any]) -> dict[str, Any]:
     return schema
 
 
-@lru_cache(maxsize=8)
 def _sdk_output_type(output_type: type[T]) -> type[T]:
-    if output_type is DocumentInventoryOutput:
+    # The inventory types go to the SDK as they are, the request's own restricted one included: they are not cached
+    # here, because there is one per set of keys (``inventory_output_type`` caches them).
+    if issubclass(output_type, DocumentInventoryOutput):
         return output_type
+    return _wire_output_type(output_type)
 
+
+@lru_cache(maxsize=8)
+def _wire_output_type(output_type: type[T]) -> type[T]:
     class WireOutput(output_type):
         @classmethod
         def model_json_schema(cls, **kwargs):
@@ -463,14 +471,25 @@ class OpenAiDeclarationProvider:
     async def inventory(
         self, documents: Sequence[DocumentInput], *, max_output_tokens: int
     ) -> ProviderCallResult[DocumentInventoryOutput]:
-        return await self._run_documents(
+        result = await self._run_documents(
             pass_id="inventory",
             model=self._primary_model,
             prompt=INVENTORY_PROMPT,
             documents=documents,
-            output_type=DocumentInventoryOutput,
+            output_type=self._inventory_output_type(documents),
             max_output_tokens=max_output_tokens,
             include_images=False,
+        )
+        # The request's own type parsed the answer; every later step works with the one inventory type.
+        if type(result.output) is not DocumentInventoryOutput:
+            result = replace(result, output=DocumentInventoryOutput.model_validate(result.output.model_dump()))
+        return result
+
+    @staticmethod
+    def _inventory_output_type(documents: Sequence[DocumentInput]) -> type[DocumentInventoryOutput]:
+        """What one inventory request may be answered with: entries only for the documents whose pages it carries."""
+        return inventory_output_type(
+            page.document_key for page in OpenAiDeclarationProvider._sorted_pages(documents)
         )
 
     async def extract_core(
@@ -678,7 +697,7 @@ class OpenAiDeclarationProvider:
                 "inventory", self._primary_model,
                 INVENTORY_PROMPT,
                 self._page_content_blocks(self._sorted_pages(documents), include_images=False),
-                DocumentInventoryOutput,
+                self._inventory_output_type(documents),
                 max_output_tokens,
             )
         if method == "extract_core":
@@ -1200,9 +1219,10 @@ class OpenAiDeclarationProvider:
     def _fingerprints(
         self, developer_prompt: str, output_type: type[StrictModel]
     ) -> StaticContractFingerprints:
+        # The static contract: the keys an inventory request allows are request data, like its pages.
         return fingerprint_static_contract(
             developer_prompt=developer_prompt,
-            schema=self._sdk_text_format(output_type),
+            schema=self._sdk_text_format(static_output_type(output_type)),
             harness=_STATIC_HARNESS,
         )
 
@@ -1629,7 +1649,7 @@ class OpenAiDeclarationProvider:
                 request_id=request_id,
             )
             raise _SchemaFailure(usage, metadata) from None
-        if parsed is None or not isinstance(parsed, output_type):
+        if parsed is None or not isinstance(parsed, static_output_type(output_type)):
             diagnostic = getattr(response, "_schema_diagnostic", None)
             if isinstance(diagnostic, tuple) and len(diagnostic) == 2:
                 try:

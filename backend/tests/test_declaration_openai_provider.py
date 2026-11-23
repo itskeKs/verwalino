@@ -56,6 +56,7 @@ from app.declarations.schemas import (
     ReconciliationOutput,
     RuleExtractionOutput,
     TargetedRecheckOutput,
+    inventory_output_type,
 )
 from app.declarations.prompts import (
     CORE_EXTRACTION_PROMPT,
@@ -287,8 +288,11 @@ async def test_real_sdk_wire_schema_matches_reservations_and_fingerprints(
             assert set(node['required']) == set(node['properties'])
     assert all(json.loads(value)['text']['format'] == wire_format for value in encoder.values)
     from app.declarations.observability import fingerprint_static_contract
+    # The fingerprint hashes the static contract. An inventory request also names the keys it may be answered with
+    # (issue #876); those are request data and not part of it.
+    static_format = type_to_text_format_param(DocumentInventoryOutput) if method == 'inventory' else wire_format
     fingerprints = fingerprint_static_contract(
-        developer_prompt=prompt, schema=wire_format, harness=openai_provider._STATIC_HARNESS,
+        developer_prompt=prompt, schema=static_format, harness=openai_provider._STATIC_HARNESS,
     )
     assert result.metadata.schema_sha256 == fingerprints.schema_sha256
     assert result.metadata.prompt_sha256 == fingerprint_static_contract(
@@ -587,8 +591,10 @@ async def test_real_sdk_request_body_is_the_one_the_sdk_parse_method_sent(model,
         sent, = bodies
         bodies.clear()
         # What this provider sent before the change: the SDK's parse method with the same fields of the request.
+        # An inventory request is answered with the type that allows the keys of its documents (issue #876).
+        parse_type = inventory_output_type([text_document_input.document_key]) if method == 'inventory' else output_type
         await client.responses.parse(
-            model=sent['model'], input=sent['input'], text_format=openai_provider._sdk_output_type(output_type),
+            model=sent['model'], input=sent['input'], text_format=openai_provider._sdk_output_type(parse_type),
             store=sent['store'], service_tier=sent['service_tier'], max_output_tokens=sent['max_output_tokens'], timeout=60,
             **{key: sent[key] for key in ('prompt_cache_key', 'prompt_cache_options', 'reasoning') if key in sent},
         )
@@ -1306,7 +1312,8 @@ async def test_openai_adapter_uses_structured_parse_and_data_only_prompt(
     assert isinstance(result, ProviderCallResult)
     call = client.responses.calls[0]
     assert call["model"] == "gpt-5.6-luna"
-    assert call["text_format"] is DocumentInventoryOutput
+    # The type of the request: entries only for the documents whose pages it carries (issue #876).
+    assert call["text_format"] is inventory_output_type(["declaration-main"])
     assert call["store"] is False
     assert call["timeout"] == 60
     assert call["max_output_tokens"] == 2_048

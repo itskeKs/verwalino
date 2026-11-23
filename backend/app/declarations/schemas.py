@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 
 from decimal import Decimal
 from datetime import date
+from functools import lru_cache
 from types import MappingProxyType
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator, model_validator
 from pydantic_core import PydanticCustomError
 
 from app.core.iban import validate_iban
@@ -191,14 +192,25 @@ class AdditionalFactPayload(StrictModel):
     clarification_needed: bool
 
 
+# What the inventory schema tells the model about the two keys (issue #876); the instruction says the same in prose.
+_ENTRY_KEY_DESCRIPTION = (
+    "The document_key of exactly one supplied file, copied from the page labels. "
+    "One entry per file: a deed inside a file has no entry of its own."
+)
+_RELATION_TARGET_DESCRIPTION = (
+    "The document_key of a supplied document, copied exactly, when the relation points at one. "
+    "A document that was not supplied is named by the words of the text, never by an invented key."
+)
+
+
 class DocumentRelationPayload(StrictModel):
     relation_type: Literal["AMENDS", "SUPPLEMENTS", "REFERENCES"]
-    target_document_key: str = Field(min_length=1, max_length=120)
+    target_document_key: str = Field(min_length=1, max_length=120, description=_RELATION_TARGET_DESCRIPTION)
     evidence: list[EvidencePayload] = Field(min_length=1)
 
 
 class DocumentInventoryItem(StrictModel):
-    document_key: str = Field(min_length=1, max_length=120)
+    document_key: str = Field(min_length=1, max_length=120, description=_ENTRY_KEY_DESCRIPTION)
     document_type: Literal["DECLARATION", "AMENDMENT", "ANNEX", "OTHER"]
     title: str = Field(min_length=1, max_length=255)
     document_date: str | None = None
@@ -208,6 +220,38 @@ class DocumentInventoryItem(StrictModel):
 
 class DocumentInventoryOutput(StrictModel):
     documents: list[DocumentInventoryItem] = Field(min_length=1)
+
+
+def inventory_output_type(document_keys: Iterable[str]) -> type[DocumentInventoryOutput]:
+    """The answer type of one inventory request: an entry's ``document_key`` is one of the keys of that request.
+
+    The request schema and the local validation of the answer both come from this type, so a model that cannot
+    be held to the schema by its server is still held to it here. The keys are request data: the fingerprints of
+    the pass hash the static contract (``static_output_type``), never this type. ``target_document_key`` stays
+    free text. Without keys there is nothing to restrict.
+    """
+    keys = tuple(sorted(set(document_keys)))
+    return _restricted_inventory_output(keys) if keys else DocumentInventoryOutput
+
+
+@lru_cache(maxsize=32)
+def _restricted_inventory_output(keys: tuple[str, ...]) -> type[DocumentInventoryOutput]:
+    # The classes keep the names of the base types, so the wire schema differs from the base one by the allowed keys.
+    entry = create_model(
+        "DocumentInventoryItem",
+        __base__=DocumentInventoryItem,
+        document_key=(Literal[keys], Field(description=_ENTRY_KEY_DESCRIPTION)),  # type: ignore[valid-type]
+    )
+    return create_model(
+        "DocumentInventoryOutput",
+        __base__=DocumentInventoryOutput,
+        documents=(list[entry], Field(min_length=1)),  # type: ignore[valid-type]
+    )
+
+
+def static_output_type(output_type: type[StrictModel]) -> type[StrictModel]:
+    """The type whose schema the fingerprints of a pass hash: for a request-restricted inventory type, the base one."""
+    return DocumentInventoryOutput if issubclass(output_type, DocumentInventoryOutput) else output_type
 
 
 class CoreExtractionOutput(StrictModel):
