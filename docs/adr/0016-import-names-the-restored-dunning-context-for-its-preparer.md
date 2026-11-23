@@ -1,8 +1,8 @@
-# ADR 0016: The import names the row it restores, so its guard accepts the archived preparer or reviewer
+# ADR 0016: The import names the row it restores, so its guard accepts the archived preparer, reviewer, creator or grantor
 
-- Status: accepted for the preparer of a dunning context and for the reviewer of a scope binding; the contact data domain setup ([#817](https://github.com/itskeKs/verwalino/issues/817)) may reuse it under the checks below
-- Date: 2026-11-20 (reviewed scope bindings: 2026-11-22)
-- Issues: [#694](https://github.com/itskeKs/verwalino/issues/694) (dunning context), [#716](https://github.com/itskeKs/verwalino/issues/716) (scope binding); first bullet of "Where the rule does not carry over by itself" in [ADR 0015](0015-import-writes-the-importer-into-actor-bound-columns.md)
+- Status: accepted for the preparer of a dunning context, the reviewer of a scope binding, and the creator of a contact data domain and the grantor of its grants
+- Date: 2026-11-20 (reviewed scope bindings: 2026-11-22; contact data domains and grants: 2026-11-23)
+- Issues: [#694](https://github.com/itskeKs/verwalino/issues/694) (dunning context), [#716](https://github.com/itskeKs/verwalino/issues/716) (scope binding), [#817](https://github.com/itskeKs/verwalino/issues/817) (contact data domain and grant); first bullet of "Where the rule does not carry over by itself" in [ADR 0015](0015-import-writes-the-importer-into-actor-bound-columns.md)
 
 ## Context
 
@@ -17,6 +17,13 @@ classified bank account is its reviewer (the trigger `bind_new_payment_to_accoun
 clerk), and a second administrator may classify an account. An archive that holds such a binding was
 refused at import, regardless of row order (sqlstate 42501, entity `accounting_scope_binding`). The
 importing administrator did not review the classification either.
+
+`person_data_domain.created_by` records which administrator prepared a contact's data domain and
+`person_data_grant.granted_by` who granted it, and the trigger `protect_person_data_setup` (0068)
+requires each to be the signed-in user. A domain or grant that a second administrator made was refused
+at import (sqlstate 42501, "Domain actor mismatch", entity `person_data_domain`), and so was every
+domain beside the living source organization, where no archived address is the importing
+administrator's. The importing administrator neither prepared the domain nor granted it.
 
 ## Decision
 
@@ -40,6 +47,21 @@ importing administrator did not review the classification either.
    trigger, so a function carries it; it answers false, and never raises, for a setting that is
    missing, empty, malformed or of another shape, so the policy refuses with its own error. The
    policy stays as written for every other write.
+4. The creator of a contact data domain and the grantor of its grant stay the archived accounts in the
+   same way: `created_by` of a restored domain and `granted_by` of a restored grant are the accounts the
+   import maps the archived creator and grantor to (the inactive placeholder of a second administrator),
+   never the importer. Migration 0201 gives the condition `created_by = signed-in user` of the trigger
+   function `protect_person_data_setup()` one alternative, and the condition `granted_by = signed-in
+   user` of its grant branch one alternative: the function `import_restores_person_data(kind, row,
+   organization, actor)`. The import says so in one transaction-local setting per table,
+   `app.organization_import_person_data_domain` (JSON `domain_id` and `created_by`) and
+   `app.organization_import_person_data_grant` (JSON `grant_id` and `granted_by`), set around that one
+   insert and reset after it; a table's guard reads only its own setting, and only
+   `organization_import_service.py` sets either (the same test guards both). The check is a function
+   the trigger calls, so that a setting that is malformed or of another shape answers false instead of
+   raising a cast error before the trigger can refuse; the runtime role cannot call it, only the
+   trigger function, which runs with its owner's rights, does. The trigger stays as written for every
+   other write, UPDATE and DELETE included.
 
 ## What a guard must still check
 
@@ -51,18 +73,31 @@ The setting is a promise of the code, not of a user. A guard that accepts it che
   organization, selected scope, live `prepare` grant and a context before its notice; for a scope
   binding the organization, a live `prepare` grant on the scope, the origin `REVIEWED` and, in
   addition, that the signed-in user is an active administrator of the organization (the import is
-  administrator-only; a clerk's `prepare` grant is not enough); UPDATE and DELETE stay refused.
+  administrator-only; a clerk's `prepare` grant is not enough); for a contact data domain the
+  organization and an active administrator of it, for a grant in addition an unrevoked grant for a
+  grantee who is an active member of the organization; UPDATE and DELETE stay refused.
 
 ## What it does not cover
 
-- Scope grants, attachments and contact data domains still take only the importer's own account. The
-  next reuse is the contact data domain setup (`protect_person_data_setup`: `created_by` of a domain
-  and `granted_by` of a grant, [#817](https://github.com/itskeKs/verwalino/issues/817)); it is not
-  covered here and needs its own guard under the checks above.
+- Scope grants and attachments still take only the importer's own account; each needs its own guard
+  under the checks above.
+- A restored grant is still bound by the trigger's other conditions. Its grantee must be an active
+  member after the import, which only the importing administrator is, so a grant to another archived
+  account (a clerk) is refused at `person_data_grant`; a revoked grant is refused, because the trigger
+  takes only an unrevoked insert and the revocation is a later update by the signed-in user; and a
+  grant whose expiry has passed is refused, because the restore stamps `created_at` again and the table
+  requires `expires_at > created_at`. This holds whoever made the grant and is recorded as findings,
+  not decided here. Beside the living source organization the importing administrator carries none of
+  the archived addresses, so a domain is restored with its placeholder creator and a grant is refused
+  for its placeholder grantee.
+- The trigger writes its own audit event for the restore insert (`person_data.domain_prepared` or
+  `person_data.grant_prepared`) and names the signed-in importing administrator as actor of that act. The
+  archived event, which keeps the archived actor, is restored beside it; no actor column of the row is
+  affected.
 - A binding of the origin `PROVEN_LEGACY` names the user who reconciled it as `reviewed_by` (0040),
   but the policy takes only `REVIEWED`, so an archive with such a binding is still refused; that is
   unchanged.
 - A placeholder is recognised by that convention (inactive, password `!`), not by a dedicated column.
-- Code that set a setting could attribute a context or a binding to a placeholder, never to an active
-  user or another organization, and a binding only from an administrator's session; the one-writer
-  test is the guard.
+- Code that set a setting could attribute a context, a binding, a domain or a grant to a placeholder,
+  never to an active user or another organization, and a binding, a domain or a grant only from an
+  administrator's session; the one-writer test is the guard.

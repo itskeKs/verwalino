@@ -50,6 +50,8 @@ NOT_RESTORED_ENTITIES = frozenset({
 ARCHIVED_ACTOR_MARKERS = {
     'dunning_scope_context': ('app.organization_import_dunning_context', 'created_by', ('dunning_notice_id', 'notice_id')),
     'accounting_scope_binding': ('app.organization_import_scope_binding', 'reviewed_by', ('id', 'binding_id')),
+    'person_data_domain': ('app.organization_import_person_data_domain', 'created_by', ('id', 'domain_id')),
+    'person_data_grant': ('app.organization_import_person_data_grant', 'granted_by', ('id', 'grant_id')),
 }
 logger = logging.getLogger(__name__)
 
@@ -631,9 +633,10 @@ async def import_organization(db, auth, source):
                         previous_scope = await db.scalar(text("SELECT current_setting('app.current_scope_id',true)"))
                         await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
                             {'scope': row[scope_column]})
-                    # A context another user prepared and a binding another user reviewed keep their archived
-                    # actor (ADR 0016): `protect_dunning_context` and `scope_insert` accept it only for an
-                    # inactive placeholder of this organization that the marker names together with this row.
+                    # A context another user prepared, a binding another user reviewed, and a contact data domain or
+                    # grant another user made keep their archived actor (ADR 0016): `protect_dunning_context`,
+                    # `scope_insert` and `protect_person_data_setup` accept it only for an inactive placeholder of this
+                    # organization that the marker names together with this row.
                     marker = archived_actor_marker(name, row, auth.user_id)
                     if marker:
                         await db.execute(text('SELECT set_config(:setting,:marker,true)'),

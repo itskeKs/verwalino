@@ -157,6 +157,19 @@ def export_organization_with_person_data_domain(world, rent_world, export_client
     world.data["contact"], world.data["contact_domain"] = person.json()["id"], domain.json()["id"]
 
 
+@given("a separate organization has a contact data domain and a grant to its administrator that a second administrator made for export")
+def export_organization_with_second_administrators_contact_setup(world, rent_world, rent_db, export_client, confirmed_second_factor):
+    from tests.test_person_data_domain_restore import contact_setup
+    from tests.test_scope_binding_restore import second_administrator
+    # The second administrator adds the contact Anna Berg, prepares its data domain and grants it to the first
+    # administrator, with the requests the contact pages send (an Idempotency-Key on the domain and on the grant).
+    source = world.run(second_administrator(rent_db, rent_world, confirmed_second_factor))
+    world.actor = export_client
+    world.data["export_source"] = source
+    person, domain, grant = world.run(contact_setup(source))
+    world.data.update(contact=person, contact_domain=domain["id"], contact_grant=grant["id"])
+
+
 @given("a separate organization has a WEG with two roof repair levies, an issued owner notice and a draft for export")
 def export_organization_with_levy_notices(world, rent_world, export_client):
     from tests.bdd.steps.browser_setup import create
@@ -416,6 +429,30 @@ def imported_person_data_domain(world):
     assert answer.status_code == 200, answer.text
     assert [(row['id'], row['label']) for row in answer.json()['items']] == [
         (mapping['person_data_domain'][world.data['contact_domain']], f'Contact {contact}')]
+
+
+@then("the imported contact shows its data domain and its grant with the archived reasons and rights")
+def imported_contact_setup(world):
+    from tests.test_person_data_domain_restore import listed
+    mapping = world.data['import_result']['id_map']
+    contact = mapping['person'][world.data['contact']]
+    domains, grants = world.run(listed(world.data['import_target'], contact))
+    assert [(row['id'], row['reason_code'], row['label']) for row in domains] == [
+        (mapping['person_data_domain'][world.data['contact_domain']], 'TEAM_ACCESS', f'Contact {contact}')]
+    assert [(row['id'], row['user_id'], row['capabilities'], row['reason_code'], row['expires_at'], row['revoked_at'])
+            for row in grants] == [(mapping['person_data_grant'][world.data['contact_grant']],
+                                    str(world.data['import_target']['admin']), ['export', 'read'], 'TEAM_ACCESS', None, None)]
+
+
+@then("the restored domain and grant name the second administrator's account, which cannot sign in, as creator and grantor")
+def restored_contact_setup_names_the_second_administrator(world, rent_db):
+    from tests.test_person_data_domain_restore import actors
+    mapping = world.data['import_result']['id_map']
+    second = mapping['user'][str(world.data['export_source']['second_admin'])]
+    found = world.run(actors(rent_db, world.data['import_target']))
+    assert second != str(world.data['import_target']['admin'])
+    assert {kind: (str(row.actor), row.is_active, row.password_hash) for kind, row in found.items()} == {
+        'domain': (second, False, '!'), 'grant': (second, False, '!')}
 
 
 @then('the imported owner notices and owner accounts show the archived levy amounts')

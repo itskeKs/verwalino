@@ -47,6 +47,13 @@ Feature: Organization export import
     And the archive is imported into an empty organization after its source organization was deleted
     Then the imported owner contact shows its data domain labelled after the contact's imported identifier
 
+  Scenario: A contact data domain and its grant that a second administrator made are restored with that administrator as creator and grantor
+    Given a separate organization has a contact data domain and a grant to its administrator that a second administrator made for export
+    When its administrator downloads the organization archive
+    And the archive is imported into an empty organization after its source organization was deleted
+    Then the imported contact shows its data domain and its grant with the archived reasons and rights
+    And the restored domain and grant name the second administrator's account, which cannot sign in, as creator and grantor
+
   Scenario: The owner notices of a special levy are restored with the owner accounts
     Given a separate organization has a WEG with two roof repair levies, an issued owner notice and a draft for export
     When its administrator downloads the organization archive
