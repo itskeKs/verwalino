@@ -298,3 +298,11 @@ jobs:
 
       - name: Review-worktree contracts
         run: make test-review-worktree
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Acceptance hand-off script contracts
+        run: make test-acceptance-handoff
