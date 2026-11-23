@@ -4,9 +4,9 @@ import { Link, useParams } from 'react-router-dom';
 import { ApiError } from '../api/client';
 import { fileDigest, intakeApi, type IntakeBatch, type IntakeItem, type IntakeStatus } from '../api/intake';
 import { AWAITS_SETUP, invoiceProcessingMessage } from '../lib/invoiceProcessing';
+// The words for a file's status and stage are one table, which the row of a batch under „Meldungen“ reads too.
+import { INTAKE_STAGE_LABELS as stageLabels, INTAKE_STATUS_LABELS as labels } from '../lib/intakeStages';
 
-const labels: Record<IntakeStatus, string> = { waiting: 'Datei fehlt', received: 'Empfangen', processing: 'In Verarbeitung', review: 'Zur Sichtung', confirmed: 'Bestätigt', failed: 'Gesperrt / fehlgeschlagen' };
-const stageLabels = { inspection: 'Dateiprüfung', preparation: 'Dokumentvorbereitung', extraction: 'Auswertung', split: 'Aufteilung ausstehend', review: 'Vorschläge verfügbar' };
 const explanations: Record<string, string> = {
   scanner_unavailable: 'Die Dateiprüfung ist derzeit nicht verfügbar. Die Datei bleibt gesperrt. Nach Behebung kann die Prüfung wiederholt werden.',
   scanner_timeout: 'Die Dateiprüfung hat zu lange gedauert. Ein erneuter Versuch ist möglich.',

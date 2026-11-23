@@ -250,11 +250,12 @@ provider, endpoint, timeout and key. One page is one request; a failed page is r
 - **Meldungen: finding an import again.** A user who left the status page finds the import under „Meldungen“, an entry in the
   top bar of every page with the number of Meldungen and a list at `/meldungen`; the status page says so
   („Unter Meldungen finden Sie den Import wieder.“). `GET /api/meldungen` (`api/meldungen.py`, `services/meldungen_service.py`)
-  returns `{items}`, each item with `kind` (`DECLARATION_IMPORT`), `id`, `title`, `subject` (the property's name, or „Neues Objekt:“ and the
+  returns `{items}`, each item with `kind` (`DECLARATION_IMPORT`, or `INTAKE_BATCH` for a Posteingang batch, see the
+  [inbox runbook](inbox-review-chain.md#meldungen-of-a-batch)), `id`, `title`, `subject` (the property's name, or „Neues Objekt:“ and the
   titles of the import's documents), `state` (`WAITING`, `RUNNING`, `REVIEW`, `FAILED`), `state_label`, `at` (the time the status page names as
-  „Gestartet“, absent when no start was recorded) and `target` (a path of the application). Nothing is stored for it: no table, no read state
-  (migration 0204 adds only an index); the count in the frame is the number of items. A later kind adds its source in the service and its rows join the same
-  answer.
+  „Gestartet“, absent when no start was recorded), `target` (a path of the application) and `stage` (absent for an import). Nothing is stored
+  for it: no table, no read state (migration 0204 adds only an index); the count in the frame is the number of items. A kind adds its source
+  in the service and its rows join the same answer.
   - *Whose.* Only the imports the signed-in user started (`declaration_import.initiated_by`), whatever the role: another user of the
     organization, an administrator included, and another organization get nothing of them. An import the user may no longer read
     (`property_import_runtime_access(…, 'read')`, as the import page checks it) is left out. The import pages need the role
@@ -269,10 +270,11 @@ provider, endpoint, timeout and key. One page is one request; a failed page is r
     document titles of imports of a new property are one more query, and only a running import also reads its runs, ledger rows and
     saved page transcripts (once for all running imports) so that its step is named as its status page names it. The query is served by
     `ix_declaration_import_org_initiator_status` (migration 0204, `organization_id, initiated_by, status`), so it reads the user's open
-    imports and not every import the organization ever created. A call by a user with no open import costs ten short statements in two
+    imports and not every import the organization ever created. A call by a user with no open import costs eleven short statements in two
     transactions: four to authenticate (the session's principal, the tenant and the user, the organization's deletion and second-factor
     state), five for the live principal check of the data transaction (the tenant and the user, the shared ACL lock, the live role, the
-    principal again) and the one query of the list. The frame asks on every navigation and, while a Meldung waits or runs and the tab is
+    principal again), the one query of the list and the one call of `intake_batch_progress`, the Posteingang's source, which reads the user's
+    newest batches through their indexes (see the [inbox runbook](inbox-review-chain.md#meldungen-of-a-batch)). The frame asks on every navigation and, while a Meldung waits or runs and the tab is
     visible, every 20 seconds, until a request fails or the answer has not changed for 15 minutes (`MELDUNGEN_POLL_END_MS`, so an import
     that stays queued because no worker runs does not keep a tab asking); the next navigation, a status change an import page reports and
     showing the tab again ask once more (no websocket, no push).

@@ -94,7 +94,7 @@ async def test_a_started_import_is_a_meldung_of_its_starter_until_it_ends(client
         assert {key: meldung[key] for key in meldung if key != "at"} == {
             "kind": "DECLARATION_IMPORT", "id": import_id, "title": "Teilungserklärung einlesen",
             "subject": f"Neues Objekt: {title}", "state": "WAITING", "state_label": "Wartet auf Verarbeitung",
-            "target": f"/teilungserklaerung/import/{import_id}"}
+            "target": f"/teilungserklaerung/import/{import_id}", "stage": None}
         # The time is the one the status page names as the start.
         assert datetime.fromisoformat(meldung["at"]) == datetime.fromisoformat(started.json()["started_at"])
     finally:
@@ -255,6 +255,13 @@ async def test_an_answer_holds_at_most_the_limit_of_meldungen(client_a_clerk, ap
 
 # ---- the running step is the one the status page names, read once for all running imports ------------------------
 
+class _NoBatches:
+    """The Posteingang's source: this test is about imports."""
+
+    async def progress(self, limit):
+        return []
+
+
 class _Repository:
     """The reads the service makes; one import that runs, read like its status page reads it."""
 
@@ -288,7 +295,7 @@ class _Repository:
 @pytest.mark.parametrize("pages_read, label", [(False, "Läuft: Dateien prüfen"), (True, "Läuft: Seiten lesen")])
 async def test_a_running_import_says_the_step_its_status_page_says(pages_read, label) -> None:
     service = MeldungenService(None, uuid.uuid4(), uuid.uuid4(), "CLERK")  # type: ignore[arg-type]
-    service._imports = _Repository(pages_read=pages_read)  # type: ignore[assignment]
+    service._imports, service._batches = _Repository(pages_read=pages_read), _NoBatches()  # type: ignore[assignment]
     [meldung] = await service.list()
     assert (meldung.state, meldung.state_label) == ("RUNNING", label)
     assert service._imports.calls == [("list_started_by", MELDUNGEN_LIMIT)]

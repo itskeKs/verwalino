@@ -463,21 +463,42 @@ and [RouterEval](https://aclanthology.org/2025.findings-emnlp.208.pdf) supports
 the decision to measure and compare variants; it does not replace
 representative domain labels.
 
-### Meldungen: what a user is asked to look at (issue #871)
+### Meldungen: what a user is asked to look at (issues #871, #872)
 
 `GET /api/meldungen` (`api/meldungen.py`, `services/meldungen_service.py`) returns the signed-in user's Meldungen as `{items}`:
 kind, text parts, state, time and the path of the page they lead to. It reads rows that already exist and stores nothing (no table, no
-read state; the count in the application frame is the number of items). The first kind is the Teilungserklärung import: a started
-import that has not ended, waits for the starter's review or failed, belonging to the user who started it (`initiated_by`) and to nobody
-else. Isolation is explicit and tested at three levels: the organization (row-level security, which the route sweep probe in
-`tests/route_isolation/access.py` exercises, and the repository's own `organization_id` filter, which `tests/test_meldungen.py` exercises
-on a session the policies do not apply to), the user (`initiated_by` is part of the query, so another user of the same organization, an
-administrator included, gets nothing) and the import's own read access (`property_import_runtime_access`, the check of the import
-page); the same-organization cases are in `tests/test_meldungen.py`. The answer is bounded (50 items) and read through
-`ix_declaration_import_org_initiator_status` (migration 0204; `tests/test_declaration_import_open_index.py` asserts the plan on thousands
-of imports). The frame asks on navigation and, while an import waits or runs, every 20 seconds until a request fails or the answer has
-not changed for 15 minutes. Which import status is a Meldung, and the words it
+read state; the count in the application frame is the number of items). Each kind has one source in the service and its rows join the
+same answer, newest first, at most 50 in all. The first kind is the Teilungserklärung import: a started import that has not ended, waits
+for the starter's review or failed, belonging to the user who started it (`initiated_by`) and to nobody else. Isolation is explicit and
+tested at three levels: the organization (row-level security, which the route sweep probe in `tests/route_isolation/access.py` exercises,
+and the repository's own `organization_id` filter, which `tests/test_meldungen.py` exercises on a session the policies do not apply to),
+the user (`initiated_by` is part of the query, so another user of the same organization, an administrator included, gets nothing) and the
+import's own read access (`property_import_runtime_access`, the check of the import page); the same-organization cases are in
+`tests/test_meldungen.py`. The import query is served by `ix_declaration_import_org_initiator_status` (migration 0204;
+`tests/test_declaration_import_open_index.py` asserts the plan on thousands of imports). Which import status is a Meldung, and the words it
 says, are one table in `declarations/progress.py` ([runbook](operations/declaration-imports.md)).
+
+The second kind is the Posteingang batch: one with a file that is received and waits for the inspection, is being processed or has failed,
+belonging to the user who uploaded it (`intake_batch.initiated_by`) and to nobody else; a batch whose files are all at rest (their documents
+wait for review, a file is still missing, they wait for the decision how an original divides, or the extraction waits for the organization's
+AI setup, which may never come: nothing runs and nothing failed) is none, and a batch that only failed is one for 14 days from its latest
+failure (`FAILED_LISTED_FOR`, owner decision on #872) and then leaves the list and stays on its batch page. The intake tables are private to `app_rw` (a restrictive policy refuses every read; the commands check the actor), so the
+source is a database function: `intake_batch_progress(org, take)` (migration 0205, `repositories/intake_batch_repo.py`) states the
+caller's newest `take` batches in one statement, per batch the number of its files in each state, the state being the `status` and `stage`
+that `intake_batch_status` (the batch page) gives a file. It takes the organization and the user from the session's tenant context and raises for
+another organization, returns only batches the caller uploaded and may read (the Posteingang list's own rule: a batch of a scope the
+caller may no longer read is left out), and names no file, error text or document. It reads the keys the batch page's function reads and no
+table scan, however many batches an organization holds (`tests/test_meldungen_intake.py` asserts the scans of a database with thousands of a
+colleague's batches); the batches considered are the newest 50 of the user. Which state of a file is a Meldung (`INTAKE_FILE_STATES`, one
+decision for every status and stage the database names, and `EXTRACTION_STOPS`, one for every reason the inbox's extraction stores, each with a
+guard test) and how long a failure is listed are decided in the service, not in SQL (the function returns, per state of files, when a file of it
+last failed: the latest `updated_at` of its failed job, `finished_at` of its delivery); the batch is in the most urgent state of its files that
+count (a file at rest does not) and names the least advanced stage in it. The words of the stages and statuses are the batch page's own
+table, `frontend/src/lib/intakeStages.ts`, which the batch page and the row of the Meldung both read, so that the route sends the stage as a
+key (`stage`) and the badge's state word only. Isolation is tested in `tests/test_meldungen_intake.py` (the uploader alone, another user of
+the organization, another organization, a scope the uploader may no longer read, a call that names another organization). The frame asks on
+navigation and, while a Meldung waits or runs, every 20 seconds until a request fails or the answer has not changed for 15 minutes
+([runbook](operations/inbox-review-chain.md#meldungen-of-a-batch)).
 
 > This document covers M0 (and the preparatory data model for M1). It makes the load-bearing architecture decisions that can hardly be retrofitted later (organization isolation, GoBD immutability). It contains **no** application code and **no** migration implementation — only design, rationale, and an actionable scaffolding plan for the implementer.
 >

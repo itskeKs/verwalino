@@ -18,13 +18,17 @@ function meldung(overrides: Partial<Meldung> = {}): Meldung {
   return {
     kind: "DECLARATION_IMPORT", id: "import-1", title: "Teilungserklärung einlesen", subject: "Lindenallee 12",
     state: "RUNNING", state_label: "Läuft: Angaben auslesen", at: "2026-11-23T13:05:00Z",
-    target: "/teilungserklaerung/import/import-1", ...overrides,
+    target: "/teilungserklaerung/import/import-1", stage: null, ...overrides,
   };
 }
 
 const waiting = () => meldung({ id: "import-2", state: "WAITING", state_label: "Wartet auf Verarbeitung", subject: "Neues Objekt: Teilung.pdf", target: "/teilungserklaerung/import/import-2" });
 const review = () => meldung({ id: "import-3", state: "REVIEW", state_label: "Wartet auf Ihre Prüfung", target: "/teilungserklaerung/import/import-3/review" });
 const failed = () => meldung({ id: "import-4", state: "FAILED", state_label: "Verarbeitung fehlgeschlagen", at: null });
+const batch = (overrides: Partial<Meldung> = {}) => meldung({
+  kind: "INTAKE_BATCH", id: "batch-1", title: "Dokumentenstapel", subject: "3 Dateien", state: "RUNNING", state_label: "Läuft", stage: "extraction",
+  at: "2026-11-24T08:12:00Z", target: "/posteingang/batch-1", ...overrides,
+});
 
 /** The entry and the list read the same answer, as in the application frame. */
 function frame() {
@@ -104,6 +108,36 @@ describe("the list of Meldungen", () => {
     ]);
   });
 
+  it("shows a Posteingang batch with its files, its stage in the words of the batch page and its upload, and leads to the batch page", async () => {
+    vi.spyOn(endpoints, "listMeldungen").mockResolvedValue({ items: [
+      batch(), batch({ id: "batch-2", subject: "1 Datei", state: "WAITING", state_label: "Wartet auf Verarbeitung", stage: "inspection", target: "/posteingang/batch-2" }),
+      batch({ id: "batch-3", state: "FAILED", state_label: "Verarbeitung fehlgeschlagen", stage: "preparation", target: "/posteingang/batch-3" }), meldung(),
+    ] });
+    frame();
+
+    const rows = within(await screen.findByRole("list", { name: "Meldungen" })).getAllByRole("listitem");
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "DokumentenstapelLäuft3 DateienStufe: AuswertungEingang vom 24.11.2026, 09:12 Uhr",
+      "DokumentenstapelWartet auf Verarbeitung1 DateiStufe: DateiprüfungEingang vom 24.11.2026, 09:12 Uhr",
+      "DokumentenstapelVerarbeitung fehlgeschlagen3 DateienStufe: DokumentvorbereitungEingang vom 24.11.2026, 09:12 Uhr",
+      "Teilungserklärung einlesenLäuft: Angaben auslesenLindenallee 12Gestartet: 23.11.2026, 14:05 Uhr",
+    ]);
+    expect(rows.map((row) => within(row).getByRole("link").getAttribute("href"))).toEqual([
+      "/posteingang/batch-1", "/posteingang/batch-2", "/posteingang/batch-3", "/teilungserklaerung/import/import-1",
+    ]);
+    expect(entry()).toHaveAccessibleName("Meldungen, 4 offen");
+  });
+
+  it("says nothing about a stage it has no word for, instead of showing the key", async () => {
+    vi.spyOn(endpoints, "listMeldungen").mockResolvedValue({ items: [batch({ stage: "toString" }), batch({ id: "batch-2", stage: "unbekannt" })] });
+    frame();
+
+    const rows = within(await screen.findByRole("list", { name: "Meldungen" })).getAllByRole("listitem");
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "DokumentenstapelLäuft3 DateienEingang vom 24.11.2026, 09:12 Uhr", "DokumentenstapelLäuft3 DateienEingang vom 24.11.2026, 09:12 Uhr",
+    ]);
+  });
+
   it("says that the request failed, with a way to ask again, and shows no number", async () => {
     const list = vi.spyOn(endpoints, "listMeldungen").mockRejectedValueOnce(new Error("offline"));
     frame();
@@ -161,8 +195,32 @@ describe("the refresh while the page stays where it is", () => {
     expect(list).toHaveBeenCalledTimes(2);
   });
 
+  it("asks again for a Posteingang batch that is processed, which ends with the answers like an import's poll", async () => {
+    const list = await render_([batch()]);
+    await tick(1);
+    expect(list).toHaveBeenCalledTimes(2);
+    await tickEach(polls + 2);
+    const calls = list.mock.calls.length;
+    await tick(3);
+    expect(list).toHaveBeenCalledTimes(calls);
+  });
+
   it("does not ask between two navigations when no Meldung is waiting or running", async () => {
     const list = await render_([review(), failed()]);
+    await tick(5);
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not ask between two navigations for the answer of an organization without the AI import, which holds no batch that waits for its setup", async () => {
+    // Such a file is at rest: the server names no Meldung for it, so the answer is empty and the frame has nothing to follow.
+    const list = await render_([]);
+    await tick(5);
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(entry()).toHaveAccessibleName("Meldungen, 0 offen");
+  });
+
+  it("does not ask between two navigations while the only batch listed is one that stopped with a failure", async () => {
+    const list = await render_([batch({ state: "FAILED", state_label: "Verarbeitung fehlgeschlagen", stage: "inspection" })]);
     await tick(5);
     expect(list).toHaveBeenCalledTimes(1);
   });
