@@ -104,6 +104,22 @@ def get(world, path, **params):
     return response.json()
 
 
+def batch_meldungen(world):
+    return [item for item in get(world, "/api/meldungen")["items"] if item["id"] == world.data["batch"]["id"]]
+
+
+@then(parsers.parse('the reviewer finds the batch among the Meldungen as "{state}" at the stage "{stage}"'))
+def batch_is_a_meldung(world, state, stage):
+    [meldung] = batch_meldungen(world)
+    assert (meldung["kind"], meldung["state"], meldung["stage"], meldung["target"]) == (
+        "INTAKE_BATCH", state, stage, f"/posteingang/{world.data['batch']['id']}"), meldung
+
+
+@then("the reviewer finds no Meldung of the batch")
+def batch_is_no_meldung(world):
+    assert batch_meldungen(world) == []
+
+
 @then("the invoice proposal is ready for review without creating a cost")
 def proposal_ready(world):
     state = get(world, f"/api/intake-batches/{world.data['batch']['id']}")

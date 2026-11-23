@@ -327,9 +327,9 @@ skipped on external targets because no Beta administrator is configured for that
 feature; the additional retention logins belong only to their dedicated fixtures.
 The three `first_run_setup.feature` scenarios are also skipped: they require a
 fresh installation, while the external target already has its bootstrap organization.
-The `inbox_review_chain.feature` scenario is in-process-only: it needs the
+The `inbox_review_chain.feature` scenarios are in-process-only: they need the
 in-process invoice worker and direct database fixtures, so the external nightly
-run skips it too. The same applies to `organization_deletion.feature` (direct
+run skips them too. The same applies to `organization_deletion.feature` (direct
 database fixtures and the in-process deletion CLI), `organization_export_import.feature`
 (direct database fixtures and in-process archive storage) and `password_reset.feature`
 (the Mailpit test mailbox). `user_invitation.feature` is in the same class: its emailed link

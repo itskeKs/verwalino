@@ -18,16 +18,18 @@ router = APIRouter(prefix="/api/meldungen", tags=["meldungen"])
 
 
 class MeldungOut(BaseModel):
-    kind: Literal["DECLARATION_IMPORT"]
+    kind: Literal["DECLARATION_IMPORT", "INTAKE_BATCH"]
     id: uuid.UUID
     title: str
     subject: str
     state: Literal["WAITING", "RUNNING", "REVIEW", "FAILED"]
     state_label: str
-    # When the import was started (or last retried); absent when no start was recorded.
+    # When the import was started (or last retried), or the batch was uploaded; absent when no start was recorded.
     at: datetime | None
     # The path of the application page that shows what the Meldung is about.
     target: str
+    # How far a Posteingang batch has come, as a key of the batch page's table of stage words; absent for an import.
+    stage: str | None = None
 
 
 class MeldungenOut(BaseModel):
@@ -39,7 +41,7 @@ async def list_meldungen(
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_live_member_db),
 ):
-    """The Meldungen of the signed-in user and of nobody else, newest first, at most 50."""
+    """The Meldungen of the signed-in user and of nobody else, of every kind, newest first, at most 50."""
     meldungen = await MeldungenService(db, auth.organization_id, auth.user_id, auth.role).list()
     return MeldungenOut(items=[_out(meldung) for meldung in meldungen])
 
@@ -47,4 +49,4 @@ async def list_meldungen(
 def _out(meldung: Meldung) -> MeldungOut:
     return MeldungOut(
         kind=meldung.kind, id=meldung.id, title=meldung.title, subject=meldung.subject, state=meldung.state,
-        state_label=meldung.state_label, at=meldung.at, target=meldung.target)
+        state_label=meldung.state_label, at=meldung.at, target=meldung.target, stage=meldung.stage)

@@ -164,6 +164,35 @@ at the container's, whichever came first, and now ends at the child's bound of 5
 extraction records `invalid_document` (the child's general failure), as it would at any bound it runs into. Checking the bound while the pages are read would end it as
 `invoice_text_limit` without that memory; that is a change of the local parse, not made with the limits.
 
+## Meldungen of a batch
+
+A batch the signed-in user uploaded is one of their „Meldungen“ (the entry in the top bar of every page and `/meldungen`, issue #872)
+while a file of it waits, is processed or has failed, and the row leads to the batch page (`/posteingang/<batch>`); it is nobody else's
+Meldung: another user of the organization, an administrator included, and another organization are told nothing. The row names the batch
+(„Dokumentenstapel“, the number of its files, „Eingang vom“ and the time), a badge for the state („Wartet auf Verarbeitung“, „Läuft“,
+„Verarbeitung fehlgeschlagen“) and „Stufe:“ with the stage in the words of the batch page („Dateiprüfung“, „Dokumentvorbereitung“,
+„Auswertung“). Which state of a file is a Meldung is decided for every `status` and `stage` of `intake_batch_status` in
+`INTAKE_FILE_STATES` (`services/meldungen_service.py`):
+
+| File (batch page) | Meldung |
+|---|---|
+| „Empfangen“ (`received`, waits for the inspection) | waits |
+| „In Verarbeitung“ (`processing`: inspection, preparation or extraction runs) | runs |
+| „Gesperrt / fehlgeschlagen“ (`failed`: inspection, delivery or extraction) | failed |
+| failed in the extraction for a reason of the organization's AI setup (`AWAITS_SETUP`, which the batch page does not call a failure) | waits |
+| „Datei fehlt“ (`waiting`, the upload of the file is missing) | none |
+| „Zur Sichtung“ (`review`: documents wait for review, or „Aufteilung ausstehend“) | none |
+
+The batch is in the most urgent state of its files (failed, then running, then waiting) and names the least advanced stage among them. A batch
+whose files are all at rest leaves the list; a failed file keeps its batch in it until the file is asked for again in the way the batch page
+offers (the inspection or the extraction is requested again, which makes the file wait or run again). Nothing is stored: the state of a file is
+derived from the same rows as the batch page's. The source is the database function `intake_batch_progress` (migration 0205), because the
+intake tables are private to the application's role; it follows the rules of `intake_batch_status` and a test takes a batch through every
+stage with the real workers and compares the Meldung with the batch page's own answer at each step. It reads the newest 50 batches of the
+user through `ix_intake_batch_owner` and the files through their keys, in one statement; a failure of a batch older than the newest 50 is not
+named. It adds no worker, no process and no poll of its own: the frame's poll (every 20 seconds while a Meldung waits or runs, ended after 15
+minutes without change) covers it.
+
 ## Run and verify
 
 Service/profile, signature maintenance and environment are documented in
