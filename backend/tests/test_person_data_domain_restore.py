@@ -1157,7 +1157,7 @@ def test_0201_replaces_only_the_trigger_function_and_its_downgrade_restores_the_
         with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
             savepoint = db.begin_nested()
             try:
-                # The head is 0202; the state this test is about is the one 0201 left.
+                # The state this test is about is the one 0201 left, whichever revision is the head.
                 head, head_triggers = snapshot(db)
                 later.downgrade()
                 at_0201, at_0201_triggers = snapshot(db)

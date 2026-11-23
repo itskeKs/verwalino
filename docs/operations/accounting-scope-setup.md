@@ -200,7 +200,10 @@ administrators also need these grants. Discarding a scoped draft preserves the
 immutable context and audit record and prevents later issue. Existing unclassified
 legacy drafts retain their deletion behavior.
 
-Escalation only counts issued letters in the selected scope. Unresolved legacy
+Escalation of an owner notice only counts issued letters in the selected scope; the level of a tenant
+notice counts the issued letters of the lease in every scope that covers it, as one number, so the
+second scope's notice for months the first scope demanded is level 2 and shows nothing of the first
+letter (#818). Unresolved legacy
 issued letters block escalation, and legacy letters for classified financial
 subjects are quarantined from ordinary list/detail/export access. A proven legacy
 review/backfill workflow remains outstanding; do not invent historical provenance
