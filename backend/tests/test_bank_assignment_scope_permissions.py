@@ -32,6 +32,21 @@ async def grant(ids, capabilities):
       {**ids, "caps": capabilities})
 
 
+JUNE = {"period_start": "2025-06-01", "period_end": "2025-06-30"}
+
+
+async def lease_statement(api, ids, **period):
+    """The rent account of the lease: the whole of 2025 unless a period is named."""
+    response = await api.get(url(ids, "lease"), params={**query(ids), **period})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def paid_positions(statement):
+    """(month, payment type) -> Ist of the listed positions that hold money."""
+    return {(row["period_month"], row["payment_type"]): row["ist"] for row in statement["open_items"] if row["ist"] != "0.00"}
+
+
 def assignment(ids):
     # Existing June Soll 500+100; prior booked Kaltmiete100 leaves 400+100.
     return {"lines": [
@@ -71,13 +86,28 @@ async def test_prepare_and_confirm_without_approve_can_book_real_mietkonto(migra
         assert len(payments) == 2
         assert {p["amount"] for p in payments} == {"400.00", "100.00"}
         assert all(p["status"] == "booked" and p["bank_transaction_id"] == str(ids["transaction"]) for p in payments)
-        statement = await api.get(url(ids, "lease"), params={**query(ids), "period_start": "2025-06-01", "period_end": "2025-06-30"})
-        assert statement.status_code == 200, statement.text
-        assert statement.json()["soll_total"] == "600.00"
-        # 100.00 + 400.00 + 100.00 in this scope's account, and the 900.00 paid for June into the second scope's.
-        assert statement.json()["ist_total"] == "1500.00"
-        assert statement.json()["other_scope_ist"] == "900.00"
-        assert statement.json()["balance"] == "-900.00"
+        # Rent 500.00 and advance 100.00 a month since 2024; 2025 is the scope's year. Before the booking June 2025's rent
+        # holds 100.00 (this scope's account) and 900.00 (the second scope's); the booking adds 400.00 rent and 100.00
+        # advance for June. The rule of #806 (a surplus is set off within its calendar year and position type, the
+        # period only selects what is listed) gives:
+        #   June rent: 100 + 900 + 400 = 1400.00 against 500.00 owed, a surplus of 900.00. It settles the oldest due
+        #   open rent of 2025: January 500.00 and 400.00 of February's 500.00. June rent keeps its own 500.00.
+        #   June advance: 100.00 against 100.00 owed, nothing over, and no rent surplus is set off against it.
+        # The June view lists those two positions: Soll 500 + 100 = 600.00, Ist 500 + 100 = 600.00, balance 0.00. The
+        # 900.00 the second scope's account took for June stay one amount of their own, the money of the months the
+        # period names (which part of June's Ist it settled is not tracked).
+        june = await lease_statement(api, ids, **JUNE)
+        assert (june["soll_total"], june["ist_total"], june["other_scope_ist"], june["balance"]) == (
+            "600.00", "600.00", "900.00", "0.00")
+        assert paid_positions(june) == {(6, "KALTMIETE"): "500.00", (6, "NK_VORAUSZAHLUNG"): "100.00"}
+        # The whole of 2025 shows where the booking went: Soll 12 x 600.00 = 7200.00, Ist 100 + 900 + 400 + 100 =
+        # 1500.00 (the lease's debt counts both scopes' accounts), balance 7200.00 - 1500.00 = 5700.00; January's
+        # rent 500.00, February's 400.00, June's rent 500.00 and June's advance 100.00 hold it.
+        year = await lease_statement(api, ids)
+        assert (year["soll_total"], year["ist_total"], year["other_scope_ist"], year["balance"]) == (
+            "7200.00", "1500.00", "900.00", "5700.00")
+        assert paid_positions(year) == {(1, "KALTMIETE"): "500.00", (2, "KALTMIETE"): "400.00",
+                                        (6, "KALTMIETE"): "500.00", (6, "NK_VORAUSZAHLUNG"): "100.00"}
 
 
 async def test_prepare_without_confirm_cannot_book_but_can_ignore(migrator_session, scope_seed):
@@ -89,10 +119,21 @@ async def test_prepare_without_confirm_cannot_book_but_can_ignore(migrator_sessi
         unchanged = await api.get('/api/bank-transactions', params={"bank_account_id": str(ids["bank"])})
         assert unchanged.status_code == 200, unchanged.text
         assert [row["id"] for row in unchanged.json()["items"]] == [str(ids["transaction"])]
-        statement = await api.get(url(ids, "lease"), params={**query(ids), "period_start": "2025-06-01", "period_end": "2025-06-30"})
-        assert statement.status_code == 200, statement.text
-        # The 100.00 of this scope's account and the 900.00 of the second scope's: the lease's debt counts both.
-        assert statement.json()["ist_total"] == "1000.00"
+        # Nothing was booked: June 2025's rent holds the 100.00 of this scope's account and the 900.00 of the second
+        # scope's, 1000.00 against 500.00 owed. The surplus of 500.00 settles the oldest due open rent of 2025,
+        # January's 500.00 (#806). June rent keeps 500.00, June's advance (Soll 100.00) holds nothing.
+        # June view: Soll 500 + 100 = 600.00, Ist 500.00, balance 100.00 (the advance). Had the second scope's 900.00
+        # not counted for the lease, June would owe 400 + 100 = 500.00.
+        june = await lease_statement(api, ids, **JUNE)
+        assert (june["soll_total"], june["ist_total"], june["other_scope_ist"], june["balance"]) == (
+            "600.00", "500.00", "900.00", "100.00")
+        assert paid_positions(june) == {(6, "KALTMIETE"): "500.00"}
+        # The whole of 2025: Soll 7200.00, Ist 100 + 900 = 1000.00 of both scopes' accounts, balance 6200.00; January's
+        # rent 500.00 and June's rent 500.00 hold it, and nothing of the refused assignment is in it.
+        year = await lease_statement(api, ids)
+        assert (year["soll_total"], year["ist_total"], year["other_scope_ist"], year["balance"]) == (
+            "7200.00", "1000.00", "900.00", "6200.00")
+        assert paid_positions(year) == {(1, "KALTMIETE"): "500.00", (6, "KALTMIETE"): "500.00"}
         ignored = await api.post(f"/api/bank-transactions/{ids['transaction']}/ignore")
         assert ignored.status_code == 200, ignored.text
         assert ignored.json()["status"] == "IGNORIERT"

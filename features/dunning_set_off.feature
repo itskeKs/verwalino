@@ -84,8 +84,8 @@ Feature: Dunning set-off of an overpaid month
     # March rent of 600 EUR, which fell due on 4 March, is the oldest open position. April was paid 1000 EUR on 10
     # April, which settles 400 EUR of March, although April is not part of the notice. Interest on 600 EUR for 36 days
     # (5 March to 9 April) and on the 200 EUR left for 22 days (10 April to 1 May) is 4.47 EUR.
-    Given the organization enables automatic dunning interest
-    And a rental agreement of 600 EUR rent and 0 EUR advance payment per month in 2026
+    Given a rental agreement of 600 EUR rent and 0 EUR advance payment per month in 2026
+    And the organization enables automatic dunning interest
     And 600 EUR is booked as rent for January 2026
     And 600 EUR is booked as rent for February 2026
     And 1000 EUR is booked as rent for April 2026 on 10 April 2026

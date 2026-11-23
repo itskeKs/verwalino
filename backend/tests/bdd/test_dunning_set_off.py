@@ -15,7 +15,10 @@ YEAR = {"period_start": "2026-01-01", "period_end": "2026-12-31"}
 
 @given(parsers.parse("a rental agreement of {rent:d} EUR rent and {advance:d} EUR advance payment per month in 2026"))
 def lease(world, seed_data, period_data_cleanup, rent, advance):
-    # Scopes and drafts are immutable, so the records of this scenario are released at its end.
+    # Scopes and drafts are immutable, so the records of this scenario are released at its end. That release truncates
+    # the second factors of the administrators too, so a scenario that changes the dunning settings names this step
+    # first: its fixtures tear down in reverse, and the settings are restored (a call that a hosted organization
+    # refuses without a second factor) before the release.
     rental(world, seed_data, advance=f"{advance}.00")
     response = world.act("PATCH", f"/api/leases/{world.data['leases'][0]['id']}", json={"base_rent": f"{rent}.00"})
     assert response.status_code == 200, world.describe_response()
