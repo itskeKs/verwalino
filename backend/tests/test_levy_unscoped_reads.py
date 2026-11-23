@@ -1,5 +1,7 @@
-"""An organization with a special levy answers unscoped reads like classified data does (#722, #739, #816)."""
+"""An organization with a special levy answers unscoped reads and exports like classified data does (#722, #739, #816, #840)."""
+import csv
 import importlib
+import io
 import uuid
 
 import pytest
@@ -258,6 +260,7 @@ async def add_year_books_without_scope(db, ids):
         await db.execute(text("""INSERT INTO payment(id,organization_id,property_id,bank_account_id,amount,direction,value_date,payment_type,tenant_profile_id,period_year,period_month,status)
             VALUES (gen_random_uuid(),:org,:other_property,:b_bank,:amount,'IN','2025-06-03',:kind,:b_tenant,2025,6,'booked')"""), {**ids, 'kind': kind, 'amount': amount})
     category = await db.scalar(text("SELECT id FROM cost_category WHERE code='GRUNDSTEUER' AND plan_version=1"))
+    ids.update(b_category=category)
     await db.execute(text("""INSERT INTO cost_entry(id,organization_id,property_id,cost_category_id,cost_category_plan_version,invoice_date,service_period_from,service_period_to,gross_amount,tenant_apportionable,status,source,confirmed_at,confirmed_by)
         VALUES (gen_random_uuid(),:org,:other_property,:category,1,'2025-06-01','2025-01-01','2025-12-31',250,'UMLAGEFAEHIG','confirmed','MANUAL',now(),:actor)"""), {**ids, 'category': category})
     await db.commit()
@@ -669,3 +672,226 @@ def test_0199_replaces_the_overload_and_downgrade_restores_the_function_of_0193(
                 savepoint.rollback()
     finally:
         engine.dispose()
+
+
+DOWNLOADS = ('property_year_csv', 'anlage_v_csv', 'datev_sources', 'datev_preview', 'datev_csv')
+YEAR_CSV_HEADER = ['Objekt', 'Jahr', 'Bereich', 'Zahlungstyp', 'Kategorie', 'Umlagefähigkeit', 'Betrag (EUR)']
+
+
+def datev_config(ids):
+    """A DATEV batch for 2025 of the property without a scope: its bank account, both rent payment types and its property tax."""
+    return dict(property_id=str(ids['other_property']), period_start='2025-01-01', period_end='2025-12-31',
+                fiscal_year_start='2025-01-01', chart='SKR03', advisor_number='12345', client_number='123', account_length=4,
+                bank_accounts={str(ids['b_bank']): '1111'}, payment_accounts={'KALTMIETE': '2222', 'NK_VORAUSZAHLUNG': '2223'},
+                category_accounts={str(ids['b_category']): {'account': '3333', 'counter_account': '4444'}},
+                gross_accounts_reviewed=True)
+
+
+async def downloads(api, ids, key='other_property', **scope):
+    """What one property offers for download, as (status, body) pairs: the two CSV exports of the annual overview, the
+    DATEV sources, and the DATEV preview and file of the year. A refusal's body is its JSON, a download's its bytes (the
+    generation time in the first line of the DATEV file left out)."""
+    property_id = str(ids[key])
+    year = {'property_id': property_id, 'year': 2025, **scope}
+    config = {**datev_config(ids), 'property_id': property_id, **scope}
+    answers = {
+        'property_year_csv': await api.get('/api/reports/property-year.csv', params=year),
+        'anlage_v_csv': await api.get('/api/reports/property-year/anlage-v.csv', params=year),
+        'datev_sources': await api.get('/api/reports/datev/sources', params={'property_id': property_id, **PERIOD, **scope}),
+        'datev_preview': await api.post('/api/reports/datev/preview', json=config),
+    }
+    digest = answers['datev_preview'].json().get('source_digest', '0' * 64)
+    answers['datev_csv'] = await api.post('/api/reports/datev.csv', json={**config, 'expected_source_digest': digest})
+    assert answers.keys() == set(DOWNLOADS)
+
+    def body(name):
+        answer = answers[name]
+        if answer.headers['content-type'].startswith('application/json'):
+            return answer.json()
+        return answer.content.split(b'\r\n', 1)[1] if name == 'datev_csv' else answer.content
+    return {name: (answers[name].status_code, body(name)) for name in DOWNLOADS}
+
+
+def csv_rows(content):
+    return list(csv.reader(io.StringIO(content.decode('utf-8-sig'), newline=''), delimiter=';'))
+
+
+def downloads_before_the_levy(answers, label):
+    """What the property without a scope offers whether or not the organization holds a levy: 600.00 income (500.00
+    rent, 100.00 advance), 250.00 property tax and 350.00 balance, from one bank account and three bookings."""
+    assert {name: status for name, (status, _) in answers.items()} == dict.fromkeys(DOWNLOADS, 200), answers
+    assert csv_rows(answers['property_year_csv'][1]) == [YEAR_CSV_HEADER,
+        ['Test', '2025', 'Einnahmen', 'KALTMIETE', '', '', '500,00'],
+        ['Test', '2025', 'Einnahmen', 'NK_VORAUSZAHLUNG', '', '', '100,00'],
+        ['Test', '2025', 'Ausgaben', '', label, 'UMLAGEFAEHIG', '250,00'],
+        ['Test', '2025', 'Einnahmen gesamt', '', '', '', '600,00'],
+        ['Test', '2025', 'Ausgaben gesamt', '', '', '', '250,00'],
+        ['Test', '2025', 'Saldo', '', '', '', '350,00']]
+    anlage_v = csv_rows(answers['anlage_v_csv'][1])
+    assert anlage_v[0] == ['Objekt', 'Jahr', 'Bereich', 'Zuordnung', 'Bezeichnung', 'Hinweis', 'Betrag (EUR)']
+    # Whatever the Anlage V mapping assigns, it adds up to the figures of the annual overview.
+    reconciled = {(row[2], row[4]): row[6] for row in anlage_v if row[3] == 'Abgleich'}
+    assert {key: amount for key, amount in reconciled.items() if key[1] == 'Jahresübersicht gesamt'} == {
+        ('Einnahmen', 'Jahresübersicht gesamt'): '600,00', ('Werbungskosten', 'Jahresübersicht gesamt'): '250,00'}, anlage_v
+    assert {amount for (_, label), amount in reconciled.items() if label == 'Differenz'} == {'0,00'}, anlage_v
+    sources = answers['datev_sources'][1]
+    assert (sources['payment_total'], sources['cost_total'], sources['payment_types']) == ('600.00', '250.00', ['KALTMIETE', 'NK_VORAUSZAHLUNG'])
+    assert [bank['label'] for bank in sources['banks']] == ['Musterhaus']
+    preview = answers['datev_preview'][1]
+    assert (preview['payment_total'], preview['cost_total']) == ('600.00', '250.00')
+    assert sorted((row['amount'], row['side'], row['account'], row['counter_account']) for row in preview['rows']) == [
+        ('100.00', 'S', '1111', '2223'), ('250.00', 'S', '3333', '4444'), ('500.00', 'S', '1111', '2222')]
+    assert len(csv_rows(answers['datev_csv'][1])) == 4  # the column headings and three postings
+
+
+async def label_of_the_category(db, ids):
+    return await db.scalar(text('SELECT label FROM cost_category WHERE id=:b_category'), ids)
+
+
+async def test_levy_leaves_the_downloads_of_a_property_without_a_scope_as_before(levy_db, levy_fixture):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_year_books_without_scope(levy_db, ids)
+    async with client(ids) as api:
+        before = await downloads(api, ids)
+        downloads_before_the_levy(before, await label_of_the_category(levy_db, ids))
+        await create(api, ids)
+        assert await downloads(api, ids) == before
+
+
+REFUSED_FOR_THE_LEVY_PROPERTY = {'detail': 'Select an exact accounting scope for this property'}
+
+
+async def grant_export(db, ids, scope):
+    """The clerk's grant on a scope also lets the clerk export: the active grant is revoked and replaced by one with `export`."""
+    old = await db.scalar(text("SELECT capabilities FROM scope_grant WHERE scope_id=:grant_scope AND user_id=:clerk AND revoked_at IS NULL"), {**ids, 'grant_scope': ids[scope]})
+    await db.execute(text("UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE scope_id=:grant_scope AND user_id=:clerk AND revoked_at IS NULL"), {**ids, 'grant_scope': ids[scope]})
+    await db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:grant_scope,:clerk,:capabilities,:actor,'Export test')"),
+                     {**ids, 'grant_scope': ids[scope], 'capabilities': [*old, 'export']})
+    await db.commit()
+
+
+async def test_levy_still_refuses_the_downloads_of_what_the_levy_or_a_scope_concerns(levy_db, levy_fixture):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_year_books_without_scope(levy_db, ids)
+    await add_scope_only_property(levy_db, ids)
+    await grant_export(levy_db, ids, 'd_scope')
+    async with client(ids) as api:
+        scoped_before = await downloads(api, ids, 'd_property', accounting_scope_id=str(ids['d_scope']))
+        assert {name: status for name, (status, _) in scoped_before.items()}['property_year_csv'] == 200, scoped_before
+        await add_levy_only_property(api, levy_db, ids)
+        await create(api, ids)
+        # The levy's own properties, one of them with the levy as its only classified finance: no download without the scope.
+        for key in ('property', 'c_property'):
+            answers = await downloads(api, ids, key)
+            assert answers == dict.fromkeys(DOWNLOADS, (409, REFUSED_FOR_THE_LEVY_PROPERTY)), (key, answers)
+        # A property that has a scope of its own is downloaded through that scope, as before the levy, and not without it.
+        assert await downloads(api, ids, 'd_property') == dict.fromkeys(DOWNLOADS, (409, {'detail': SCOPE_REQUIRED}))
+        assert await downloads(api, ids, 'd_property', accounting_scope_id=str(ids['d_scope'])) == scoped_before
+        # The property without a scope is downloaded.
+        assert {status for status, _ in (await downloads(api, ids)).values()} == {200}
+
+
+async def test_report_scope_source_access_answers_an_export_for_one_property(levy_db, levy_fixture, seed_data):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_scope_only_property(levy_db, ids)
+    async with client(ids) as api:
+        await add_levy_only_property(api, levy_db, ids)
+        assert await property_answer(ids, capability='export', subject=ids['other_property'])
+        await create(api, ids)
+    export = "SELECT report_scope_source_access(:org,NULL,'export')"
+    # The export of the whole organization, which names no property, is refused as it was before this change.
+    assert not await read_value(export, ids, actor_key='clerk')
+    assert not await property_answer(ids, capability='export')
+    # The property without a scope and without classified finance: as before the levy, and an id of no property of the organization too.
+    assert await property_answer(ids, capability='export', subject=ids['other_property'])
+    assert await property_answer(ids, capability='export', subject=uuid.uuid4())
+    assert await property_answer(ids, capability='export', subject=seed_data['org_b_id'])
+    # The levy's property, one whose only classified finance is the levy, and one with a scope of its own stay refused.
+    for key in ('property', 'c_property', 'd_property'):
+        assert not await property_answer(ids, capability='export', subject=ids[key]), key
+    # No single subject, or a scope: answered by the three-argument function, whatever property the call names.
+    assert not await property_answer(ids, capability='export', subject=ids['other_property'], lease=ids['b_lease'])
+    scoped = await read_value("SELECT report_scope_source_access(:org,:scope,'export')", ids, actor_key='clerk')
+    assert await property_answer(ids, sphere=ids['scope'], capability='export', subject=ids['other_property']) == scoped
+    # A caller of another organization gets no exemption for the levy organization's property.
+    engine = create_async_engine(APP_RW_URL)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:user,true)"),
+                                     {'org': str(seed_data['org_b_id']), 'user': str(seed_data['user_b_admin_id'])})
+            assert not await connection.scalar(text("SELECT report_scope_source_access(:org,NULL,'export',NULL,NULL,:subject)"),
+                                               {'org': ids['org'], 'subject': ids['other_property']})
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.parametrize('had_export', [False, True], ids=['never_had_export', 'export_revoked'])
+async def test_caller_without_export_access_to_the_levy_scope_downloads_the_property_without_a_scope_without_levy_data(levy_db, levy_fixture, had_export):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_year_books_without_scope(levy_db, ids)
+    if had_export:
+        await grant_export(levy_db, ids, 'scope')
+    async with client(ids) as api:
+        before = await downloads(api, ids)
+        downloads_before_the_levy(before, await label_of_the_category(levy_db, ids))
+        levy = await create(api, ids)
+    if had_export:
+        # The clerk loses every grant on the levy's scope, the export grant included.
+        await levy_db.execute(text('UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE scope_id=:scope AND user_id=:clerk AND revoked_at IS NULL'), ids)
+        await levy_db.commit()
+    async with client(ids) as caller:
+        answers = await downloads(caller, ids)
+        assert answers == before
+        for _, body in answers.values():
+            assert levy['id'] not in str(body) and '3000.00' not in str(body) and '1200.00' not in str(body)
+        # Nothing of the levy's property, nor of its scope, is offered to the caller.
+        assert await downloads(caller, ids, 'property') == dict.fromkeys(DOWNLOADS, (409, REFUSED_FOR_THE_LEVY_PROPERTY))
+        scoped = await downloads(caller, ids, 'property', accounting_scope_id=str(ids['scope']))
+        assert scoped == dict.fromkeys(DOWNLOADS, (404, {'detail': 'Accounting scope not accessible'}))
+
+
+async def test_foreign_organization_downloads_nothing_of_the_property_without_a_scope(levy_db, levy_fixture, client_b_admin):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_year_books_without_scope(levy_db, ids)
+    async with client(ids) as api:
+        await create(api, ids)
+    answers = await downloads(client_b_admin, ids)
+    assert answers == dict.fromkeys(DOWNLOADS, (404, {'detail': 'Property not found'}))
+    scoped = await downloads(client_b_admin, ids, 'property', accounting_scope_id=str(ids['scope']))
+    assert scoped == dict.fromkeys(DOWNLOADS, (404, {'detail': 'Property not found'}))
+
+
+async def test_caller_who_may_read_but_not_export_is_answered_as_before_the_levy(levy_db, levy_fixture):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_year_books_without_scope(levy_db, ids)
+    await add_scope_only_property(levy_db, ids)
+    scoped = {'accounting_scope_id': str(ids['d_scope'])}
+    async with client(ids) as api:
+        # The clerk reads the property through its scope, where the grant has `read` and no `export`.
+        assert (await api.get('/api/reports/property-year', params={'property_id': str(ids['d_property']), 'year': 2025, **scoped})).status_code == 200
+        before = await downloads(api, ids, 'd_property', **scoped)
+        assert {status for status, _ in before.values()} == {404}, before
+        await create(api, ids)
+        assert await downloads(api, ids, 'd_property', **scoped) == before
+        # A property without a scope is still downloaded, which the clerk's export right on no scope does not change.
+        assert {status for status, _ in (await downloads(api, ids)).values()} == {200}
+
+
+async def test_enforced_sources_refuse_the_downloads_of_the_property_without_a_scope_as_before_the_levy(levy_db, levy_fixture, scope_seed):
+    ids = levy_fixture
+    await add_property_without_scope(levy_db, ids)
+    await add_year_books_without_scope(levy_db, ids)
+    async with synthetic_enforcement(scope_seed), client(ids) as api:
+        before = await downloads(api, ids)
+    async with client(ids) as api:
+        await create(api, ids)
+    async with synthetic_enforcement(scope_seed), client(ids) as api:
+        # An enforced organization hides and refuses everything of a property by itself, so the levy adds nothing to its answers.
+        assert await downloads(api, ids) == before
+        assert {status for status, _ in before.values()} == {404}, before

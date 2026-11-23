@@ -52,6 +52,14 @@ Feature: Special levy
     When the manager creates the roof repair levy due on 1 July 2026
     Then the annual overview of Sonnenweg 5 for 2026 shows 700 euros income, 250 euros expenses and 450 euros balance
 
+  Scenario: The CSV downloads of a property without an accounting scope keep their content once the organization holds a levy
+    Given Sonnenweg 5 has no accounting scope and its tenant owes 700 euros rent for January 2026
+    And the tenant paid the 700 euros and a property tax of 250 euros is confirmed for January 2026
+    And the manager downloaded the annual overview CSV and the Anlage V CSV of Sonnenweg 5 for 2026
+    When the manager creates the roof repair levy due on 1 July 2026
+    Then the two CSV downloads of Sonnenweg 5 for 2026 are the same as before the levy
+    And the annual overview CSV of Sonnenweg 5 shows 700 euros income, 250 euros expenses and 450 euros balance
+
   @browser
   Scenario Outline: Missing resolution feedback preserves the levy inputs at <width> pixels
     When the manager clicks create without a resolution in the browser at <width> pixels

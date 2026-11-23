@@ -16,6 +16,7 @@ from app.core.storage import attachment_content_disposition
 from app.core.tenant import AuthContext, get_current_user
 from app.engine.anlage_v import AnlageVSummary, counts_as_income, map_property_year
 from app.services.authorization_service import AuthorizationService
+from app.services.financial_scope_service import FinancialScopeService
 from app.services.report_service import PropertyYearReport, ReportService
 from app.services.dashboard_kpi_service import DashboardKpis, DashboardKpiService
 from app.services.datev_export import DatevExportService, DatevRequest, render_datev
@@ -55,9 +56,8 @@ async def _require_year_export(db: AsyncSession, auth: AuthContext, report: Prop
         "SELECT property_financial_disclosure_access(:org,:property,'export')"
     ), {'org': auth.organization_id, 'property': report.property_id}):
         raise HTTPException(404, 'Financial source export not accessible')
-    if not await db.scalar(text(
-        "SELECT report_scope_source_access(:org,:scope,'export')"
-    ), {'org': auth.organization_id, 'scope': report.accounting_scope_id}):
+    if not await FinancialScopeService(db, auth.organization_id, auth.user_id).report_sources_open(
+            report.accounting_scope_id, ScopeCapability.EXPORT, property_id=report.property_id):
         raise HTTPException(404, 'Complete report sources not exportable')
 
 
