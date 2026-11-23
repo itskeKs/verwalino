@@ -15,6 +15,8 @@ Feature: Organization dunning settings
     Then the draft contains a 3.00 EUR fee and <interest> EUR interest at a <premium> point premium
     And the interest is split into 84 days at 1.27 percent and 123 days at 1.52 percent
     And the issued PDF shows the same <premium> point premium
+    And the issued PDF states that the <premium> point premium follows from the unit's usage
+    And the notice detail records the unit's usage as the rule of the premium
 
     Examples:
       | usage   | interest | premium |
