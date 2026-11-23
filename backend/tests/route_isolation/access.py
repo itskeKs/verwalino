@@ -208,6 +208,8 @@ PROBES: dict[str, Probe] = {
         DRAFT_IMPORT, body={"document_role": "DECLARATION", "sequence_no": 1}),
     "POST /api/declaration-imports/{import_id}/retry": Probe(DRAFT_IMPORT),
     "POST /api/declaration-imports/{import_id}/start": Probe(DRAFT_IMPORT),
+    # app/api/meldungen.py
+    "GET /api/meldungen": Probe(),
     # app/api/mandate_quarantine.py
     "GET /api/mandate-quarantine/page": Probe(),
     "POST /api/mandate-quarantine": Probe(foreign(

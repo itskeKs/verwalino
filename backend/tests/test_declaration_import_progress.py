@@ -9,7 +9,8 @@ import re
 import pytest
 
 from app.declarations.observability import _PASS_IDS
-from app.declarations.progress import PASS_STEPS, RUNNING_STATUS_STEPS, STATUS_LABELS, STEPS, build_progress
+from app.declarations.progress import (
+    MELDUNG_STATES, PASS_STEPS, RUNNING_STATUS_STEPS, STATUS_LABELS, STEPS, build_progress, meldung_text)
 from app.declarations.provider import INVOICE_PASS_ID
 
 NOW = datetime(2026, 11, 23, 12, 0, 0, tzinfo=timezone.utc)
@@ -219,3 +220,26 @@ def test_every_status_the_database_allows_has_a_label():
     for status in statuses:
         label = build_progress(status, now=NOW).status_label
         assert label and label.casefold() not in RAW_NAMES and label != status
+
+
+# ---- the Meldung of an import: every status is a Meldung of its starter or it is not (issue #871) --------------------
+
+def test_every_status_the_database_allows_is_decided_as_a_meldung_or_not():
+    assert set(MELDUNG_STATES) == database_statuses()
+    # Started and not ended, waiting for the starter's review, failed: a Meldung. Never started or ended: none.
+    assert {status for status, state in MELDUNG_STATES.items() if state is None} == {"DRAFT", "APPLIED", "CANCELLED"}
+    assert {state for state in MELDUNG_STATES.values() if state is not None} == {"WAITING", "RUNNING", "REVIEW", "FAILED"}
+
+
+@pytest.mark.parametrize("status", [status for status, state in MELDUNG_STATES.items() if state is not None])
+def test_a_meldung_says_the_words_of_the_status_line_and_no_raw_name(status):
+    progress = build_progress(status, now=NOW)
+    text = meldung_text(status, progress)
+    assert text.casefold() not in RAW_NAMES and text != status
+    if status == "NEEDS_REVIEW":
+        assert text == "Wartet auf Ihre Prüfung"
+    elif status in RUNNING_STATUS_STEPS:
+        assert text == f"Läuft: {progress.status_label}"
+    else:
+        # The one table of the status line: the Meldung has no second map for these.
+        assert text == STATUS_LABELS[status]

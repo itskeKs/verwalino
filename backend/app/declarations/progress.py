@@ -1,10 +1,10 @@
-"""What a started declaration import is doing, for its status page and its status line.
+"""What a started declaration import is doing, for its status page, its status line and its Meldung.
 
 One table here maps the import's lifecycle status and the kind of every recorded pass to the German label the
-user reads; the status page and the status line take their words from it and nowhere else. Everything derives
-from what the server recorded: the import's status, the passes of its current run (one ledger row per finished
-provider attempt, with the time it was written) and the page transcripts that were saved. Nothing is estimated:
-a step is running only while the status names it, and a count is a count of recorded rows.
+user reads; the status page, the status line and the Meldung of its starter take their words from it and nowhere
+else. Everything derives from what the server recorded: the import's status, the passes of its current run (one
+ledger row per finished provider attempt, with the time it was written) and the page transcripts that were saved.
+Nothing is estimated: a step is running only while the status names it, and a count is a count of recorded rows.
 
 The ledger row of a call is written when the call has ended, so the page cannot know which call of a stage is in
 flight, only that the stage is running and how many calls of it have finished. The steps are therefore the
@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Literal, Sequence
 
 StepState = Literal["DONE", "RUNNING", "WAITING"]
+MeldungState = Literal["WAITING", "RUNNING", "REVIEW", "FAILED"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +72,28 @@ STATUS_LABELS: dict[str, str] = {
     "CANCELLED": "Abgebrochen",
 }
 
+# Which statuses are a Meldung of the user who started the import, and in which state: the imports that were started
+# and have not ended, those waiting for the starter's review and the failed ones. None: no Meldung, because the import
+# was never started (DRAFT) or has ended (APPLIED, CANCELLED). Every status the database allows has a decision here,
+# a test fails for one that has none.
+MELDUNG_STATES: dict[str, MeldungState | None] = {
+    "DRAFT": None,
+    "QUEUED": "WAITING",
+    "PREFLIGHT": "RUNNING",
+    "EXTRACTING": "RUNNING",
+    "RECONCILING": "RUNNING",
+    "RETRY_WAIT": "WAITING",
+    "NEEDS_REVIEW": "REVIEW",
+    "APPLYING": "RUNNING",
+    "APPLIED": None,
+    "FAILED": "FAILED",
+    "CANCELLED": None,
+}
+
+# What a Meldung says besides the status line: that a step runs, and that the starter's review is due.
+MELDUNG_RUNNING_STEP = "Läuft: {step}"
+MELDUNG_REVIEW = "Wartet auf Ihre Prüfung"
+
 # Waiting for a worker: every step waits. Past the processing: every step is done. Any other status
 # (DRAFT, FAILED, CANCELLED) has no list of steps.
 _WAITING_STATUSES = {"QUEUED", "RETRY_WAIT"}
@@ -93,6 +116,15 @@ class StepView:
 class Progress:
     status_label: str
     steps: tuple[StepView, ...]
+
+
+def meldung_text(status: str, progress: Progress) -> str:
+    """What the Meldung of an import in this status says: the status line, or the step that runs, or the review due."""
+    if status == "NEEDS_REVIEW":
+        return MELDUNG_REVIEW
+    if status in RUNNING_STATUS_STEPS:
+        return MELDUNG_RUNNING_STEP.format(step=progress.status_label)
+    return progress.status_label
 
 
 def _current_run(status: str, runs: Sequence):

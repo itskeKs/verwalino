@@ -289,6 +289,7 @@ from tests.bdd.steps.browser_reconciliation import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_mandates import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_data_domains import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_declaration_principal import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_meldungen import *  # noqa: E402,F401,F403
 
 from tests.bdd.steps.meetings import *  # noqa: E402,F401,F403
 from tests.bdd.steps.special_levy import *  # noqa: E402,F401,F403

@@ -66,6 +66,13 @@ it.each(["OWNER_ADMIN", "CLERK", "READ_ONLY"])("opens personal settings for %s",
   expect(screen.getByRole("radio", { name: /Warm/ })).toBeInTheDocument();
 });
 
+it.each(["OWNER_ADMIN", "CLERK", "READ_ONLY"])("opens the Meldungen for %s", async role => {
+  renderRoutes("/meldungen", role);
+  expect(await screen.findByRole("heading", { name: "Meldungen" })).toBeVisible();
+  expect(await screen.findByText("Keine Meldungen vorhanden.")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Meldungen, 0 offen" })).toHaveAttribute("href", "/meldungen");
+});
+
 describe("setup status availability", () => {
   it.each([undefined, "OWNER_ADMIN"])("keeps normal routes available after a failed setup check for %s", async role => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});

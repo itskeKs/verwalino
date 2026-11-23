@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { Input } from "./ui/input";
+import { MeldungenLink } from "./meldungen/MeldungenLink";
 import { Label } from "./ui/label";
 import { changePassword } from "../api/endpoints";
 import { ApiError } from "../api/client";
@@ -104,6 +105,7 @@ export function Topbar({ onToggleSidebar, navigationOpen = false, navigationButt
           <span className="hidden rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground sm:inline">
             {roleLabelDe(session.role)}
           </span>
+          <MeldungenLink />
           <Link to="/einstellungen" className="topbar-settings" aria-label="Einstellungen"><Settings aria-hidden="true" /><span>Einstellungen</span></Link>
           <Button
             variant="ghost"

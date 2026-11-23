@@ -44,7 +44,9 @@ export function DeclarationImportStatus({ item, documentTitles, receivedAt, fail
       <h2 id="declaration-processing-heading">Verarbeitung</h2>
       <DeclarationImportProgress steps={item.steps} receivedAt={receivedAt} />
       {!["NEEDS_REVIEW", "APPLYING", "APPLIED"].includes(item.status) && (
-        <p className="empty-hint">Sie können diese Seite schließen; der serverseitige Importstatus bleibt erhalten.</p>
+        <p className="empty-hint">
+          Sie können diese Seite schließen; der serverseitige Importstatus bleibt erhalten. Unter <Link to="/meldungen" className="link underline">Meldungen</Link> finden Sie den Import wieder.
+        </p>
       )}
     </section>}
 
