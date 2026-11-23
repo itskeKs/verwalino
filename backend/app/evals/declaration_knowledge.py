@@ -1974,6 +1974,12 @@ class BoundedProductionDeclarationPipelineAdapter:
                     await pipeline._call("inventory", batch.as_documents(), ledger, DocumentInventoryOutput)
                     for batch in batches
                 ]
+                inventory, _relation_hints = _validate_inventory_documents(
+                    _merge_inventory(inventories),
+                    {entry.case_id: None},  # type: ignore[dict-item]
+                    {entry.case_id: result.page_count},
+                    {entry.case_id: entry.case_id},
+                )
                 cores = [
                     await pipeline._call("extract_core", batch.as_documents(), ledger, CoreExtractionOutput)
                     for batch in batches
@@ -1982,8 +1988,6 @@ class BoundedProductionDeclarationPipelineAdapter:
                     await pipeline._call("extract_rules", batch.as_documents(), ledger, RuleExtractionOutput)
                     for batch in batches
                 ]
-                inventory = _merge_inventory(inventories)
-                _validate_inventory_documents(inventory, {entry.case_id: None})  # type: ignore[dict-item]
                 core = _merge_core(cores)
                 rules = _merge_rules(rulesets)
                 output = await pipeline._reconcile_bounded(inventory, core, rules, ledger)

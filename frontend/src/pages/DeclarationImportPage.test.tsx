@@ -459,6 +459,8 @@ describe("Teilungserklärung upload wizard", () => {
     ["ORGANIZATION_AI_BUDGET_EXCEEDED", /Das monatliche KI-Budget ist ausgeschöpft\. Bitte wenden Sie sich an den Betreiber\./],
     ["PAGE_RENDER_TIMEOUT", /Das Aufbereiten einer Seite hat zu lange gedauert/],
     ["PAGE_RENDER_UNAVAILABLE", /Eine Seite des Dokuments konnte nicht zum Einlesen aufbereitet werden/],
+    ["UNKNOWN_INVENTORY_DOCUMENT", /Die Antwort des Modells nennt ein Dokument, das nicht zu diesem Import gehört.*Bitte starten Sie einen neuen Import\. Besteht das Problem weiter, wenden Sie sich an den Betreiber\./],
+    ["MISSING_INVENTORY_DOCUMENT", /Die Antwort des Modells enthält nicht alle Dokumente dieses Imports.*Bitte starten Sie einen neuen Import\. Besteht das Problem weiter, wenden Sie sich an den Betreiber\./],
   ])("explains the failure %s in German, keeps the original and says nothing was applied", async (code, explanation) => {
     vi.spyOn(declarationApi, "getDeclarationImport").mockResolvedValue(
       pendingImport({ status: "FAILED", error_code: code, error_message: code }),
