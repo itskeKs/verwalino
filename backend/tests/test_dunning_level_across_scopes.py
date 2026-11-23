@@ -80,12 +80,12 @@ async def test_the_second_scopes_notice_for_months_the_first_scope_demanded_is_l
         second = await prepare(api, ids, 'second_scope', reference='2026-02-10')
         # The debt belongs to the lease, so both scopes owe the same amount; only the level and its fee differ.
         assert level(second) == DUNNING
-        # The lease runs since 1 January 2024 and nothing was paid for 2024, so the oldest due open position of the lease
-        # is January 2024's rent (500.00). June 2025's rent was paid 1000.00 (100.00 + 900.00 into the two scopes) for
-        # 500.00 owed: the 500.00 over settle that position, outside the notices of 2025 (#806). 2025 owes
-        # 12 x 600.00 = 7200.00, less the 500.00 paid for June's own rent: 6700.00.
-        assert (first['principal_amount'], first['total_amount']) == ('6700.00', '6700.00')
-        assert (second['principal_amount'], second['total_amount']) == ('6700.00', '6702.50')
+        # 2025 owes 12 x 600.00 = 7200.00. June's rent was paid 1000.00 (100.00 + 900.00 into the two scopes) for 500.00
+        # owed: the 500.00 over settle the oldest due open rent of 2025, January's (#806), so 7200.00 - 1000.00 = 6200.00.
+        # (The lease runs since 1 January 2024 and nothing was paid for 2024: a surplus is set off within its calendar
+        # year, so 2024 takes none of it.)
+        assert (first['principal_amount'], first['total_amount']) == ('6200.00', '6200.00')
+        assert (second['principal_amount'], second['total_amount']) == ('6200.00', '6202.50')
         assert second['accounting_scope_id'] == str(ids['second_scope'])
         # The other way round: the first scope escalates over the notice of the second one once that is issued.
         assert level(await prepare(api, ids, 'scope', reference='2026-02-11')) == DUNNING
@@ -109,9 +109,9 @@ async def test_the_count_is_per_open_item_across_scopes(two_scopes):
     ids = two_scopes
     async with client(ids) as api:
         # May and June 2025: rent and advance of May, the advance of June. June's rent was paid twice over (1000.00 for
-        # 500.00 owed); the 500.00 over settle the oldest due open position of the lease, January 2024's rent (the lease
-        # runs since 1 January 2024, nothing was paid for 2024), which no notice below covers (#806). So the positions
-        # that are open in May and June are the ones that were open before the set-off.
+        # 500.00 owed); the 500.00 over settle the oldest due open rent of 2025, January's, which no notice below covers
+        # (#806). So June holds only its advance (100.00) and May its rent and advance: the positions of May and June
+        # are the ones the first notice demanded, whichever months a later notice names. Nothing of 2024 is involved.
         await issue(api, await prepare(api, ids, 'scope', period=('2025-05-01', '2025-06-30')))
         for period, expected in {
             ('2025-07-01', '2025-07-31'): REMINDER,  # a month the first scope never demanded

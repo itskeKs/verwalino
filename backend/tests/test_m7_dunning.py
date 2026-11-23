@@ -423,15 +423,15 @@ async def test_batch_scope_members_and_revoked_replay_fail_closed(migrator_sessi
     ids = await statement_fixture(migrator_session, scope_seed, "lease")
     await grant(ids, ["read", "prepare"])
     body = batch_request(period_end="2025-12-31", reference_date="2026-01-15",
-                         threshold="6500.00", accounting_scope_id=str(ids["scope"]))
+                         threshold="6000.00", accounting_scope_id=str(ids["scope"]))
     async with client(ids) as api:
         preview = await batch_preview(api, body)
         assert [r["lease_agreement_id"] for r in preview["candidates"]] == [str(ids["lease"])]
         # 12 x (500.00 rent + 100.00 advance) = 7200.00 owed in 2025; 1000.00 were paid for June's rent (100.00 + 900.00
-        # into the accounts of two scopes). The 500.00 it did not need settle the oldest due open position of the
-        # lease, January 2024's rent (the lease runs since 1 January 2024), which is outside the notice (#806):
-        # 7200.00 - 500.00 paid for June's own rent = 6700.00.
-        assert Decimal(preview["candidates"][0]["principal_amount"]) == Decimal("6700.00")
+        # into the accounts of two scopes). The 500.00 it did not need settle the oldest due open rent of 2025, January's
+        # (#806): 7200.00 - 1000.00 = 6200.00, below the threshold of 6500.00 of the main branch's test, so the threshold
+        # is 6000.00 here. (A surplus is set off within its calendar year: the lease's 2024 takes none of it.)
+        assert Decimal(preview["candidates"][0]["principal_amount"]) == Decimal("6200.00")
         request = selected_batch(body, preview, [ids["lease"]])
         created = await api.post("/api/dunning/batch", json=request)
         assert created.status_code == 201, created.text

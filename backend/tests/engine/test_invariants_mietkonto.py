@@ -105,29 +105,30 @@ class TestI6A_SaldoEqualsSollMinusIst:
 
 
 # ===========================================================================
-# I6-G: the set-off of a surplus (#806) only moves Ist between the positions of one statement.
+# I6-G: the set-off of a surplus (#806) only moves Ist between the positions of one calendar year and one type.
 # ===========================================================================
 class TestI6G_SetOffOnlyMovesIst:
     @settings(max_examples=300)
     @given(
-        solls=st.lists(st.tuples(money_amounts(0, 2000), money_amounts(0, 400)), min_size=1, max_size=8),
+        solls=st.lists(st.tuples(money_amounts(0, 2000), money_amounts(0, 400)), min_size=1, max_size=6),
         payments=st.lists(
-            st.tuples(st.integers(1, 9), st.sampled_from([PT_KALTMIETE, PT_NK_VORAUSZAHLUNG]),
-                      money_amounts(0, 5000), st.booleans(), st.integers(0, 200)),
+            st.tuples(st.sampled_from([2025, 2026]), st.integers(1, 9), st.sampled_from([PT_KALTMIETE, PT_NK_VORAUSZAHLUNG]),
+                      money_amounts(0, 5000), st.booleans(), st.integers(0, 600)),
             max_size=12),
-        cutoff=st.integers(0, 330),
+        cutoff=st.integers(0, 700),
     )
     def test_set_off_keeps_totals_and_never_overshoots(self, solls, payments, cutoff):
         lease = _U(806)
         charges = [
-            ExpectedCharge(2025, month, kind, amount, lease_agreement_id=lease, due_date=date(2025, month, 3))
+            ExpectedCharge(year, month, kind, amount, lease_agreement_id=lease, due_date=date(year, month, 3))
+            for year in (2025, 2026)
             for month, (rent, advance) in enumerate(solls, start=1)
             for kind, amount in ((PT_KALTMIETE, rent), (PT_NK_VORAUSZAHLUNG, advance))
         ]
         inputs = [
-            PaymentInput(_U(1000 + i), kind, "OUT" if refund else "IN", amount, 2025, month,
+            PaymentInput(_U(1000 + i), kind, "OUT" if refund else "IN", amount, year, month,
                          lease_agreement_id=lease, value_date=date(2025, 1, 1) + timedelta(days=day))
-            for i, (month, kind, amount, refund, day) in enumerate(payments)
+            for i, (year, month, kind, amount, refund, day) in enumerate(payments)
         ]
         as_of = date(2025, 1, 1) + timedelta(days=cutoff)
         plain = account_statement(charges, inputs, as_of=as_of, include_payment_dates=True)
@@ -140,8 +141,8 @@ class TestI6G_SetOffOnlyMovesIst:
         assert sum((i.ist for i in settled.open_items), Decimal("0.00")) == settled.ist_total
         assert sum((i.open_amount for i in settled.open_items), Decimal("0.00")) == settled.balance
         for before, after in zip(plain.open_items, settled.open_items):
-            key = (before.period_month, before.payment_type)
-            assert (after.period_month, after.payment_type, after.soll) == (*key, before.soll)
+            key = (before.period_year, before.period_month, before.payment_type)
+            assert (after.period_year, after.period_month, after.payment_type, after.soll) == (*key, before.soll)
             assert after.open_amount == after.soll - after.ist
             # The period of payments and the changes of Ist stay one story.
             assert sum((d for _, d in after.payment_changes), Decimal("0.00")) - after.ist == (
@@ -153,10 +154,16 @@ class TestI6G_SetOffOnlyMovesIst:
             else:
                 assert after.open_amount == before.open_amount, key  # not yet due or balanced: untouched
 
-        # A credit and an open due position never remain side by side, and no notice exceeds what the lease owes.
-        due_open = [i.open_amount for i in settled.open_items if i.is_due and i.open_amount > 0]
-        assert not (due_open and any(i.open_amount < 0 for i in settled.open_items))
-        assert sum(due_open, Decimal("0.00")) <= max(settled.balance, Decimal("0.00"))
+        # Money stays in its calendar year and its type; within them a credit and an open due position never
+        # remain side by side, so no notice exceeds what the lease owes in that year and type.
+        groups = {(i.period_year, i.payment_type) for i in settled.open_items}
+        for group in groups:
+            before = [i for i in plain.open_items if (i.period_year, i.payment_type) == group]
+            after = [i for i in settled.open_items if (i.period_year, i.payment_type) == group]
+            assert sum((i.ist for i in after), Decimal("0.00")) == sum((i.ist for i in before), Decimal("0.00")), group
+            due_open = [i.open_amount for i in after if i.is_due and i.open_amount > 0]
+            assert not (due_open and any(i.open_amount < 0 for i in after)), group
+            assert sum(due_open, Decimal("0.00")) <= max(sum((i.open_amount for i in after), Decimal("0.00")), Decimal("0.00"))
 
 
 # ===========================================================================

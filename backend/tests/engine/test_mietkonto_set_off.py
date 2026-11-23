@@ -1,10 +1,8 @@
-"""A surplus of one position of a lease settles the oldest due open position of that lease (#806).
+"""A surplus of one position of a lease settles the oldest due open position of its calendar year and type (#806).
 
-Owner decision of 2026-11-22: across payment types and months, oldest due position first; the principal of a
-notice never exceeds what the lease owes. Every expected value is derived by hand in the comment of its test.
-Rent, advances and the heating advance of one month share one due date (the third of the month in these
-fixtures); positions with the same due date keep the order the open items list them in: heating advance, rent,
-operating advance (by payment type).
+Owner decision of 2026-11-23: a surplus is set off within the calendar year and within the position type; nothing is
+set off across the year end or between rent and advances. Every expected value is derived by hand in the comment of
+its test. The fixtures give every position of a month the same due date, the third of the month.
 """
 from __future__ import annotations
 
@@ -105,20 +103,44 @@ def test_a_surplus_settles_the_oldest_positions_one_after_the_other_across_month
     assert result.balance == Decimal('700.00') == notice_principal(result)  # 2400 owed - 1700 paid
 
 
-def test_a_surplus_of_rent_settles_an_advance_of_an_earlier_month_before_the_advance_of_its_own_month():
-    # May's operating advance (100) and June's (100) are unpaid, May's rent is paid; June's rent was paid
-    # 650 for 500 owed: 150 are left. They settle May's advance (the older one: 100), then 50 of June's.
+def test_a_surplus_of_rent_settles_no_advance_even_of_an_earlier_month():
+    # May's operating advance (100) and June's (100) are unpaid, May's rent is paid; June's rent was paid 650 for 500
+    # owed: 150 are left. No rent of the year is open, and an advance is no rent: the 150 stay a credit of June's rent,
+    # both advances stay open. Owed 1200 - paid 1150 = 50 in all, yet 200 are open (the credit is not set off).
     charges = [owes(5, '500'), owes(5, '100', PT_NK_VORAUSZAHLUNG), owes(6, '500'), owes(6, '100', PT_NK_VORAUSZAHLUNG)]
     result = statement(charges, [paid(5, '500.00'), paid(6, '650.00')])
-    assert positions(result) == {(5, PT_KALTMIETE): Decimal('0.00'), (5, PT_NK_VORAUSZAHLUNG): Decimal('0.00'),
-                                 (6, PT_KALTMIETE): Decimal('0.00'), (6, PT_NK_VORAUSZAHLUNG): Decimal('50.00')}
-    assert result.balance == Decimal('50.00') == notice_principal(result)  # 1200 owed - 1150 paid
+    assert positions(result) == {(5, PT_KALTMIETE): Decimal('0.00'), (5, PT_NK_VORAUSZAHLUNG): Decimal('100.00'),
+                                 (6, PT_KALTMIETE): Decimal('-150.00'), (6, PT_NK_VORAUSZAHLUNG): Decimal('100.00')}
+    assert result.balance == Decimal('50.00')
+    assert notice_principal(result) == Decimal('200.00')
 
 
-def test_a_surplus_of_an_advance_settles_rent_too():
-    # The other way round: June's operating advance was paid 250 for 100 owed (150 left), April's rent is unpaid (500).
-    result = statement([owes(4, '500'), owes(6, '100', PT_NK_VORAUSZAHLUNG)], [paid(6, '250.00', PT_NK_VORAUSZAHLUNG)])
-    assert positions(result) == {(4, PT_KALTMIETE): Decimal('350.00'), (6, PT_NK_VORAUSZAHLUNG): Decimal('0.00')}
+def test_a_surplus_of_an_advance_settles_no_rent_but_the_older_advance_of_its_type():
+    # The other way round: June's operating advance was paid 250 for 100 owed (150 left), April's rent is unpaid (500)
+    # and so is March's operating advance (100). The advance is no rent: April's rent stays open with its 500. The 150
+    # settle March's operating advance (the oldest of its type, 100); the other 50 stay a credit of June.
+    charges = [owes(3, '100', PT_NK_VORAUSZAHLUNG), owes(4, '500'), owes(6, '100', PT_NK_VORAUSZAHLUNG)]
+    result = statement(charges, [paid(6, '250.00', PT_NK_VORAUSZAHLUNG)])
+    assert positions(result) == {(3, PT_NK_VORAUSZAHLUNG): Decimal('0.00'), (4, PT_KALTMIETE): Decimal('500.00'),
+                                 (6, PT_NK_VORAUSZAHLUNG): Decimal('-50.00')}
+    assert result.balance == Decimal('450.00')  # 700 owed - 250 paid
+    assert notice_principal(result) == Decimal('500.00')
+
+
+def test_a_surplus_of_the_operating_advance_does_not_settle_the_heating_advance_and_the_reverse():
+    # January's operating advance (100) and heating advance (50) are unpaid, February's are paid 160 and 70 (60 and 20
+    # over 100 and 50). The 60 settle January's operating advance (100 - 60 = 40 open), the 20 January's heating
+    # advance (50 - 20 = 30 open); each stays within its own type. Owed 300 - paid 230 = 70 = 40 + 30.
+    charges = [owes(1, '100', PT_NK_VORAUSZAHLUNG), owes(1, '50', PT_HK_VORAUSZAHLUNG),
+               owes(2, '100', PT_NK_VORAUSZAHLUNG), owes(2, '50', PT_HK_VORAUSZAHLUNG)]
+    result = statement(charges, [paid(2, '160.00', PT_NK_VORAUSZAHLUNG), paid(2, '70.00', PT_HK_VORAUSZAHLUNG)])
+    assert positions(result) == {(1, PT_HK_VORAUSZAHLUNG): Decimal('30.00'), (1, PT_NK_VORAUSZAHLUNG): Decimal('40.00'),
+                                 (2, PT_HK_VORAUSZAHLUNG): Decimal('0.00'), (2, PT_NK_VORAUSZAHLUNG): Decimal('0.00')}
+    assert result.balance == Decimal('70.00') == notice_principal(result)
+    # Only the operating advance was paid beyond its Soll (160 for 100); January's heating advance is no operating advance.
+    result = statement(charges, [paid(2, '160.00', PT_NK_VORAUSZAHLUNG)])
+    assert positions(result)[(1, PT_HK_VORAUSZAHLUNG)] == Decimal('50.00')
+    assert positions(result)[(1, PT_NK_VORAUSZAHLUNG)] == Decimal('40.00')
 
 
 def test_a_surplus_that_settles_a_position_only_in_part_leaves_the_rest_open():
@@ -127,16 +149,6 @@ def test_a_surplus_that_settles_a_position_only_in_part_leaves_the_rest_open():
     items = {item.period_month: item for item in result.open_items}
     assert (items[3].ist, items[3].open_amount, items[4].ist, items[4].open_amount) == (
         Decimal('150.00'), Decimal('450.00'), Decimal('600.00'), Decimal('0.00'))
-
-
-def test_positions_with_the_same_due_date_are_settled_in_the_order_the_open_items_list_them():
-    # Heating advance 50, rent 500 and operating advance 100 of January are unpaid and due the same day; the rent
-    # of February was paid 620 for 500 owed (120 left, due later). The open items list the types in the order
-    # HK_VORAUSZAHLUNG, KALTMIETE, NK_VORAUSZAHLUNG: 50 settle the heating advance, the other 70 the rent.
-    charges = [owes(1, '500'), owes(1, '100', PT_NK_VORAUSZAHLUNG), owes(1, '50', PT_HK_VORAUSZAHLUNG), owes(2, '500')]
-    result = statement(charges, [paid(2, '620.00')])
-    assert positions(result) == {(1, PT_HK_VORAUSZAHLUNG): Decimal('0.00'), (1, PT_KALTMIETE): Decimal('430.00'),
-                                 (1, PT_NK_VORAUSZAHLUNG): Decimal('100.00'), (2, PT_KALTMIETE): Decimal('0.00')}
 
 
 def test_the_surplus_of_several_positions_is_used_in_the_order_of_the_money_that_arrived():
@@ -265,14 +277,16 @@ def test_a_reversed_payment_and_its_reversal_leave_no_surplus():
     assert positions(statement(charges, payments)) == {(1, PT_KALTMIETE): Decimal('600.00'), (2, PT_KALTMIETE): Decimal('600.00')}
 
 
-def test_a_refund_without_a_charge_is_a_position_that_a_surplus_settles():
-    # 200 were paid back for May's operating advance, which was never owed: the 200 are owed back (a position due
-    # on 1 May). June's rent was paid 800 for 600 (200 left): they settle that position.
+def test_a_refund_without_a_charge_is_a_position_that_a_surplus_of_its_type_settles():
+    # 200 were paid back as rent for May, which was never owed: the 200 are owed back (a position due on 1 May).
+    # June's rent was paid 800 for 600 (200 left): they settle that position, both are rent of 2025.
     charges = [owes(6, '600')]
-    payments = [paid(5, '200.00', PT_NK_VORAUSZAHLUNG, direction='OUT'), paid(6, '800.00')]
-    result = statement(charges, payments)
-    assert positions(result) == {(5, PT_NK_VORAUSZAHLUNG): Decimal('0.00'), (6, PT_KALTMIETE): Decimal('0.00')}
+    result = statement(charges, [paid(5, '200.00', direction='OUT'), paid(6, '800.00')])
+    assert positions(result) == {(5, PT_KALTMIETE): Decimal('0.00'), (6, PT_KALTMIETE): Decimal('0.00')}
     assert result.balance == Decimal('0.00')
+    # The same refund of an operating advance is no rent: June's rent surplus does not settle it.
+    other = statement(charges, [paid(5, '200.00', PT_NK_VORAUSZAHLUNG, direction='OUT'), paid(6, '800.00')])
+    assert positions(other) == {(5, PT_NK_VORAUSZAHLUNG): Decimal('200.00'), (6, PT_KALTMIETE): Decimal('-200.00')}
 
 
 # --- a surplus larger than the debt ----------------------------------------------------------------------------------

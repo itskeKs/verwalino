@@ -34,10 +34,10 @@ async def test_rental_monitor_limits_type_units_and_obligation_period(migrator_s
         assert not any(row['kind'].startswith('WEG') or row['kind'] == 'WIRTSCHAFTSPLAN' for row in rows)
         overdue = next(row for row in rows if row['kind'] == 'OFFENE_POSTEN')
         # 12 rental + 12 advance months of one scoped unit, less June's rent (100.00 + 900.00 were paid for it, one into
-        # each rental scope's account, and the lease's debt counts both). The 500.00 over June's rent settle the oldest
-        # due open position of the lease, January 2024's rent (the lease runs since 1 January 2024), which is not one of
-        # the 24 positions of the obligation period (#806): 24 - 1 = 23.
-        assert overdue['detail'].startswith('23 '), overdue
+        # each rental scope's account, and the lease's debt counts both) and less January's rent, which the 500.00 over
+        # June's rent settle (the oldest due open rent of 2025, #806): 24 - 2 = 22. (The lease runs since 1 January 2024;
+        # a surplus is set off within its calendar year, so 2024 takes none of it.)
+        assert overdue['detail'].startswith('22 '), overdue
         assert (await api.get('/api/fristen', params={'reference_date': '2026-12-31'})).status_code == 409
 
 
@@ -143,7 +143,7 @@ async def test_malformed_lease_does_not_become_zero_overdue(migrator_session, sc
     ids = await statement_fixture(migrator_session, scope_seed, 'lease')
     def invalid(*args, **kwargs):
         raise ValueError('Malformed calculation input')
-    monkeypatch.setattr('app.services.payment_service.tenant_lease_charges', invalid)
+    monkeypatch.setattr('app.services.payment_service.tenant_expected_charges', invalid)
     async with client(ids) as api:
         response = await api.get('/api/fristen', params={'reference_date': '2025-12-31', 'accounting_scope_id': str(ids['scope'])})
         assert response.status_code == 409
