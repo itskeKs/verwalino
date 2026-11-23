@@ -2519,6 +2519,23 @@ without a text shows only “Der Import kann nicht fortgesetzt werden.”, never
 | Failure before (raw code) | [view](docs/assets/design/declaration-cost/failure-before-1280.png) | [view](docs/assets/design/declaration-cost/failure-before-360.png) |
 | Failure after (reading model cannot take images) | [view](docs/assets/design/declaration-cost/failure-after-1280.png) | [view](docs/assets/design/declaration-cost/failure-after-360.png) |
 
+An inventory answer that does not fit the import's documents is explained the same way:
+`UNKNOWN_INVENTORY_DOCUMENT` („Die Antwort des Modells nennt ein Dokument, das nicht zu diesem Import gehört …“) and
+`MISSING_INVENTORY_DOCUMENT` („Die Antwort des Modells enthält nicht alle Dokumente dieses Imports …“) each end with
+what to do: „Bitte starten Sie einen neuen Import. Besteht das Problem weiter, wenden Sie sich an den Betreiber.“ A relation
+to a document that was not uploaded does not fail the import. The review screen („Teilungserklärung prüfen“) shows the
+open issues that belong to no proposal in a card „Hinweise zum Import“ above the proposal groups (the `card`
+of a group with an `h2` and the `.declaration-issues` list, one line per issue as „Hinweis: …“ / „Prüfen: …“; the card is
+absent when there are none). The hint names the document, the relation in plain words (ändert, ergänzt, verweist
+auf), the other document as the answer names it, the page, and that it was not uploaded. Synthetic import on the test
+database; nothing scrolls horizontally at 360 px:
+
+| Inventory answer | Desktop (1280 px) | Mobile (360 px) |
+| --- | --- | --- |
+| Before: the relation to a document that was not uploaded failed the import (no text for the code) | [view](docs/assets/design/declaration-inventory/failure-before-1280.png) | [view](docs/assets/design/declaration-inventory/failure-before-360.png) |
+| After: an inventory entry of a document outside the import fails it, with its German text | [view](docs/assets/design/declaration-inventory/failure-after-1280.png) | [view](docs/assets/design/declaration-inventory/failure-after-360.png) |
+| After: the same relation reaches the review as a hint | [view](docs/assets/design/declaration-inventory/review-hint-after-1280.png) | [view](docs/assets/design/declaration-inventory/review-hint-after-360.png) |
+
 
 Provider selection uses the same settings card and native select. API-Basis-URL appears
 for compatible APIs; German copy explains local/self-hosted use and provider data

@@ -13,6 +13,7 @@ import {
 import type { DeclarationImport, ApprovalPreview, DeclarationApprovalRequest, DeclarationCandidate, DeclarationDocument } from "../api/types";
 import { useAuth } from "../auth/useAuth";
 import { ApprovalSummary } from "../components/declarations/ApprovalSummary";
+import { issuePrefix } from "../components/declarations/issuePrefix";
 import { ReviewGroup } from "../components/declarations/ReviewGroup";
 import { SourceSecurityNotice } from "../components/SourceSecurityNotice";
 
@@ -124,6 +125,11 @@ function DeclarationReviewImportPage({ importId }: { importId: string | undefine
   }, [showConfirmation]);
 
   const documentTitles = useMemo(() => new Map(documents.map((document) => [document.id, document.title])), [documents]);
+  // Open issues that belong to no proposal (a document refers to a document that was not uploaded, a page could not be read).
+  const importHints = useMemo(
+    () => (preview?.issues ?? []).filter((issue) => issue.candidate_id === null && issue.resolution_status === "OPEN"),
+    [preview],
+  );
   const grouped = useMemo(() => {
     const initial: Record<GroupKey, DeclarationCandidate[]> = { master: [], units: [], assignments: [], rules: [], clarifications: [] };
     for (const candidate of candidates) initial[groupFor(candidate)].push(candidate);
@@ -225,6 +231,12 @@ function DeclarationReviewImportPage({ importId }: { importId: string | undefine
       {error && <p className="error-text" role="alert">{error}</p>}
       {loading ? <p aria-live="polite">Review-Daten werden geladen.</p> : (
         <>
+          {importHints.length > 0 && (
+            <section className="declaration-review-group card" aria-labelledby="declaration-import-hints-heading">
+              <h2 id="declaration-import-hints-heading">Hinweise zum Import</h2>
+              <ul className="declaration-issues">{importHints.map((issue) => <li key={issue.id}>{issuePrefix(issue.severity)}: {issue.message}</li>)}</ul>
+            </section>
+          )}
           {GROUPS.map(([title, key]) => grouped[key].length > 0 && preview && (
             <ReviewGroup
               key={key}

@@ -1,5 +1,6 @@
 import { type RefObject, type ReactNode } from "react";
 import type { ApprovalPreview, DeclarationCandidate, DeclarationDocument } from "../../api/types";
+import { issuePrefix } from "./issuePrefix";
 
 interface ApprovalSummaryProps {
   preview: ApprovalPreview;
@@ -12,10 +13,6 @@ interface ApprovalSummaryProps {
   dialogRef: RefObject<HTMLDialogElement | null>;
   children?: ReactNode;
   confirmationBlocked?: boolean;
-}
-
-function issuePrefix(severity: string): string {
-  return { INFO: "Hinweis", WARNING: "Prüfen", BLOCKER: "Freigabe gesperrt" }[severity] ?? severity;
 }
 
 export function ApprovalSummary({ preview, candidates, documents, submitting, onConfirm, onClose, error, dialogRef, children, confirmationBlocked }: ApprovalSummaryProps) {
