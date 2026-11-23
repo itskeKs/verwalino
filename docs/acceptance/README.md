@@ -132,6 +132,33 @@ stored cannot be read with the command's own settings (the instance has a random
 `ai_settings_service._cipher` by a stand-in that returns fixed bytes; the switch, the confirmation, the models and the budget are the
 product's own, so what the tester has not set up shows as the product's outcome. No real provider is called.
 
+The inbox path (`/posteingang`) needs the same for the inbox worker's two stages and for the extraction stage, which the declaration
+worker runs in every stack. `python -m tests.offline_inbox_processing <form>` does them, run like the commands above (from `backend/`, test
+database settings sourced). The launching session of the blind acceptance of a change to `/posteingang` or to the intake workers calls it
+between the tester's phases, never the tester. It reuses the invoice command's refusals, model-list stub, cipher stand-in and `discard`, and
+the fakes of the inbox's journey twin: the reading model returns what the scanned pages print (Mustermann Versicherungen AG, RE-2026-0042,
+15.01.2026, 312,00 EUR on page 1; Stadtwerke Test GmbH, 99,00 EUR on pages 3 and 4), and the extraction model fills the proposal from it, with
+the page and the passage of each value. Every form refuses with a message and exit status 1 when no instance of `acceptance-env.sh` is running;
+`local`, `process`, `status` and `discard` also when that run does not hold the test database lock, and the three that take
+`--organization` when no organization has that name or id. None of them touches the instance's app, and none starts a process that outlives it
+(except `stub start`, which ends by itself with the instance).
+
+| Form | When | What it does |
+| --- | --- | --- |
+| `fixtures` | before the tester starts | Writes four samples into the instance's `dist/assets` and prints their `/assets/<name>` paths: `eingang-scan.pdf` (the insurance invoice as one scanned page), `eingang-scan-b.pdf` (the same scan with one pixel changed, for a second upload), `eingang-vier-seiten.pdf` (pages 1 and 2 the insurance invoice with a text layer, pages 3 and 4 a water bill as pictures) and `eingang-e-rechnung.xml` (an XRechnung). It also prints the page script `handIn(...names)` and one call per sample. The session pastes the script with a call appended, in one evaluation, into the tester's browser on `/posteingang`; it puts the named files into the form „Dateien einreichen“ (several names in one call make one batch) and the tester clicks „Stapel einreichen“. |
+| `stub start`, `stub stop` | before the tester sets up the provider, and after the last phase | The invoice command's: the model-list stub on `127.0.0.1:18111` with `gpt-5.4-mini` and `gpt-5.6-luna`, ended by its recorded PID. |
+| `local --organization "<name>"` | after each tester phase that submitted a batch | Runs the inbox worker's inspection and delivery over the organization's uploads until nothing is claimed and prints how many originals each handled. The product's inspection (type, structure, limits) runs in this process; only the malware scanner is stood in with "clean", because an acceptance host has no ClamAV signatures, so a run that must accept the scanner itself is not done with this form. |
+| `process --organization "<name>"` | after `local`, and again after the tester has divided and confirmed a multipage original | Runs the extraction stage (the real `process_once`, its local parse in the isolated child) over the queue, oldest document first, until nothing is claimed, and prints one line per attempt: the document, its pages, the attempt, the outcome and the model each stage was asked (`document <id> (pages 3-4) attempt 1: succeeded; reading gpt-5.4-mini (page 3), gpt-5.4-mini (page 4); extraction gpt-5.6-luna (pages 3,4)`), which the session quotes as the provider record. `no model asked` is the line of the e-invoice and of an organization without AI setup (`unavailable (ai_import_disabled)`); `awaiting_split; no model asked` is the line of an upload of several pages that nobody has divided yet: nothing is sent. |
+| `process … --fail-extraction` | after the phase that submitted the scan whose extraction must fail | As above, but the extraction model times out after the reading was paid, for every document this run processes. The stage takes the oldest waiting document first, so run `process` after the first scan, then let the tester submit the second one and run it with the option. |
+| `status --organization "<name>"` | at any time | Lists the organization's batches, their files with the inspection each one has passed and the documents of each file (one per page range) with the state and the number of attempts of their extraction (`awaiting_split` while an upload of several pages waits for its division to be confirmed). |
+| `discard` | after the last phase, before `acceptance-env.sh stop` | The invoice command's: removes the run's model metering rows and model-read proposals (migrations 0197 and 0198, the inbox's included) from the shared test database, which `stop` leaves behind and which make a later migration-chain test refuse the downgrade. |
+
+`process` refuses when nothing is queued for the extraction of the organization (it says to run `local` first and that a multipage original is
+queued again once its division is confirmed), `local` when no upload awaits inspection or delivery, and `status` when the organization has no
+batch. The key the instance stored cannot be read with the command's own settings (the instance has a random session secret), so the command
+replaces `ai_settings_service._cipher` as the invoice command does; the switch, the confirmation, the models, the budget, the claim, the lease and
+the split decision are the product's own, so what the tester has not set up shows as the product's outcome. No real provider is called.
+
 The tester gets the URL and the sign-in, nothing else. While an instance runs, no backend test
 process may use the test database, because the lock stays with the run until `stop`. Production
 (`docker-compose.prod.yml`) is never involved.
@@ -180,7 +207,7 @@ rounds ([AGENTS.md](../../AGENTS.md), "Work comes from issues").
 After every run, including a failed or abandoned run, the launching session must remove the
 disposable acceptance stack completely using the
 [label-filtered cleanup commands](../operations/acceptance-cleanup.md), or, for a per-PR instance,
-run `scripts/acceptance-env.sh stop` (after an invoice run `stub stop` and `discard` first, while the run still holds the test database lock).
+run `scripts/acceptance-env.sh stop` (after an invoice or inbox run `stub stop` and `discard` first, while the run still holds the test database lock).
 Stop every background process and dev server the run started; remove its scratch directories,
 temporary screenshots and inactive lock files. Remove its worktree and local branch only after
 the PR is merged or closed, following [Worktrees and cleanup](../../AGENTS.md#worktrees-and-cleanup).

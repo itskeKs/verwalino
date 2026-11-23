@@ -165,21 +165,32 @@ def _require_test_database() -> str:
 
 # ---- the sample documents -----------------------------------------------------------------------------------------------
 
-def scan(variant: int = 0) -> bytes:
-    """The scanned invoice: one A4 image that prints what the reading model is made to read, and no text layer.
-
-    ``variant`` 1 differs from 0 by one pixel: a second scan with the same bytes would be a duplicate of the first.
-    """
+def printed_image(lines: list[str]) -> Image.Image:
+    """One A4 grey image that prints the lines, as a scanner delivers a page: a picture and no text layer."""
     image = Image.new("L", (595, 842), 255)
     drawing = ImageDraw.Draw(image)
     font = ImageFont.truetype(str(Path(reportlab.__file__).parent / "fonts" / "Vera.ttf"), 18)  # has the umlauts the invoice prints
-    for number, line in enumerate(_printed_lines()):
+    for number, line in enumerate(lines):
         drawing.text((60, 100 + 34 * number), line, fill=0, font=font)
+    return image
+
+
+def scan_pdf(lines: list[str], variant: int = 0) -> bytes:
+    """A one-page PDF that holds only the picture of the printed lines.
+
+    ``variant`` 1 differs from 0 by one pixel: a second scan with the same bytes would be a duplicate of the first.
+    """
+    image = printed_image(lines)
     if variant:
         image.putpixel((2, 2), 0)
     out = io.BytesIO()
     image.save(out, "PDF", resolution=72)
     return out.getvalue()
+
+
+def scan(variant: int = 0) -> bytes:
+    """The scanned invoice: one A4 image that prints what the reading model is made to read, and no text layer."""
+    return scan_pdf(_printed_lines(), variant)
 
 
 def fixture_documents() -> dict[str, bytes]:
@@ -190,15 +201,18 @@ def fixture_documents() -> dict[str, bytes]:
     return documents
 
 
-def write_fixtures(instance: Instance) -> list[str]:
+def write_documents(instance: Instance, documents: dict[str, bytes]) -> list[str]:
+    """Write the documents into the instance's ``dist/assets``, where the app serves them at ``/assets/<name>``."""
     assets = instance.scratch / "dist" / "assets"
     if not assets.is_dir():
         raise Refusal(f"{assets} does not exist: the instance serves no frontend build, so nothing could fetch the documents")
-    written = []
-    for name, data in fixture_documents().items():
+    for name, data in documents.items():
         (assets / name).write_bytes(data)
-        written.append(name)
-    return written
+    return list(documents)
+
+
+def write_fixtures(instance: Instance) -> list[str]:
+    return write_documents(instance, fixture_documents())
 
 
 # ---- the model-list stub ------------------------------------------------------------------------------------------------
@@ -332,6 +346,16 @@ class _StandInCipher:
         return b"offline-stand-in-key"
 
 
+def models_asked(reads: list[ReadingRecord], calls: list[InvoiceExtractionRecord]) -> str:
+    """What the fake models were asked, as the record of an attempt prints it (shared with the inbox command)."""
+    stages = []
+    if reads:
+        stages.append("reading " + ", ".join(f"{read.model} (page {read.pdf_page})" for read in reads))
+    if calls:
+        stages.append("extraction " + ", ".join(f"{call.model} (pages {','.join(map(str, call.pages))})" for call in calls))
+    return "; ".join(stages) or "no model asked"
+
+
 @dataclass
 class AttemptRecord:
     """One attempt the worker finished and what the fake models were asked meanwhile."""
@@ -345,12 +369,7 @@ class AttemptRecord:
 
     def line(self) -> str:
         outcome = self.status + (f" ({self.error_code})" if self.error_code else "")
-        stages = []
-        if self.reads:
-            stages.append("reading " + ", ".join(f"{read.model} (page {read.pdf_page})" for read in self.reads))
-        if self.calls:
-            stages.append("extraction " + ", ".join(f"{call.model} (pages {','.join(map(str, call.pages))})" for call in self.calls))
-        return f"invoice {self.invoice_id} attempt {self.attempt_no}: {outcome}; {'; '.join(stages) or 'no model asked'}"
+        return f"invoice {self.invoice_id} attempt {self.attempt_no}: {outcome}; {models_asked(self.reads, self.calls)}"
 
 
 async def _waiting(organization_id: uuid.UUID) -> int:
