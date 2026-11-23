@@ -170,6 +170,25 @@ def export_organization_with_second_administrators_contact_setup(world, rent_wor
     world.data.update(contact=person, contact_domain=domain["id"], contact_grant=grant["id"])
 
 
+@given("a separate organization has a contact data domain granted to its clerk and another one whose grant was revoked again for export")
+def export_organization_with_grants_to_its_clerk(world, rent_world, rent_db, export_client):
+    from sqlalchemy import text
+    from tests.test_person_data_domain_restore import contact_setup, listed
+    world.actor = export_client
+    world.data["export_source"] = rent_world
+    # The clerk has a name of their own in the user list; the administrator grants the data domain of Anna Berg to them,
+    # prepares the data domain of Bernd Weber, grants it to them as well and revokes that grant again.
+    world.run(rent_db.execute(text('UPDATE "user" SET display_name=:name WHERE id=:clerk'),
+                              {"name": "Clara Clerk", "clerk": rent_world["clerk"]}))
+    world.run(rent_db.commit())
+    contacts = [world.run(contact_setup(rent_world, maker="admin", grantee="clerk", name=name))
+                for name in (("Anna", "Berg"), ("Bernd", "Weber"))]
+    person, domain, grant = contacts[1]
+    revoked = world.act("POST", f"/api/person-data-domains/{domain['id']}/grants/{grant['id']}/revoke")
+    assert revoked.status_code == 204, world.describe_response()
+    world.data["clerk_contacts"] = [(contact, world.run(listed(rent_world, contact))) for contact, _, _ in contacts]
+
+
 @given("a separate organization has a WEG with two roof repair levies, an issued owner notice and a draft for export")
 def export_organization_with_levy_notices(world, rent_world, export_client):
     from tests.bdd.steps.browser_setup import create
@@ -453,6 +472,35 @@ def restored_contact_setup_names_the_second_administrator(world, rent_db):
     assert second != str(world.data['import_target']['admin'])
     assert {kind: (str(row.actor), row.is_active, row.password_hash) for kind, row in found.items()} == {
         'domain': (second, False, '!'), 'grant': (second, False, '!')}
+
+
+@then("the imported contacts show both domains with the clerk's grants, their rights and reasons, the revoked one shown as revoked")
+def imported_grants_to_the_clerk(world):
+    from tests.test_organization_import import in_target_ids
+    from tests.test_person_data_domain_restore import listed, without_stamp
+    mapping = world.data['import_result']['id_map']
+    clerk = mapping['user'][str(world.data['export_source']['clerk'])]
+    for source_contact, (source_domains, source_grants) in world.data['clerk_contacts']:
+        domains, grants = world.run(listed(world.data['import_target'], mapping['person'][source_contact]))
+        assert without_stamp(domains) == without_stamp(in_target_ids(source_domains, mapping))
+        assert grants == in_target_ids(source_grants, mapping)
+        assert [(row['user_id'], row['user_display_name'], row['capabilities'], row['reason_code'], row['expires_at'])
+                for row in grants] == [(clerk, 'Clara Clerk', ['export', 'read'], 'TEAM_ACCESS', None)]
+    live, revoked = (grants[0] for _, (_, grants) in world.data['clerk_contacts'])
+    assert live['revoked_at'] is None and revoked['revoked_at'] is not None
+
+
+@then("the clerk's account is listed as deactivated")
+def imported_clerk_is_deactivated(world):
+    mapping = world.data['import_result']['id_map']
+    clerk = mapping['user'][str(world.data['export_source']['clerk'])]
+    async def users():
+        async with api_client(world.data['import_target']) as target:
+            return await target.get('/api/users')
+    answer = world.run(users())
+    assert answer.status_code == 200, answer.text
+    assert [(row['display_name'], row['is_active'], row['role']) for row in answer.json() if row['id'] == clerk] == [
+        ('Clara Clerk', False, 'CLERK')]
 
 
 @then('the imported owner notices and owner accounts show the archived levy amounts')

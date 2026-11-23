@@ -54,6 +54,13 @@ Feature: Organization export import
     Then the imported contact shows its data domain and its grant with the archived reasons and rights
     And the restored domain and grant name the second administrator's account, which cannot sign in, as creator and grantor
 
+  Scenario: A contact data grant to a clerk and a revoked grant are restored, and the clerk's account stays deactivated
+    Given a separate organization has a contact data domain granted to its clerk and another one whose grant was revoked again for export
+    When its administrator downloads the organization archive
+    And the archive is imported into an empty organization after its source organization was deleted
+    Then the imported contacts show both domains with the clerk's grants, their rights and reasons, the revoked one shown as revoked
+    And the clerk's account is listed as deactivated
+
   Scenario: The owner notices of a special levy are restored with the owner accounts
     Given a separate organization has a WEG with two roof repair levies, an issued owner notice and a draft for export
     When its administrator downloads the organization archive
