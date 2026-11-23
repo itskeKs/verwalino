@@ -65,6 +65,11 @@ SEGMENTED_NOTICE_FORMAT = 2
 STANDARD_PREMIUM = 5
 COMMERCIAL_PREMIUM = 9
 
+# Stored beside the premium of a tenant notice: the premium follows from the usage of the unit
+# (commercial unit: 9 points, otherwise 5). Notices without the key (issued before it was stored,
+# and every owner notice) are rendered without a statement of the rule.
+PREMIUM_RULE_UNIT_USAGE = "unit_usage"
+
 
 class MissingBaseInterestRate(ValueError):
     """A half-year of positive overdue principal has no published base rate."""
@@ -263,6 +268,7 @@ def assemble_dunning(
     override_fee: Decimal | None = None,
     rate_periods: tuple[tuple[date, Decimal], ...] | None = None,
     premium: int = STANDARD_PREMIUM,
+    premium_rule: str | None = None,
 ) -> DunningInput | None:
     """Assemble a dunning notice from overdue items.
 
@@ -286,7 +292,8 @@ def assemble_dunning(
             rates = dict(rate_periods)
             rows = [_interest_item(item, issue_date, rates, premium) for item in overdue_items]
             interest = _money(sum((Decimal(row["interest"]) for row in rows), Decimal("0")))
-            snapshot = {"premium": premium, "reference_date": issue_date.isoformat(), "items": rows}
+            snapshot = {"premium": premium, **({"premium_rule": premium_rule} if premium_rule else {}),
+                        "reference_date": issue_date.isoformat(), "items": rows}
         total = _money(principal + fee + interest)
     due_date = issue_date + timedelta(days=due_days)
 

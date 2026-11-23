@@ -13,6 +13,22 @@ Feature: Dunning interest
     And "PDF herunterladen" opens a PDF with the tenant and the reviewed interest
     And the rent account lists the issued interest separately from the open rent
 
+  @browser
+  Scenario Outline: The notice detail and its PDF name the premium and the unit's usage it follows from
+    Given April rent of 700 EUR with 600 EUR paid on 7 April 2026
+    And the April rental unit is "<usage>"
+    When the administrator saves the dunning settings in the browser
+    And the manager issues a first reminder for the April arrears
+    And the manager creates an April notice as of 31 October 2026
+    And the manager confirms "Mahnung ausgeben"
+    Then the notice detail shows <interest> EUR interest and names <premium> percentage points and the unit's usage as the rule
+    And the PDF of the notice names <premium> percentage points and the unit's usage as the rule
+
+    Examples:
+      | usage   | interest | premium |
+      | WOHNUNG | 3,64     | 5       |
+      | GEWERBE | 5,91     | 9       |
+
   Scenario: April rent paid on the third working day is on time
     Given April rent of 700 EUR with 700 EUR paid on 7 April 2026
     When the manager checks April reminders on 7 April 2026

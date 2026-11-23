@@ -165,7 +165,11 @@ those bytes. No background deletion or retention override is added.
 Monthly model costs reuse the Q&A reservation ledger and declaration extraction
 runs. Running imports reserve their entire existing per-import ceiling; completed
 runs use their recorded cost. Active or expired Q&A reservations retain their
-worst-case charge until trustworthy final accounting. A shared organization lock
+worst-case charge until trustworthy final accounting, except that a question whose
+request provably never left the host (the name did not resolve, the endpoint guard
+refused the address or the connection could not be made) is finalized at zero: an
+unreachable provider does not use up the allowance. A timeout or any failure after the
+request may have been written keeps the reservation. A shared organization lock
 serializes admission across properties, processes, and both features. Crashed
 work can therefore conservatively consume the allowance until reconciled by the
 existing worker lifecycle; restarting does not reset it. Calendar-month accounting
@@ -2787,14 +2791,14 @@ rendering (800,000,000 pixels per import; the temporary bound of 256 MiB applies
 upload limit of 25 MiB per PDF (`HV_DECLARATION_MAX_PDF_BYTES`) bounds a large scan first: a scan of 200
 pages in high resolution can exceed it before the page limit is reached.
 
-**Version defaults.** The extraction prompt version is `declaration-v4` and the harness version
-`6` (compatible endpoints `8`, Anthropic fingerprint `v5`); the reading prompt is `reading-v1`
+**Version defaults.** The extraction prompt version is `declaration-v5`, the schema version `3` and the harness version
+`7` (compatible endpoints `9`, Anthropic fingerprint `v6`); the reading prompt is `reading-v1`
 with schema `reading-1`; the invoice extraction prompt is `invoice-v2` with schema `invoice-2` (ten fields, the vendor's IBAN among them, and for every stated value the page and passage it was found on; shared by the inbox, #501), and a proposal
 that the models made carries the processor version `invoice-model-v1` (the inbox's `intake-model-v1`; the deterministic parsers keep
 `invoice-local-v1` and `intake-local-v1`). The reading and invoice versions are constants, not settings. `docker-compose.prod.yml` and `.env.example` carry the new defaults.
-A protected env file that still pins `HV_DECLARATION_PROMPT_VERSION=declaration-v3` or
-`HV_DECLARATION_HARNESS_VERSION=3`, `4` or `5` keeps recording the old labels on new runs: remove the pins
-when upgrading.
+A protected env file that still pins `HV_DECLARATION_PROMPT_VERSION=declaration-v3` or `declaration-v4`,
+`HV_DECLARATION_SCHEMA_VERSION=2` or `HV_DECLARATION_HARNESS_VERSION=3`, `4`, `5` or `6` keeps recording the old labels
+on new runs: remove the pins when upgrading.
 
 ### Tesseract is removed (issue #502)
 

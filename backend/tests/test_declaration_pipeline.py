@@ -59,6 +59,7 @@ from app.models.declaration_import import (
     DeclarationExtractionRun,
     DeclarationImport,
     DeclarationImportDocument,
+    DeclarationImportPass,
 )
 from app.models.property import Property
 from app.models.property_document import PropertyDocument
@@ -2929,6 +2930,89 @@ async def test_an_inventory_that_misses_a_document_of_the_import_fails_before_an
         "FAILED", "MISSING_INVENTORY_DOCUMENT", 13, 7
     )
     assert run is not None and (run.input_tokens, run.output_tokens) == (13, 7)
+
+
+@pytest.mark.asyncio
+async def test_a_retry_after_a_version_change_asks_for_the_inventory_again_and_leaves_the_old_run_as_it_was(
+    seed_data,
+) -> None:
+    """An import that ran under the previous prompt, schema and harness versions and is retried after the deploy.
+
+    The versions label the run that made the calls. The retry opens a new run under the current ones and asks for the
+    inventory again (model answers are not stored, so none of the earlier run can be reused); the earlier run and its
+    pass ledger rows keep the versions they ran with (issue #876).
+    """
+    import json
+    from contextlib import closing
+
+    import psycopg2
+
+    from tests.conftest import MIGRATOR_SYNC_URL
+
+    lease, document_key, store = await _seed_pipeline_import(
+        seed_data, make_text_pdf("Teilungserklärung\nHauptstraße 1")
+    )
+    old = ("declaration-v4", "2", "6")
+    old_run_id = uuid.uuid4()
+    old_inventory_pass = ProviderPassMetadata.from_values(
+        pass_id="inventory", attempt_no=1, stage="provider", configured_model="gpt-5.6-luna",
+        returned_model_id="gpt-5.6-luna", reasoning_effort="medium", request_id=None,
+        prompt_version=old[0], prompt_sha256="0" * 64, schema_version=old[1], schema_sha256="1" * 64,
+        harness_version=old[2], harness_sha256="2" * 64, input_tokens=17, cached_input_tokens=0,
+        cache_write_input_tokens=0, output_tokens=11, estimated_cost_usd=Decimal("0.000001"), latency_ms=1,
+        retry_count=0, route_action="NONE", route_reason_codes=(), failure_class=None,
+    )
+    with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection, connection, connection.cursor() as cursor:
+        cursor.execute(
+            "INSERT INTO declaration_extraction_run (id, organization_id, import_id, status, provider, model_name, "
+            "prompt_version, schema_version, harness_version, error_code, completed_at) "
+            "VALUES (%s, %s, %s, 'FAILED', 'OpenAiDeclarationProvider', 'gpt-5.6-luna', %s, %s, %s, "
+            "'PROVIDER_TIMEOUT', now())",
+            (str(old_run_id), str(lease.organization_id), str(lease.import_id), *old),
+        )
+        cursor.execute(
+            "INSERT INTO declaration_import_pass (organization_id, declaration_extraction_run_id, attempt_no, safe_metadata) "
+            "VALUES (%s, %s, 1, %s::jsonb)",
+            (str(lease.organization_id), str(old_run_id), json.dumps(old_inventory_pass.as_safe_dict())),
+        )
+    async with get_tenant_session(lease.organization_id) as session:
+        item = await session.scalar(select(DeclarationImport).where(DeclarationImport.id == lease.import_id))
+        assert item is not None
+        item.status = "RETRY_WAIT"
+        item.next_attempt_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        item.error_code = "PROVIDER_TIMEOUT"
+        item.error_message = "PROVIDER_TIMEOUT"
+    provider = _RecordingProvider(document_key)
+
+    await DeclarationPipeline(provider, store=store).run(lease)
+
+    assert provider.calls[0] == "inventory", "the earlier run's inventory answer is not reused"
+    async with get_tenant_session(lease.organization_id) as session:
+        item = await session.scalar(select(DeclarationImport).where(DeclarationImport.id == lease.import_id))
+        runs = (
+            await session.execute(
+                select(DeclarationExtractionRun)
+                .where(DeclarationExtractionRun.import_id == lease.import_id)
+                .order_by(DeclarationExtractionRun.started_at)
+            )
+        ).scalars().all()
+        old_rows = (
+            await session.execute(
+                select(DeclarationImportPass).where(DeclarationImportPass.declaration_extraction_run_id == old_run_id)
+            )
+        ).scalars().all()
+    assert item is not None and item.status == "NEEDS_REVIEW"
+    earlier, current = runs
+    assert earlier.id == old_run_id
+    assert (earlier.status, earlier.prompt_version, earlier.schema_version, earlier.harness_version) == ("FAILED", *old)
+    assert (current.status, current.prompt_version, current.schema_version, current.harness_version) == (
+        "SUCCEEDED", settings.declaration_prompt_version, settings.declaration_schema_version,
+        settings.declaration_harness_version,
+    )
+    assert (settings.declaration_prompt_version, settings.declaration_schema_version,
+            settings.declaration_harness_version) != old
+    assert [(row.attempt_no, row.safe_metadata["prompt_version"], row.safe_metadata["harness_version"])
+            for row in old_rows] == [(1, old[0], old[2])]
 
 
 @pytest.mark.asyncio

@@ -275,6 +275,7 @@ async def test_automatic_owner_interest_starts_after_the_resolved_hausgeld_due_d
             assert notice['included_items'][0]['due_date'] == '2026-07-03'
             item = notice['interest_snapshot']['items'][0]
             assert (item['due_date'], item['interest_start'], item['days']) == ('2026-07-03', '2026-07-04', 1)
+            assert notice['interest_snapshot']['premium'] == 5 and 'premium_rule' not in notice['interest_snapshot']
         finally:
             restored = await api.put(settings_path, json=settings_body)
             assert restored.status_code == 200, restored.text
@@ -545,6 +546,7 @@ async def test_t35_levy_interest_actual_dates_payment_and_configuration_frozen(l
         with pdfplumber.open(io.BytesIO(pdf_before.content)) as pdf:
             before_text = '\n'.join(page.extract_text() for page in pdf.pages)
         assert '5,77' in before_text and '3.605,77' in before_text
+        assert 'Nutzung der Einheit' not in before_text
         await book_payment(api, ids, '1000.00', value_date='2026-06-20')
         recalculated = await api.post('/api/dunning/owner', json=dunning_body(ids, reference_date='2026-06-26', override_fee='0.00'))
         assert recalculated.status_code == 201, recalculated.text

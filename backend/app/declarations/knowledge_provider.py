@@ -51,7 +51,25 @@ class KnowledgeProviderError(RuntimeError):
 
 
 class ProviderUnavailable(KnowledgeProviderError):
+    """The provider could not answer.
+
+    ``not_sent`` is the transport's statement that the request provably never left the host (the same fact as
+    ``ProviderFailure.not_sent``): nothing was written, so nothing can have been consumed. It is decided from structured
+    facts by the adapter and never from message text; everything else, from the moment a request byte may have been
+    written, is unknown and stays False, and reported usage excludes it.
+    """
+
     code = "PROVIDER_UNAVAILABLE"
+
+    def __init__(
+        self,
+        message: str = "Knowledge provider is unavailable.",
+        usage: ProviderUsage | None = None,
+        *,
+        not_sent: bool = False,
+    ) -> None:
+        super().__init__(message, usage)
+        self.not_sent = not_sent and usage is None
 
 
 class ProviderTimeout(KnowledgeProviderError):

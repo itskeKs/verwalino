@@ -90,6 +90,32 @@ it("puts complete principal, interest and open amounts before descriptive column
   for (const table of tables) expect(within(table).getAllByRole("row")).toHaveLength(13);
 });
 
+const segmented = (premium: 5 | 9, extra: object = {}) => ({
+  ...notice, interest_amount: premium === 9 ? "5.91" : "3.64",
+  interest_snapshot: { premium, reference_date: "2026-10-31", ...extra, items: [{
+    payment_type: "KALTMIETE", period_year: 2026, period_month: 4, due_date: "2026-04-07", days: 207, principal: "100.00", interest: premium === 9 ? "5.91" : "3.64",
+    segments: [{ start: "2026-04-08", end: "2026-06-30", days: 84, principal: "100.00", base_interest_rate: "1.27", annual_rate: `${1.27 + premium}`, interest: "2.36" }],
+  }] },
+});
+const showNotice = (stored: object) => {
+  vi.mocked(api.get).mockImplementation(async url => url === "/api/dunning/notice" ? stored : []);
+  render(<MemoryRouter initialEntries={["/mahnungen/notice"]}><Routes><Route path="/mahnungen/:dunningId" element={<DunningNoticeDetailPage />} /></Routes></MemoryRouter>);
+};
+it.each([
+  [9, 2, "Der Aufschlag richtet sich nach der Nutzung der Einheit: Die Einheit wird gewerblich genutzt, deshalb wurden 9 Prozentpunkte angewendet (Annahme: kein Verbraucher). Für jede andere Einheit gelten 5 Prozentpunkte."],
+  [5, 1, "Der Aufschlag richtet sich nach der Nutzung der Einheit: Die Einheit wird nicht gewerblich genutzt, deshalb wurden 5 Prozentpunkte angewendet. Für eine gewerblich genutzte Einheit gelten 9 Prozentpunkte (Annahme: kein Verbraucher)."],
+] as const)("names the %i point premium and the unit's usage it follows from", async (premium, paragraph, sentence) => {
+  showNotice(segmented(premium, { premium_rule: "unit_usage" }));
+  expect(await screen.findByText(`Basiszinssatz + ${premium} Prozentpunkte (§ 288 Abs. ${paragraph} BGB)`)).toBeVisible();
+  expect(screen.getByText(sentence)).toBeVisible();
+});
+
+it.each([5, 9] as const)("names no unit rule on a %i point notice that stored none (issued before, owner notices)", async premium => {
+  showNotice(segmented(premium));
+  expect(await screen.findByText(`Basiszinssatz + ${premium} Prozentpunkte (§ 288 Abs. ${premium === 9 ? 2 : 1} BGB)`)).toBeVisible();
+  expect(screen.queryByText(/Nutzung der Einheit/)).toBeNull();
+});
+
 it.each(["KALTMIETE", "NK_VORAUSZAHLUNG"])("shows the stored interest start only on the new %s row alongside legacy data", async payment_type => {
   const legacy = notice.interest_snapshot.items[0];
   vi.mocked(api.get).mockImplementation(async url => url === "/api/dunning/notice" ? {

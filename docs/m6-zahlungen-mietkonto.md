@@ -272,6 +272,19 @@ owners, or 9 for a unit with usage type `GEWERBE`. Each segment accrues
 rounded running totals so they reconcile to the frozen item amount. Interest accrues on the
 overdue principal only.
 
+The premium follows from the usage of the unit, not from the tenant. Decision #30 allows 9 points
+only for a debtor who is not a consumer, and the software takes a unit of usage `GEWERBE` to mean
+exactly that; every other unit gets 5 points (owner decision of 2026-11-22 on #815). There is no
+consumer flag on tenants, so a consumer who rents a commercial unit is charged 9 points. A tenant
+notice stores the rule beside the premium (`interest_snapshot.premium_rule` is `unit_usage`), and
+its detail page and its PDF state it: for a commercial unit "Die Einheit wird gewerblich genutzt,
+deshalb wurden 9 Prozentpunkte angewendet (Annahme: kein Verbraucher)", for any other unit
+"Die Einheit wird nicht gewerblich genutzt, deshalb wurden 5 Prozentpunkte angewendet", each with
+the other premium as the alternative. Owner notices always use 5 points and state no rule. The PDF
+is rendered again from the frozen notice on every download and mail dispatch, so a notice issued
+before the rule was stored has no `premium_rule` and is rendered exactly as before, without the
+sentence.
+
 Migration 0174 seeds the global `base_interest_rate` catalog with the January and July rates
 from 2002 through July 2026. Verify future entries against the
 [Bundesbank rate history](https://www.bundesbank.de/de/bundesbank/organisation/agb-und-regelungen/basiszinssatz-607820)
@@ -282,7 +295,7 @@ When a required half-year is missing, the API returns 409 and the user sees whic
 For 100 EUR due 7 April 2026, the residential notice through 31 October records 84 days
 at 6.27% (1.44 EUR) and 123 days at 6.52% (2.20 EUR), totaling 3.64 EUR in interest.
 The stored snapshot supplies the detail and PDF with dates, principal, days, base and annual
-rates, premium, and interest amounts. Existing issued notices retain their stored fees,
+rates, premium, the rule of the premium, and interest amounts. Existing issued notices retain their stored fees,
 interest and single-rate snapshots. The tenant ledger displays the fees and interest of
 issued notices for the selected lease separately from Soll, Ist and Saldo. For an unscoped
 notice, the frozen snapshot records its source lease. Historical tenant notices without a

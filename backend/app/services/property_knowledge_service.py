@@ -846,9 +846,15 @@ async def query_property_knowledge(
             # Do not surface arbitrary adapter errors or retain their message.
             provider_error = ProviderUnavailable()
         latency_ms = max(0, int((time.monotonic() - started) * 1000))
-        usage, finalized_cost, mismatch = _usage_for_reservation(raw_usage, reservation, getattr(provider, "_price_provider", "openai"))
-        if provider_error is not None and raw_usage is None:
-            finalized_cost = reservation.reserved_cost_usd
+        if isinstance(provider_error, ProviderUnavailable) and provider_error.not_sent:
+            # The request provably never left the host (the name did not resolve, the endpoint guard refused the
+            # address, the connection could not be made): nothing was consumed, so nothing is booked and no usage is
+            # missing. Unknown is never zero: every other failure without usage keeps the reservation below.
+            usage, finalized_cost, mismatch = None, Decimal("0"), None
+        else:
+            usage, finalized_cost, mismatch = _usage_for_reservation(raw_usage, reservation, getattr(provider, "_price_provider", "openai"))
+            if provider_error is not None and raw_usage is None:
+                finalized_cost = reservation.reserved_cost_usd
         outcome = mismatch or (
             getattr(provider_error, "code", None) if provider_error is not None else "SUCCESS"
         )

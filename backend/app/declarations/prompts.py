@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from app.declarations.schemas import FIXED_CORE_FIELDS, UNREADABLE_MARKER
 
-PROMPT_VERSION = "declaration-v4"
+PROMPT_VERSION = "declaration-v5"
 READING_PROMPT_VERSION = "reading-v1"
 
 _FIXED_CORE_GUIDANCE = """Fixed-core fact contract for every item in facts:
@@ -63,10 +63,26 @@ property-management duty or entitlement for that party. When it does, extract
 only the minimum role or name required to understand that rule.
 """.strip()
 
+_INVENTORY_KEY_GUIDANCE = """
+Every supplied page is labelled document_key=<key>; one key stands for one uploaded file.
+Return exactly one entry in documents for every document_key that appears in the supplied pages, and no entry for
+any other key. Copy the key character for character into the entry's document_key; never use a title, a file name
+or an invented key in its place. The pages supplied may be only some pages of a file. That file still gets its one
+entry under its key.
+A file may contain several deeds, for example a declaration with its amendments, supplements or plans. That is still
+one entry for the file: give it the type and title of its main deed. A deed inside a file never gets an entry of its
+own, and deeds of one file are not related to each other.
+A relation's target_document_key is the document_key of the supplied document it points to, copied exactly. A
+relation to a document that was not supplied names that document by the words of the text; never make up a key for
+it.
+""".strip()
+
 INVENTORY_PROMPT = f"""{DATA_BOUNDARY}
 
 Identify the supplied documents, their role, dates, deed references, and only
 explicit amendment, supplement, or reference relations. {_PRIVACY_FILTER}
+
+{_INVENTORY_KEY_GUIDANCE}
 """
 
 CORE_EXTRACTION_PROMPT = f"""{DATA_BOUNDARY}
