@@ -42,11 +42,12 @@ async def new_lease(api, w, *, valid_from, rent, number, advance='0.00'):
     return lease.json()['id'], account.json()['id']
 
 
-async def pay(api, w, lease, account, amount, year, month, value_date, kind='KALTMIETE'):
-    """A booked payment (rent unless told otherwise); a year of None books it without an assigned period."""
+async def pay(api, w, lease, account, amount, year, month, value_date, kind='KALTMIETE', direction='IN'):
+    """A booked payment (rent unless told otherwise, received unless told otherwise); a year of None books it without an
+    assigned period."""
     period = {} if year is None else {'period_year': year, 'period_month': month}
     payment = await api.post('/api/payments', json={
-        'bank_account_id': str(account), 'direction': 'IN', 'amount': amount, 'value_date': value_date,
+        'bank_account_id': str(account), 'direction': direction, 'amount': amount, 'value_date': value_date,
         'payment_type': kind, 'tenant_profile_id': str(w['tenant']), 'lease_agreement_id': str(lease),
         **period})
     assert payment.status_code == 201, payment.text
@@ -135,6 +136,29 @@ async def test_a_payment_without_an_assigned_year_counts_in_the_year_of_its_valu
         await pay(api, w, lease, account, '500.00', None, None, '2025-01-10')
         again = await notice(api, w, lease, '2024-01-01', '2024-03-31', '2025-01-15')
         assert again.json()['principal_amount'] == '1000.00'
+
+
+async def test_a_refund_without_an_assigned_year_is_demanded_only_by_the_periods_that_hold_its_value_date(rent_world):
+    w = rent_world
+    async with api_client(w) as api:
+        # Rent 500.00 from 1 January 2025, every month paid; 300.00 were paid back on 10 June 2025 without an assigned
+        # year. Read on 15 January 2026 a notice over the year demands the 300.00, one over January to May nothing (it
+        # does not hold 10 June) and one over June to December the 300.00: the halves add up to the year. (Listed with
+        # every period of its year the two halves demanded 600.00 together.)
+        lease, account = await new_lease(api, w, valid_from='2025-01-01', rent='500.00', number='Refund')
+        for month in range(1, 13):
+            await pay(api, w, lease, account, '500.00', 2025, month, f'2025-{month:02d}-02')
+        await pay(api, w, lease, account, '300.00', None, None, '2025-06-10', direction='OUT')
+        year = await notice(api, w, lease, '2025-01-01', '2025-12-31', '2026-01-15')
+        first = await notice(api, w, lease, '2025-01-01', '2025-05-31', '2026-01-15')
+        second = await notice(api, w, lease, '2025-06-01', '2025-12-31', '2026-01-15')
+        assert (year.status_code, year.json()['principal_amount']) == (201, '300.00')
+        assert (first.status_code, first.json()['detail']) == NOTHING_OVERDUE
+        assert (second.status_code, second.json()['principal_amount']) == (201, '300.00')
+        # The rent accounts of the halves agree with the notices: 0.00 and 300.00.
+        rows = [await rent_account(api, lease, start, end, '2026-01-15')
+                for start, end in (('2025-01-01', '2025-05-31'), ('2025-06-01', '2025-12-31'))]
+        assert [(row['balance'], row['due_balance']) for row in rows] == [('0.00', '0.00'), ('300.00', '300.00')]
 
 
 async def test_the_rent_account_of_a_year_agrees_with_itself_and_depends_on_no_other_year(rent_world):

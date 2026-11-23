@@ -578,19 +578,44 @@ def _ist_key(p: PaymentInput) -> tuple[int | None, int | None, str]:
     return (p.period_year, p.period_month, p.payment_type)
 
 
-def _in_period(year: int | None, month: int | None, period: tuple[date, date] | None) -> bool:
+def _in_period(
+    year: int | None, month: int | None, period: tuple[date, date] | None, value_date: date | None = None,
+) -> bool:
     """Whether a position or a payment of (year, month) belongs to the period (None: every one does).
 
     By the month it names, by the year when it names no month, exactly as a payment's assigned period is read
-    for a statement (`PaymentService._scope_payments_to_period`); a booking without a year was read in the year of
-    its value date and is in.
+    for a statement (`PaymentService._scope_payments_to_period`); a booking without a year is read by its value date
+    (one without a value date is in).
     """
-    if period is None or year is None:
+    if period is None:
         return True
     start, end = period
+    if year is None:
+        return value_date is None or start <= value_date <= end
     if month is None:
         return start.year <= year <= end.year
     return (start.year, start.month) <= (year, month) <= (end.year, end.month)
+
+
+def _unassigned_groups(
+    ist: Decimal, changes: list[tuple[date, Decimal]], period: tuple[date, date] | None,
+) -> list[tuple[Decimal, list[tuple[date, Decimal]], bool]]:
+    """The money booked without a year of one type as (Ist, dated changes, outside the period) groups.
+
+    A booking without a year counts in the calendar year of its value date, so the bookings of two years are two
+    positions; the bookings of one year that the period holds and those it does not hold are two positions as well,
+    because the period lists only the money whose value date it holds. Money without a value date is one group
+    of its own, first, and is in.
+    """
+    groups: dict[tuple[int, bool], list[tuple[date, Decimal]]] = {}
+    for day, delta in changes:
+        groups.setdefault((day.year, period is not None and not period[0] <= day <= period[1]), []).append((day, delta))
+    undated = _money(ist - sum((delta for _, delta in changes), Decimal("0.00")))
+    result = [(undated, [], False)] if undated or not groups else []
+    for (year, outside) in sorted(groups):
+        result.append((_money(sum((delta for _, delta in groups[year, outside]), Decimal("0.00"))),
+                       groups[year, outside], outside))
+    return result
 
 
 def _due_on(item: OpenItem) -> date:
@@ -760,7 +785,8 @@ def account_statement(
     if set_off_surplus and as_of is None:
         raise ValueError("The set-off of a surplus needs the reference date (as_of)")
     payments = [p for p in payments if p.is_booked and not p.is_reversed and not p.is_reversal]
-    elsewhere = [p.signed_amount for p in payments if p.other_scope and _in_period(p.period_year, p.period_month, period)]
+    elsewhere = [p.signed_amount for p in payments
+                 if p.other_scope and _in_period(p.period_year, p.period_month, period, p.value_date)]
     heating_periods = {(c.period_year, c.period_month) for c in expected_charges if c.payment_type == PT_HK_VORAUSZAHLUNG}
     combined_prepayments = {(p.period_year, p.period_month) for p in payments if p.combined_advance}
     reconciled_periods = heating_periods & combined_prepayments
@@ -837,6 +863,7 @@ def account_statement(
 
     all_keys = set(soll_by_key) | set(ist_by_key)
     items: list[OpenItem] = []
+    outside_period: set[int] = set()  # the positions (by index) of bookings without a year that the period does not hold
     soll_total = Decimal("0.00")
     ist_total = Decimal("0.00")
     for key in sorted(all_keys, key=lambda k: (k[0] or 0, k[1] or 0, k[2])):
@@ -883,14 +910,23 @@ def account_statement(
                     payment_changes=tuple(paid_changes), combined_advance=key in combined_keys,
                     reconciled_advance=key in combined_keys and key[:2] in reconciled_periods))
         else:
-            items.append(OpenItem(period_year=key[0], period_month=key[1], payment_type=key[2],
-                soll=soll, ist=ist, open_amount=_money(soll - ist), payment_changes=tuple(changes)))
+            # A booking without a year is positioned by the calendar year of its value date and by whether the
+            # period holds it (`_unassigned_groups`); the set-off reads all of them, the period lists those it holds.
+            groups = _unassigned_groups(ist, changes, period) if set_off_surplus and key[0] is None else [(ist, changes, False)]
+            for held, dated, outside in groups:
+                if outside:
+                    outside_period.add(len(items))
+                items.append(OpenItem(period_year=key[0], period_month=key[1], payment_type=key[2],
+                    soll=soll, ist=held, open_amount=_money(soll - held), payment_changes=tuple(dated)))
     if set_off_surplus:
         items = _set_off_surplus(items, as_of)
         if not include_payment_dates:
             items = [replace(item, payment_changes=()) for item in items]
     if period is not None:
-        items = [item for item in items if _in_period(item.period_year, item.period_month, period)]
+        # A position of money outside the period is no row of it; one that holds nothing any more (its money settled
+        # other positions) changes no figure and stays listed, as it always was.
+        items = [item for index, item in enumerate(items) if _in_period(item.period_year, item.period_month, period)
+                 and (index not in outside_period or not (item.ist or item.open_amount))]
         if period_charges is not None:
             items = _show_period_soll(items, period_charges)
         soll_total = sum((item.soll for item in items), Decimal("0.00"))

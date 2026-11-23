@@ -354,6 +354,93 @@ def test_a_payment_without_a_year_and_without_a_value_date_counts_in_no_year():
     assert demanded(result) == Decimal('2500.00')
 
 
+# A booking without a year counts in the year of its value date for the set-off, and a period lists it only when the period
+# holds its value date (as every statement before the set-off read it); bookings of different years or of one period and
+# of another are different positions. So split windows add up to the whole, whatever the year of the booking.
+
+def refunded(amount, on):
+    return PaymentInput(uuid.uuid4(), PT_KALTMIETE, 'OUT', Decimal(amount), None, None, lease_agreement_id=LEASE,
+                        value_date=on)
+
+
+def without_year(result):
+    return [(i.ist, i.open_amount) for i in result.open_items if i.period_year is None]
+
+
+JANUARY_TO_MAY = (date(2025, 1, 1), date(2025, 5, 31))
+JUNE_TO_DECEMBER = (date(2025, 6, 1), date(2025, 12, 31))
+
+
+def test_a_refund_without_a_year_is_demanded_only_by_the_period_that_holds_its_value_date():
+    # Rent 500 a month in 2025, every month paid, 300 paid back without an assigned year on 10 June 2025, read on 15
+    # January 2026. The whole year demands the 300; January to May does not hold 10 June: 0; June to December does: 300.
+    # (Listed with every period of its year the two halves demanded 600 together.) The rows of each view add up.
+    payments = [paid(month, '500.00') for month in range(1, 13)] + [refunded('300.00', date(2025, 6, 10))]
+    views = [read(lease('500'), period, payments) for period in (YEAR_2025, JANUARY_TO_MAY, JUNE_TO_DECEMBER)]
+    assert [demanded(view) for view in views] == [Decimal('300.00'), Decimal('0.00'), Decimal('300.00')]
+    assert [view.balance for view in views] == [Decimal('300.00'), Decimal('0.00'), Decimal('300.00')]
+    assert [without_year(view) for view in views] == [
+        [(Decimal('-300.00'), Decimal('300.00'))], [], [(Decimal('-300.00'), Decimal('300.00'))]]
+    assert all(agrees(view) for view in views)
+
+
+def test_an_incoming_payment_without_a_year_is_listed_once_by_its_value_date():
+    # The same lease, every month paid, and 300 more received without an assigned year on 10 June 2025: nothing is open
+    # in 2025 that they could settle, so they stay a credit of 300 of their own position. That position is listed with
+    # the year and with June to December, not with January to May: the two halves list it once.
+    payments = [paid(month, '500.00') for month in range(1, 13)] + [unassigned('300.00', date(2025, 6, 10))]
+    views = [read(lease('500'), period, payments) for period in (YEAR_2025, JANUARY_TO_MAY, JUNE_TO_DECEMBER)]
+    assert [without_year(view) for view in views] == [
+        [(Decimal('300.00'), Decimal('-300.00'))], [], [(Decimal('300.00'), Decimal('-300.00'))]]
+    assert [view.balance for view in views] == [Decimal('-300.00'), Decimal('0.00'), Decimal('-300.00')]
+    assert [demanded(view) for view in views] == [Decimal('0.00')] * 3
+    assert all(agrees(view) for view in views)
+
+
+def test_bookings_without_a_year_of_one_year_but_of_two_periods_are_two_positions():
+    # Refunds without a year of 100 on 10 January and 200 on 10 June 2025, every month paid. January to May holds the
+    # first only, June to December the second only, the year both as one position (as a statement over the year always
+    # showed them): 100, 200 and 300 demanded; the halves add up to the year.
+    payments = [paid(month, '500.00') for month in range(1, 13)]
+    payments += [refunded('100.00', date(2025, 1, 10)), refunded('200.00', date(2025, 6, 10))]
+    views = [read(lease('500'), period, payments) for period in (YEAR_2025, JANUARY_TO_MAY, JUNE_TO_DECEMBER)]
+    assert [demanded(view) for view in views] == [Decimal('300.00'), Decimal('100.00'), Decimal('200.00')]
+    assert [without_year(view) for view in views] == [
+        [(Decimal('-300.00'), Decimal('300.00'))], [(Decimal('-100.00'), Decimal('100.00'))],
+        [(Decimal('-200.00'), Decimal('200.00'))]]
+    assert all(agrees(view) for view in views)
+
+
+def test_bookings_without_a_year_of_different_years_are_two_positions():
+    # Rent 500 a month in 2025 and 2026, every month paid, and 100 received without an assigned year on 10 June of each
+    # year: a credit of 100 per year, two positions of their own (not one of 200). A view of 2026 lists the second only.
+    payments = [paid(month, '500.00', year=year) for year in (2025, 2026) for month in range(1, 13)]
+    payments += [unassigned('100.00', date(2025, 6, 10)), unassigned('100.00', date(2026, 6, 10))]
+    both = read(lease('500'), (date(2025, 1, 1), date(2026, 12, 31)), payments, reference=date(2027, 1, 15))
+    second = read(lease('500'), (date(2026, 1, 1), date(2026, 12, 31)), payments, reference=date(2027, 1, 15))
+    assert without_year(both) == [(Decimal('100.00'), Decimal('-100.00'))] * 2
+    assert without_year(second) == [(Decimal('100.00'), Decimal('-100.00'))]
+    assert (both.balance, second.balance) == (Decimal('-200.00'), Decimal('-100.00'))
+    assert agrees(both) and agrees(second)
+
+
+def test_a_refund_without_a_year_of_a_later_year_does_not_touch_the_surplus_of_an_earlier_one():
+    # Rent 500 from 2024, every month paid, June 2024 paid 1000: a surplus of 500 that finds no open rent in 2024 and
+    # stays a credit of June 2024. 300 are paid back without a year on 10 March 2026. Whatever period is read, the
+    # refund is demanded in full (2024 to 2026 and 2026) or not read at all (2024), and the credit of 2024 stays.
+    payments = [paid(month, '1000.00' if (year, month) == (2024, 6) else '500.00', year=year)
+                for year in (2024, 2025, 2026) for month in range(1, 13)]
+    payments.append(refunded('300.00', date(2026, 3, 10)))
+    reference = date(2027, 1, 15)
+    contract = lease('500', start=date(2024, 1, 1))
+    views = [read(contract, (date(first, 1, 1), date(last, 12, 31)), payments, reference=reference)
+             for first, last in ((2024, 2026), (2026, 2026), (2024, 2024))]
+    assert [demanded(view, reference) for view in views] == [Decimal('300.00'), Decimal('300.00'), Decimal('0.00')]
+    june_2024 = [month_of(view, 6).open_amount for view in (views[0], views[2])]
+    assert june_2024 == [Decimal('-500.00')] * 2
+    assert all(agrees(view) for view in views)
+
+
 # --- interest --------------------------------------------------------------------------------------------------------
 
 def test_interest_on_a_position_of_the_period_ends_when_the_money_of_another_month_arrived():
