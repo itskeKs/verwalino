@@ -1401,6 +1401,8 @@ export interface DunningInterestSnapshot {
   base_interest_rate?: string;
   annual_rate?: string;
   premium?: 5 | 9;
+  /** Stored by tenant notices: the premium follows from the usage of the unit (9 commercial, otherwise 5). */
+  premium_rule?: "unit_usage";
   reference_date: string;
   items: {
     payment_type: string;

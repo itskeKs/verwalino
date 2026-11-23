@@ -566,6 +566,79 @@ def issued_premium(world, premium):
     assert "07.04.2026" in text
 
 
+def premium_rule_sentence(premium):
+    """The sentence of the letter and the detail page; the premium of a commercial unit is 9, of any other 5."""
+    head = "Der Aufschlag richtet sich nach der Nutzung der Einheit: "
+    if premium == 9:
+        return (head + "Die Einheit wird gewerblich genutzt, deshalb wurden 9 Prozentpunkte angewendet "
+                "(Annahme: kein Verbraucher). Für jede andere Einheit gelten 5 Prozentpunkte.")
+    return (head + "Die Einheit wird nicht gewerblich genutzt, deshalb wurden 5 Prozentpunkte angewendet. "
+            "Für eine gewerblich genutzte Einheit gelten 9 Prozentpunkte (Annahme: kein Verbraucher).")
+
+
+def pdf_words(content):
+    with pdfplumber.open(io.BytesIO(content)) as pdf:
+        return " ".join(" ".join((part.extract_text() or "").split()) for part in pdf.pages)
+
+
+@then(parsers.parse("the issued PDF states that the {premium:d} point premium follows from the unit's usage"))
+def issued_premium_rule(world, premium):
+    response = world.act("GET", f"/api/dunning/{world.data['second_reminder']['id']}/pdf")
+    assert response.status_code == 200, world.describe_response()
+    assert premium_rule_sentence(premium) in pdf_words(response.content)
+
+
+@then("the notice detail records the unit's usage as the rule of the premium")
+def premium_rule_in_the_detail(world):
+    response = world.act("GET", f"/api/dunning/{world.data['second_reminder']['id']}")
+    assert response.status_code == 200, world.describe_response()
+    assert response.json()["interest_snapshot"]["premium_rule"] == "unit_usage"
+
+
+@then(parsers.parse("the notice detail shows {interest} EUR interest and names {premium:d} percentage points "
+                    "and the unit's usage as the rule"))
+@browser_step
+async def notice_detail_premium_rule(browser_world, interest, premium):
+    page = browser_world.page
+    await page.reload()
+    await expect(page.get_by_text("Ausgestellt", exact=True).first).to_be_visible()
+    await browser_world.row("Verzugszinsen", f"{interest} €")
+    card = page.locator(".card").filter(has=page.get_by_role("heading", name="Eingefrorene Zinsberechnung", exact=True))
+    if os.environ.get("VERWALINO_CAPTURE_DESIGN") == "1":
+        directory = Path(__file__).resolve().parents[4] / "docs/assets/design/dunning-premium-rule"
+        directory.mkdir(exist_ok=True)
+        for width in (1280, 360):
+            await page.set_viewport_size({"width": width, "height": 900})
+            await card.scroll_into_view_if_needed()
+            await page.screenshot(path=str(directory / f"after-{premium}-points-{width}.png"), full_page=True)
+    for width in (1280, 360):
+        await page.set_viewport_size({"width": width, "height": 900})
+        await card.scroll_into_view_if_needed()
+        paragraph = 2 if premium == 9 else 1
+        await expect(card.get_by_text(f"Basiszinssatz + {premium} Prozentpunkte (§ 288 Abs. {paragraph} BGB)", exact=True)).to_be_visible()
+        await expect(card.get_by_text(premium_rule_sentence(premium), exact=True)).to_be_visible()
+        assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth"), f"Page overflows at {width} px"
+    await page.set_viewport_size({"width": 1280, "height": 900})
+
+
+@then(parsers.parse("the PDF of the notice names {premium:d} percentage points and the unit's usage as the rule"))
+@browser_step
+async def notice_pdf_premium_rule(browser_world, premium):
+    page = browser_world.page
+    async with page.expect_popup() as opened:
+        await button(page, "PDF herunterladen").click()
+    popup = await opened.value
+    try:
+        await popup.wait_for_load_state()
+        response = await browser_world.context.request.get(popup.url)
+        assert response.status == 200
+        text = pdf_words(await response.body())
+        assert f"Basiszinssatz + {premium} Prozentpunkte" in text, text
+        assert premium_rule_sentence(premium) in text, text
+    finally:
+        await popup.close()
+
+
 @then("the rent account lists the issued interest separately from the open rent")
 @browser_step
 async def informational_ledger(browser_world):

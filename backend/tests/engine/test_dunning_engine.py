@@ -378,6 +378,20 @@ def test_april_arrears_cross_the_published_july_rate(premium, interest, parts):
     ]
 
 
+@pytest.mark.parametrize("premium", [5, 9])
+def test_snapshot_stores_the_rule_of_the_premium_only_when_the_caller_names_one(premium):
+    from app.engine.dunning import PREMIUM_RULE_UNIT_USAGE
+
+    item = _t35_item("100.00", date(2026, 4, 7))
+    kwargs = dict(rate_periods=_rates("1.27") + ((date(2026, 7, 1), Decimal("1.52")),), premium=premium)
+    named = assemble_dunning([item], 1, date(2026, 10, 31), premium_rule=PREMIUM_RULE_UNIT_USAGE, **kwargs)
+    plain = assemble_dunning([item], 1, date(2026, 10, 31), **kwargs)
+    assert named.interest_snapshot["premium_rule"] == PREMIUM_RULE_UNIT_USAGE == "unit_usage"
+    assert {key: value for key, value in named.interest_snapshot.items() if key != "premium_rule"} == plain.interest_snapshot
+    assert "premium_rule" not in plain.interest_snapshot
+    assert named.interest_amount == plain.interest_amount
+
+
 def test_partial_payment_reduces_the_principal_on_its_value_date():
     from uuid import uuid4
     from app.engine.mietkonto import ExpectedCharge, PaymentInput, account_statement
