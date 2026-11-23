@@ -57,6 +57,8 @@ async def test_the_read_of_a_users_open_imports_uses_the_index_when_the_organiza
                 await seed.execute(text("""INSERT INTO declaration_import (id, organization_id, mode, initiated_by, max_cost_usd, current_stage, status)
                     VALUES (gen_random_uuid(), :org, 'NEW_PROPERTY', :user, 10, :marker, :status)"""),
                     {'org': org, 'user': caller, 'marker': MARKER, 'status': status})
+            own = set((await seed.execute(text("SELECT id FROM declaration_import WHERE current_stage = :marker AND status <> 'CANCELLED'"),
+                                          {'marker': MARKER})).scalars())
             await seed.commit()
             # Statistics as a database that has held these rows for a while has them.
             await seed.execute(text('ANALYZE declaration_import'))
@@ -76,7 +78,8 @@ async def test_the_read_of_a_users_open_imports_uses_the_index_when_the_organiza
                 rows = await DeclarationImportRepository(app_rw_session, org).list_started_by(caller, statuses, 50)
             finally:
                 event.remove(engine, 'before_cursor_execute', capture)
-            assert sorted(row.status for row in rows) == sorted(OPEN)
+            # Other tests of the session may have left open imports of the same user: only this test's rows are compared.
+            assert sorted(row.status for row in rows if row.id in own) == sorted(OPEN)
 
             # The plan of the statement the repository sent, for the values it sent.
             [(statement, parameters)] = statements
