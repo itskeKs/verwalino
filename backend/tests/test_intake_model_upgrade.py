@@ -45,8 +45,8 @@ def _migration():
 async def test_the_inbox_model_path_is_the_release_target_after_0197():
     revision = ScriptDirectory('migrations').get_revision('0198')
     assert revision.down_revision == '0197'
-    assert deployment.TARGET == '0201'
-    assert ScriptDirectory('migrations').get_heads() == ['0201']
+    assert deployment.TARGET == '0202'
+    assert ScriptDirectory('migrations').get_heads() == ['0202']
 
 
 async def test_a_ledger_row_belongs_to_exactly_one_attempt_of_its_own_organization(migrator_session, scope_seed, store):
