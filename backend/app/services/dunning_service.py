@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.engine.dunning import (
     COMMERCIAL_PREMIUM,
+    PREMIUM_RULE_UNIT_USAGE,
     STANDARD_PREMIUM,
     MissingBaseInterestRate,
     assemble_dunning,
@@ -209,7 +210,8 @@ class DunningService:
         dunning = self._engine_result(assemble_dunning, overdue_items=overdue,
             existing_notice_count=demanded, issue_date=reference_date,
             override_fee=override_fee, custom_fees=fees, rate_periods=rates,
-            premium=COMMERCIAL_PREMIUM if unit.usage_type == "GEWERBE" else STANDARD_PREMIUM)
+            premium=COMMERCIAL_PREMIUM if unit.usage_type == "GEWERBE" else STANDARD_PREMIUM,
+            premium_rule=PREMIUM_RULE_UNIT_USAGE)
         return lease, tenant, result, dunning
 
     # ------------------------------------------------------------------

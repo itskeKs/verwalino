@@ -290,6 +290,53 @@ def test_legacy_dunning_html_is_identical_without_a_frozen_interest_start(kind, 
     assert sha256(recipient_documents()[kind].encode()).hexdigest() == expected
 
 
+def _segmented_notice(premium, **snapshot_extra):
+    """An issued tenant notice (April rent, 100.00 open, second reminder as of 31 October 2026)."""
+    from app.engine.dunning import OverdueItem, assemble_dunning
+    from app.models.dunning_notice import DunningNotice
+
+    item = OverdueItem(2026, 4, "KALTMIETE", Decimal("700.00"), Decimal("600.00"), Decimal("100.00"),
+                       date(2026, 4, 7))
+    result = assemble_dunning([item], 1, date(2026, 10, 31), premium=premium, rate_periods=(
+        (date(2026, 1, 1), Decimal("1.27")), (date(2026, 7, 1), Decimal("1.52"))))
+    return DunningNotice(level=2, issue_date=result.issue_date, due_date=result.due_date,
+        principal_amount=result.principal_amount, fee_amount=result.fee_amount,
+        total_amount=result.total_amount, interest_amount=result.interest_amount,
+        included_items=result.items_snapshot(), interest_snapshot={**result.interest_snapshot, **snapshot_extra})
+
+
+@pytest.mark.parametrize('premium,interest,digest', [
+    (9, '5.91', '4c2ce402197faae5f9018744ebb2bac1fe3e99d7f226275eabcbc25b61cfe5f8'),
+    (5, '3.64', '068c7a3e8bd4f716c5978aacf544067b13aa0296f83bb27f59485534d19b1a9e'),
+])
+def test_segmented_dunning_html_is_identical_without_a_stored_premium_rule(premium, interest, digest):
+    """A notice issued before the premium rule was stored (and every owner notice) renders as it always did."""
+    from hashlib import sha256
+    from app.services.dunning_pdf import build_dunning_html, DunningDisplayNames
+
+    notice = _segmented_notice(premium)
+    assert 'premium_rule' not in notice.interest_snapshot and str(notice.interest_amount) == interest
+    html = build_dunning_html(notice, DunningDisplayNames(person_name='Anna Müller'))
+    assert 'Nutzung der Einheit' not in html
+    assert sha256(html.encode()).hexdigest() == digest
+
+
+@pytest.mark.parametrize('premium,paragraph,sentence', [
+    (9, 2, 'Der Aufschlag richtet sich nach der Nutzung der Einheit: Die Einheit wird gewerblich genutzt, '
+           'deshalb wurden 9 Prozentpunkte angewendet (Annahme: kein Verbraucher). '
+           'Für jede andere Einheit gelten 5 Prozentpunkte.'),
+    (5, 1, 'Der Aufschlag richtet sich nach der Nutzung der Einheit: Die Einheit wird nicht gewerblich genutzt, '
+           'deshalb wurden 5 Prozentpunkte angewendet. '
+           'Für eine gewerblich genutzte Einheit gelten 9 Prozentpunkte (Annahme: kein Verbraucher).'),
+])
+def test_dunning_pdf_names_the_premium_and_the_unit_usage_it_follows_from(premium, paragraph, sentence):
+    from app.services.dunning_pdf import build_dunning_html, DunningDisplayNames
+
+    html = build_dunning_html(_segmented_notice(premium, premium_rule='unit_usage'),
+                              DunningDisplayNames(person_name='Anna Müller'))
+    assert f'Basiszinssatz + {premium} Prozentpunkte (§ 288 Abs. {paragraph} BGB). {sentence} Stichtag: 31.10.2026.' in html
+
+
 def _plain_notice():
     from types import SimpleNamespace
 

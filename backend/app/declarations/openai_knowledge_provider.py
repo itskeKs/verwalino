@@ -31,6 +31,7 @@ from app.declarations.knowledge_provider import (
     ProviderTimeout,
     ProviderUnavailable,
 )
+from app.declarations.openai_provider import _request_never_left
 from app.declarations.provider import ProviderReservationEstimate, ProviderUsage
 
 
@@ -111,8 +112,9 @@ class OpenAIKnowledgeProvider:
             )
         except APITimeoutError:
             raise ProviderTimeout() from None
-        except (APIConnectionError, RateLimitError):
-            raise ProviderUnavailable() from None
+        except (APIConnectionError, RateLimitError) as error:
+            # The one decision of the three transports (issue #833): True only for a request that provably never left.
+            raise ProviderUnavailable(not_sent=_request_never_left(error)) from None
         except (
             APIResponseValidationError,
             ContentFilterFinishReasonError,
