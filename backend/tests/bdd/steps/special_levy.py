@@ -210,6 +210,50 @@ def csv_totals_without_scope(world):
         'Einnahmen gesamt': '700,00', 'Ausgaben gesamt': '250,00', 'Saldo': '450,00'}, rows
 
 
+SEPA_IBAN = 'DE89370400440532013000'  # a public synthetic test vector
+SEPA_REFERENCE = 'SONNENWEG-2026-01'
+
+
+@given('the tenant has a SEPA mandate on a bank account of Sonnenweg 5')
+def sepa_mandate_without_scope(world):
+    tenant = world.data['plain_tenant']
+    person = world.act('PUT', f"/api/persons/{tenant['person_id']}", json={
+        'street': 'Sonnenweg 5', 'zip_code': '12345', 'city': 'Teststadt', 'iban': SEPA_IBAN})
+    assert person.status_code == 200, world.describe_response()
+    account = create(world, '/api/bank-accounts', {'property_id': world.data['plain_property']['id'], 'account_type': 'LAUFEND',
+        'label': 'Mietkonto Sonnenweg', 'iban': 'DE02120300000000202051'})
+    world.data['plain_account'] = account
+    creditor = world.act('PUT', f"/api/payments/sepa/accounts/{account['id']}/creditor", json={
+        'creditor_id': 'DE98ZZZ09999999999', 'name': 'Synthetic Vermietung', 'country': 'DE', 'town': 'Teststadt', 'bank_authorized': True})
+    assert creditor.status_code == 200, world.describe_response()
+    create(world, f"/api/payments/sepa/accounts/{account['id']}/mandates", {
+        'tenant_profile_id': tenant['id'], 'reference': SEPA_REFERENCE, 'signed_on': '2026-01-01', 'sequence_type': 'FRST',
+        'last_used_on': None, 'debtor_country': 'DE', 'confirmed_iban': SEPA_IBAN,
+        'original_reference': 'Synthetic paper original', 'mandate_confirmed': True})
+
+
+@then('the SEPA page of that bank account lists the tenant and the mandate')
+def sepa_page_without_scope(world):
+    answer = world.act('GET', f"/api/payments/sepa/accounts/{world.data['plain_account']['id']}")
+    assert answer.status_code == 200, world.describe_response()
+    page = answer.json()
+    assert [row['tenant_profile_id'] for row in page['tenants']] == [world.data['plain_tenant']['id']], page
+    assert [(row['reference'], row['revoked_at']) for row in page['mandates']] == [(SEPA_REFERENCE, None)], page
+
+
+@then('the January 2026 collection of that bank account previews 700 euros and its file can be downloaded')
+def sepa_collection_without_scope(world):
+    run = {'bank_account_id': world.data['plain_account']['id'], 'accounting_scope_id': None, 'year': 2026, 'month': 1,
+           'collection_date': '2026-01-30', 'message_id': 'SYNTHETIC-JAN-2026', 'pre_notification_on': '2026-01-15',
+           'notice_period_days': 14, 'shorter_period_agreed': False, 'pre_notification_confirmed': True, 'bank_profile_confirmed': True}
+    preview = world.act('POST', '/api/payments/sepa/preview', json=run)
+    assert preview.status_code == 200, world.describe_response()
+    assert preview.json()['total'] == '700.00', preview.json()
+    file = world.act('POST', '/api/payments/sepa.xml', json={**run, 'expected_source_digest': preview.json()['source_digest']})
+    assert file.status_code == 200, world.describe_response()
+    assert file.headers['content-type'].startswith('application/xml') and b'700.00' in file.content
+
+
 @when("Berta's ownership entry is corrected to start on 1 August 2026")
 def correct_berta_start(world):
     berta = world.data['levy_owners'][1]['id']
