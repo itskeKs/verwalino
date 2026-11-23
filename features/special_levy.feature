@@ -60,6 +60,13 @@ Feature: Special levy
     Then the two CSV downloads of Sonnenweg 5 for 2026 are the same as before the levy
     And the annual overview CSV of Sonnenweg 5 shows 700 euros income, 250 euros expenses and 450 euros balance
 
+  Scenario: The direct debits of a bank account of a property without an accounting scope can be prepared once the organization holds a levy
+    Given Sonnenweg 5 has no accounting scope and its tenant owes 700 euros rent for January 2026
+    And the tenant has a SEPA mandate on a bank account of Sonnenweg 5
+    When the manager creates the roof repair levy due on 1 July 2026
+    Then the SEPA page of that bank account lists the tenant and the mandate
+    And the January 2026 collection of that bank account previews 700 euros and its file can be downloaded
+
   @browser
   Scenario Outline: Missing resolution feedback preserves the levy inputs at <width> pixels
     When the manager clicks create without a resolution in the browser at <width> pixels

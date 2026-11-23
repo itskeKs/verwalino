@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { CandidateReviewResult, DeclarationCandidate } from "../../api/types";
 import { CandidateDecision } from "./CandidateDecision";
 import { EvidenceViewer } from "./EvidenceViewer";
+import { issuePrefix } from "./issuePrefix";
 
 interface ReviewGroupProps {
   title: string;
@@ -25,15 +26,6 @@ function isSafeForBulk(candidate: DeclarationCandidate): boolean {
     && !candidate.requires_individual_review
     && !hasBlockingIssue
     && !["RULE", "DOCUMENT_RELATION", "MEA_RESCALE"].includes(candidate.candidate_type);
-}
-
-function issuePrefix(severity: string): string {
-  const labels: Record<string, string> = {
-    INFO: "Hinweis",
-    WARNING: "Prüfen",
-    BLOCKER: "Freigabe gesperrt",
-  };
-  return labels[severity] ?? severity;
 }
 
 function riskText(candidate: DeclarationCandidate): string {
