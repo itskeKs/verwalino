@@ -58,6 +58,7 @@ const callCases: CallCase[] = [
   { name: "listDeclarationDocuments", run: () => endpoints.listDeclarationDocuments("i1"), method: "get", args: ["/api/declaration-imports/i1/documents"] },
   { name: "updateDeclarationDocument", run: () => endpoints.updateDeclarationDocument("i1", "d1", BODY), method: "patch", args: ["/api/declaration-imports/i1/documents/d1", BODY] },
   { name: "startDeclarationImport", run: () => endpoints.startDeclarationImport("i1", "key-1"), method: "post", args: ["/api/declaration-imports/i1/start", undefined, KEY_HEADERS] },
+  { name: "listMeldungen", run: () => endpoints.listMeldungen(), method: "get", args: ["/api/meldungen", { signal: undefined }] },
   { name: "getDeclarationImport", run: () => endpoints.getDeclarationImport("i1"), method: "get", args: ["/api/declaration-imports/i1"] },
   { name: "listDeclarationCandidates", run: () => endpoints.listDeclarationCandidates("i1"), method: "get", args: ["/api/declaration-imports/i1/candidates"] },
   { name: "reviewDeclarationCandidate", run: () => endpoints.reviewDeclarationCandidate("i1", "c1", BODY, "key-1"), method: "patch", args: ["/api/declaration-imports/i1/candidates/c1", BODY, KEY_HEADERS] },

@@ -142,6 +142,7 @@ import type {
   ChallengeAnnotation,
   DeclarationImport,
   DeclarationImportCreate,
+  Meldung,
   DeclarationDocument,
   DeclarationDocumentUpdate,
   DeclarationCandidate,
@@ -334,6 +335,11 @@ export function updateDeclarationDocument(
 
 export function startDeclarationImport(importId: string, requestKey: string): Promise<DeclarationImport> {
   return api.post<DeclarationImport>(`/api/declaration-imports/${importId}/start`, undefined, { headers: { "Idempotency-Key": requestKey } });
+}
+
+/** The Meldungen of the signed-in user, newest first, at most 50. */
+export function listMeldungen(signal?: AbortSignal): Promise<{ items: Meldung[] }> {
+  return api.get<{ items: Meldung[] }>("/api/meldungen", { signal });
 }
 
 export function getDeclarationImport(importId: string): Promise<DeclarationImport> {

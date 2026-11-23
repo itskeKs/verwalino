@@ -10,6 +10,7 @@ import { DeclarationImportPage } from "./DeclarationImportPage";
 import { PropertiesPage } from "./PropertiesPage";
 import { PropertyDetailPage } from "./PropertyDetailPage";
 import { AuthProvider } from "../auth/AuthContext";
+import { MeldungenCtx } from "../components/meldungen/useMeldungen";
 
 import {
   createDeclarationImport,
@@ -803,7 +804,8 @@ describe("status page of a started Teilungserklärung import", () => {
     expect(screen.queryByRole("progressbar")).toBeNull();
     expect(document.querySelector("progress")).toBeNull();
     expect(screen.queryByText(/\d\s?%/)).toBeNull();
-    expect(screen.getByText("Sie können diese Seite schließen; der serverseitige Importstatus bleibt erhalten.")).toBeVisible();
+    expect(screen.getByText(/Sie können diese Seite schließen; der serverseitige Importstatus bleibt erhalten\./)).toBeVisible();
+    expect(screen.getByRole("link", { name: "Meldungen" })).toHaveAttribute("href", "/meldungen");
     // The status line carries the server's label, never a raw stage name.
     expect(screen.getByText("Importstatus: Angaben auslesen.")).toBeVisible();
     expect(screen.queryByText(/extracting|preflight|reconciling|retry_wait|queued/i)).toBeNull();
@@ -923,6 +925,31 @@ describe("status page of a started Teilungserklärung import", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "Teilungserklärung prüfen" })).toBeVisible();
+  });
+
+  it("asks the frame to read the Meldungen again when the status of the import changes, and not before", async () => {
+    loadImport(queuedImport());
+    let update: (item: DeclarationImport) => void = () => undefined;
+    vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation((_id, options) => {
+      update = options.onUpdate;
+      return () => undefined;
+    });
+    const reload = vi.fn();
+    render(
+      <MeldungenCtx.Provider value={{ items: [], failed: false, reload }}>
+        <MemoryRouter initialEntries={["/teilungserklaerung/import/import-1"]}>
+          <Routes><Route path="/teilungserklaerung/import/:importId" element={<DeclarationImportPage />} /></Routes>
+        </MemoryRouter>
+      </MeldungenCtx.Provider>,
+    );
+    await screen.findByRole("list", { name: "Verarbeitungsschritte" });
+    expect(reload).not.toHaveBeenCalled();
+
+    act(() => update(queuedImport()));
+    expect(reload).not.toHaveBeenCalled();
+
+    act(() => update(runningImport()));
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the failure text and the retry of a failed import and lists no steps", async () => {

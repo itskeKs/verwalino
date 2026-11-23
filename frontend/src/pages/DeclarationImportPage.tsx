@@ -1,5 +1,6 @@
 import { DeclarationImportStatus, DeclarationImportTarget } from "../components/declarations/DeclarationImportStatus";
 import { DeclarationRunBudget } from "../components/declarations/DeclarationRunBudget";
+import { useMeldungen } from "../components/meldungen/useMeldungen";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
@@ -113,6 +114,7 @@ export function DeclarationImportPage() {
   const { propertyId, importId } = useParams<{ propertyId: string; importId: string }>();
   const location = useLocation();
   const navigate = useNavigate();
+  const { reload: reloadMeldungen } = useMeldungen();
   const [item, setItem] = useState<DeclarationImport | null>(null);
   const [documents, setDocuments] = useState<UploadItem[]>([]);
   const [selectionError, setSelectionError] = useState<string | null>(null);
@@ -140,6 +142,8 @@ export function DeclarationImportPage() {
   const applyImportUpdate = useCallback((updated: DeclarationImport) => {
     const previous = lastStatus.current;
     lastStatus.current = updated.status;
+    // The frame lists the import under Meldungen from its start on, with the state it is in: ask again when it changed.
+    if (previous !== null && previous !== updated.status) reloadMeldungen();
     setItem(updated);
     setReceivedAt(Date.now());
     if (updated.status === "NEEDS_REVIEW" && !isReviewRoute && !reviewNavigated.current) {
@@ -148,7 +152,7 @@ export function DeclarationImportPage() {
       if (previous !== null && PROCESSING_STATUSES.has(previous)) handover.current = window.setTimeout(toReview, REVIEW_HANDOVER_MS);
       else toReview();
     }
-  }, [isReviewRoute, navigate]);
+  }, [isReviewRoute, navigate, reloadMeldungen]);
 
   useEffect(() => () => window.clearTimeout(handover.current), []);
 

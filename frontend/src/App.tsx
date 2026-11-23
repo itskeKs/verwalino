@@ -77,6 +77,7 @@ import { FristenmonitorPage } from "./pages/FristenmonitorPage";
 import { MandateDetailPage } from "./pages/MandateDetailPage";
 import { DeclarationImportPage } from "./pages/DeclarationImportPage";
 import { DeclarationReviewPage } from "./pages/DeclarationReviewPage";
+import { MeldungenPage } from "./pages/MeldungenPage";
 import { PropertyKnowledgePage } from "./pages/PropertyKnowledgePage";
 
 import { PermissionsLayout, PermissionsOverview, PermissionsReviews } from "./pages/PermissionsPage";
@@ -153,6 +154,7 @@ export function AppRoutes() {
       <Routes>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/einstellungen" element={<SettingsPage />} />
+        <Route path="/meldungen" element={<MeldungenPage />} />
         <Route path="/aufgaben" element={<TasksPage />} />
         <Route path="/briefe" element={<LettersPage />} />
         <Route path="/mandate" element={<MandatePage />} />

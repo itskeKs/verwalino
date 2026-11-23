@@ -273,6 +273,25 @@ export interface DeclarationImport {
   max_cost_usd: string;
 }
 
+/** What a Meldung is in: waiting or running (the import is started and not ended), waiting for the user's review, or failed. */
+export type MeldungState = "WAITING" | "RUNNING" | "REVIEW" | "FAILED";
+
+/** One thing the signed-in user is asked to look at; the first kind is the Teilungserklärung import the user started. */
+export interface Meldung {
+  kind: "DECLARATION_IMPORT";
+  id: string;
+  title: string;
+  /** What it is about: the property, or the new property with the titles of its documents. */
+  subject: string;
+  state: MeldungState;
+  /** The server's German state text. */
+  state_label: string;
+  /** When the import was started (or last retried); null when no start was recorded. */
+  at: string | null;
+  /** The path of the application page that shows what the Meldung is about. */
+  target: string;
+}
+
 export type DeclarationImportCreate =
   | { mode: "NEW_PROPERTY"; target_property_id?: never }
   | { mode: "EXISTING_PROPERTY"; target_property_id: string };

@@ -152,6 +152,14 @@
 .topbar-settings { display: inline-flex; align-items: center; gap: 7px; min-height: 42px; padding: 8px; border-radius: 7px; text-decoration: none; font-size: .8rem; }
 .topbar-settings svg { width: 17px; height: 17px; }
 .topbar-settings:hover { background: hsl(var(--accent)); }
+.topbar-meldungen { display: inline-flex; align-items: center; gap: 7px; min-height: 42px; padding: 8px; border-radius: 7px; text-decoration: none; font-size: .8rem; }
+.topbar-meldungen svg { width: 17px; height: 17px; }
+.topbar-meldungen:hover { background: hsl(var(--accent)); }
+.topbar-count { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 9999px; background: hsl(var(--secondary)); color: hsl(var(--secondary-foreground)); font-size: .72rem; font-weight: 600; line-height: 1; }
+.topbar-count--open { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
+.meldung-row { display: grid; gap: 4px; min-width: 0; color: inherit; text-decoration: none; }
+.meldung-row:hover { border-color: hsl(var(--primary)); }
+.meldung-row:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
 .mobile-shortcuts { display: none; }
 .app-layout[data-navigation="mobile"] :is(.app-menu-button, .topbar-brand) { display: inline-flex; }
 .navigation-drawer .app-sidebar { width: min(288px, 85vw); height: 100%; background: hsl(var(--card)); color: hsl(var(--foreground)); --nav-hover: hsl(var(--accent)); --nav-active: hsl(var(--accent)); --nav-active-ink: hsl(var(--primary)); }
@@ -242,7 +250,7 @@
 .app-layout--warm .dashboard-task-list li { padding: 20px 17px; margin-block: 13px; background: hsl(var(--card)); border: 1px solid hsl(var(--ui-border)); border-radius: var(--radius); }
 
 @media (max-width: 1023px) {
-  .topbar-settings span { display: none; }
+  .topbar-settings span, .topbar-meldungen span:not(.topbar-count) { display: none; }
 }
 @media (max-width: 767px) {
   /* Radix dialogs render outside the application shell. */
@@ -258,8 +266,10 @@
   .topbar-actions button svg { width: 18px; height: 18px; }
   .topbar-settings { min-width: 44px; min-height: 44px; justify-content: center; padding: 8px; }
   .topbar-settings span { display: none; }
+  .topbar-meldungen { min-width: 44px; min-height: 44px; justify-content: center; gap: 4px; padding: 8px 6px; }
   .app-layout--warm .app-topbar { --ring: var(--sidebar-foreground); --accent: var(--sidebar-accent); background: var(--nav-surface); color: var(--nav-ink); border: 0; }
-  .app-layout--warm .topbar-brand, .app-layout--warm .app-topbar button, .app-layout--warm .topbar-settings { color: #fff; }
+  .app-layout--warm .topbar-brand, .app-layout--warm .app-topbar button, .app-layout--warm .topbar-settings, .app-layout--warm .topbar-meldungen { color: #fff; }
+  .app-layout--warm .topbar-count--open { background: #c1d9c3; color: #123f40; }
   .mobile-shortcuts { display: flex; justify-content: space-around; gap: 6px; padding: 7px 12px; background: hsl(var(--card)); border-bottom: 1px solid hsl(var(--ui-border)); flex-shrink: 0; }
   .mobile-shortcuts a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 52px; padding: 6px 12px; border-radius: 8px; color: hsl(var(--muted-foreground)); font-size: .74rem; text-decoration: none; }
   .mobile-shortcuts a.active { color: hsl(var(--primary)); background: hsl(var(--accent)); font-weight: 600; }

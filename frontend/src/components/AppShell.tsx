@@ -7,6 +7,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Building2, Inbox, LayoutDashboard, X } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { useDesignTheme } from "../design/useDesignTheme";
+import { MeldungenProvider } from "./meldungen/MeldungenProvider";
 import { OrganizationDeletionBanner } from "./OrganizationDeletionBanner";
 import { Topbar } from "./Topbar";
 import { Sidebar } from "./Sidebar";
@@ -15,7 +16,12 @@ interface Props {
   children: ReactNode;
 }
 
+/** The frame every signed-in page sits in; the entry for the Meldungen and the list page read one answer of the server. */
 export function AppShell({ children }: Props) {
+  return <MeldungenProvider><AppFrame>{children}</AppFrame></MeldungenProvider>;
+}
+
+function AppFrame({ children }: Props) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { theme } = useDesignTheme();
   const desktopQuery = theme === "warm" ? "(min-width: 1024px)" : "(min-width: 768px)";
