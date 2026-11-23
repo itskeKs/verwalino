@@ -1,6 +1,6 @@
 # Feature status
 
-Current feature catalog of Verwalino by area. Status as of 2026-11-21, migration head `0201`.
+Current feature catalog of Verwalino by area. Status as of 2026-11-21, migration head `0202`.
 Status: ✅ implemented and reachable in the running app, 🟡 partial (reason given), ❌ not implemented.
 Short paths: `api/ services/ engine/ models/ workers/ core/` are under
 `backend/app/`, `pages/ components/ lib/` under `frontend/src/`; other paths are relative to the
@@ -183,6 +183,8 @@ actor of every such row (a second administrator or a clerk as actor is always
 refused; the source organization must be deleted or the installation another
 one, with the same address), and beside the living source organization such an
 import is refused (#134, [details](operations/organization-export.md)). Contact data domains
-and their grants are restored with the archived creator and grantor, a grant only for the
-importing administrator as grantee (#817, [details](operations/organization-export.md)). A real fresh-install import is maintainer
+and their grants are restored with the archived creator and grantor, and a grant as the archive
+has it: its grantee, a revocation and an expiry that has passed included; a grant to a
+deactivated placeholder gives no access until an administrator reactivates the account (#817,
+#851, [details](operations/organization-export.md)). A real fresh-install import is maintainer
 acceptance; local validation uses two synthetic organizations in the test DB.

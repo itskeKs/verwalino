@@ -53,6 +53,10 @@ ARCHIVED_ACTOR_MARKERS = {
     'person_data_domain': ('app.organization_import_person_data_domain', 'created_by', ('id', 'domain_id')),
     'person_data_grant': ('app.organization_import_person_data_grant', 'granted_by', ('id', 'grant_id')),
 }
+# A grant is restored as the archive has it (ADR 0016): besides its grantor the setting names its grantee, and every grant
+# is named, because a grant by the importing administrator may still be a grant to a placeholder, revoked, or expired.
+# Table: the further columns its setting names, by key.
+ARCHIVED_ROW_MARKERS = {'person_data_grant': {'user_id': 'user_id'}}
 logger = logging.getLogger(__name__)
 
 
@@ -62,11 +66,20 @@ def refuse(message, **details):
 
 def archived_actor_marker(name, row, importer):
     """(setting, JSON) that names the row of `name` about to be inserted and its archived actor; None when the
-    importer is that actor or the table has no such guard."""
+    importer is that actor, the table has no such guard or an identifier the setting needs is not valid. The row of a
+    table in `ARCHIVED_ROW_MARKERS` is always named."""
     setting, column, (identity, key) = ARCHIVED_ACTOR_MARKERS.get(name, (None, None, (None, None)))
-    if setting is None or row.get(column) in (None, str(importer)):
+    further = ARCHIVED_ROW_MARKERS.get(name, {})
+    if setting is None or (row.get(column) in (None, str(importer)) and not further):
         return None
-    return setting, json.dumps({key: str(uuid.UUID(row[identity])), column: str(uuid.UUID(row[column]))})
+    try:
+        named = {key: str(uuid.UUID(row[identity])), column: str(uuid.UUID(row[column]))}
+        named.update({setting_key: str(uuid.UUID(row[source])) for setting_key, source in further.items()})
+    except (KeyError, TypeError, ValueError, AttributeError):
+        # A null, missing or malformed identifier names no row. The row is inserted like any other row, the database
+        # refuses it and the import answers with IMPORT_INTEGRITY_REFUSAL, as it did before every grant was named.
+        return None
+    return setting, json.dumps(named)
 
 
 def _metadata_size(value):
@@ -636,7 +649,8 @@ async def import_organization(db, auth, source):
                     # A context another user prepared, a binding another user reviewed, and a contact data domain or
                     # grant another user made keep their archived actor (ADR 0016): `protect_dunning_context`,
                     # `scope_insert` and `protect_person_data_setup` accept it only for an inactive placeholder of this
-                    # organization that the marker names together with this row.
+                    # organization that the marker names together with this row. A contact data grant also keeps its
+                    # grantee, its revocation and the time it was made, which the marker of that row opens.
                     marker = archived_actor_marker(name, row, auth.user_id)
                     if marker:
                         await db.execute(text('SELECT set_config(:setting,:marker,true)'),

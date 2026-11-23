@@ -346,22 +346,67 @@ an active administrator of the organization. Every other rule of the trigger sti
 holds, and a domain and a grant stay immutable (a grant allows only its one-way
 revocation) ([ADR 0016](../adr/0016-import-names-the-restored-dunning-context-for-its-preparer.md)).
 
-The grant rules limit what is restored. A grant is accepted only unrevoked and only for
-a grantee who is an active member of the organization, and after an import the only
-active member is the importing administrator. A grant to the importing administrator
-restores, whoever made it. A grant to any other archived account (a clerk), a revoked
-grant, and a grant whose expiry has passed (the restore stamps `created_at` again, and a
-grant must expire after it was created) are refused with entity `person_data_grant`, also
-when the importing administrator made them. Beside the living source organization no
-archived address is the importing administrator's, so a domain is restored with its
-placeholder creator, while a grant is refused because its grantee is a placeholder. What
-differs from the source in a restored domain and grant: the `label` (`Contact ` and the
-contact's id, which is a new id when the installation still holds the source's contacts,
-see "Generated columns"), `created_at` (the restore stamps it again) and the names the
-accounts carry in the importing organization. The trigger also writes its own audit
-event (`person_data.domain_prepared`, `person_data.grant_prepared`) for the restore
-insert, naming the importing administrator as the actor of that act, beside the archived
-event that keeps the archived actor.
+A grant is restored as the archive has it: its grantee, rights, reason, expiry and
+revocation unchanged, and the time it was made (`created_at`). The grantee is the
+account the import maps the archived user to: the importing administrator's own account
+when they carried the archived address; an account the organization already holds under
+that address, which the import sets inactive with the unusable password `!` before it
+inserts any row (the importing administrator's is the one exception), so it is a
+placeholder too and keeps its own name and address; otherwise a new inactive placeholder
+of the archived member (a clerk, a second administrator), who keeps the archived name and
+address and has no credentials. Normally the trigger takes a new grant only for an active
+member, only unrevoked, and stamps `created_at` with the clock. For the one grant an import
+is restoring, the same setting (`app.organization_import_person_data_grant`, which now
+names the grant, its grantor and its grantee for every grant) opens three conditions:
+the grantee may be the placeholder the setting names (a colleague deactivated in the
+user list who keeps their password is no placeholder and a direct insert of such a grant
+is still refused, and so is one to an account of another organization; an import never
+meets the first case, because it deactivates a colleague it relinks and sets the unusable
+password), a revoked grant keeps `revoked_at` and `revoked_by`,
+and the grant keeps its archived `created_at`, which is what lets a grant whose expiry
+has passed restore (a grant must expire after it was created, and the restore used to
+stamp it again). A new grant, written by an administrator, stays as strict as before,
+and a restored grant stays immutable except for its one-way revocation.
+
+What a restored grant means for access: the access function `has_person_data_capability`
+is unchanged and asks for an active member with a live grant. A grant to a placeholder
+therefore gives no access while the account stays deactivated: no session of it is
+accepted and its password is the unusable `!`. The import reactivates nobody and sets no
+password. An administrator can reactivate the account on the user page. That sets no
+password either, but the account is then reachable by whoever holds its sign-in address:
+the administrator's password reset gives it a password, and so does the self-service
+reset ("Passwort vergessen?") where the installation can send mail (SMTP and
+`HV_PUBLIC_HOST` configured, as on the hosted service, see
+[Password recovery configuration](../../DEPLOY.md#password-recovery-configuration)). The
+self-service reset finds an active account by its address, mails the link to that address
+and lets the holder set a password without an administrator. While the account is
+deactivated it finds nothing and sends nothing, and without mail it never issues a link,
+so there the administrator's reset is the only way. A placeholder whose archived address
+was taken carries the synthetic address described above, which no mailbox receives, so
+only the administrator's reset reaches it. Reactivating a placeholder therefore gives the
+account back, with the rights of its restored live grants, to the holder of the archived
+address. Those rights are what `has_person_data_capability` answers: exactly the restored
+live grants. What they change for what the account reads depends on the source-security
+mode of the organization: in the default mode `PREPARATION` the contact policies already
+admit every contact (`person_source_row_access`, migration 0069), with or without a
+grant, as they did in the source, and the grants decide once the organization enforces
+source security. A revoked grant gives no access, before or after a reactivation, and
+neither does a grant whose expiry has passed. The importing administrator gains no
+access to a contact through the grants of other users; as an administrator they see the
+domains and the grant list, as they did in the source. Beside the living source
+organization no archived address is the importing administrator's, so every archived
+member, the first administrator too, is a placeholder there, and their grants restore
+the same way.
+
+What differs from the source in a restored domain and grant: the `label` (`Contact `
+and the contact's id, which is a new id when the installation still holds the source's
+contacts, see "Generated columns"), a domain's `created_at` (the restore stamps it
+again) and the names the accounts carry in the importing organization. The trigger also
+writes its own audit event (`person_data.domain_prepared`, `person_data.grant_prepared`)
+for the restore insert, naming the importing administrator as the actor of that act and
+the restored row as its entity; for a grant restored as revoked it is also a
+`person_data.grant_prepared`, never a revocation. The archived events, which keep the
+archived actors, are restored beside it.
 
 **Dunning notices.** A scoped dunning notice is restored with its immutable
 scope context (`dunning_scope_context`: scope, period, lease or plan, and for an
