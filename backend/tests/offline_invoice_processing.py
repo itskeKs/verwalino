@@ -52,7 +52,6 @@ from app.core.storage import LocalFsDocumentStore, set_store
 from app.declarations.fake_provider import FakeInvoiceExtractionProvider, InvoiceExtractionRecord, ReadingRecord
 from app.declarations.invoice_pipeline import InvoiceProviders
 from app.models.invoice_processing_attempt import InvoiceProcessingAttempt
-from app.repositories.organization_ai_settings_repo import OrganizationAiSettingsRepository
 from app.services import ai_settings_service
 from app.workers.invoice_extraction import process_once
 from tests.bdd.steps.browser_invoice import (
@@ -354,15 +353,6 @@ class AttemptRecord:
         return f"invoice {self.invoice_id} attempt {self.attempt_no}: {outcome}; {'; '.join(stages) or 'no model asked'}"
 
 
-async def _require_ai_import(organization_id: uuid.UUID) -> None:
-    """The organization has saved a key and switched the AI import on: otherwise every scan ends without a model."""
-    async with get_worker_tenant_session(organization_id) as session:
-        row = await OrganizationAiSettingsRepository(session, organization_id).get()
-    if row is None or not row.import_enabled or not row.encrypted_api_key:
-        raise Refusal("the organization has not enabled the AI import with a saved key (Einstellungen, KI für Ihre Organisation): "
-                      "the worker would end every scan without asking a model, so there is nothing for the offline providers to stand in for")
-
-
 async def _waiting(organization_id: uuid.UUID) -> int:
     async with get_worker_tenant_session(organization_id) as session:
         return await session.scalar(select(func.count()).select_from(InvoiceProcessingAttempt)
@@ -389,7 +379,6 @@ async def process_waiting(organization_id: uuid.UUID, *, fail_extraction: bool =
     if not settings.invoice_extraction_enabled:
         raise Refusal("invoice processing is switched off in this process (HV_INVOICE_EXTRACTION_ENABLED=false), so the worker would "
                       "claim nothing; start the command without that setting")
-    await _require_ai_import(organization_id)
     if not await _waiting(organization_id):
         raise Refusal("nothing is waiting: no invoice of this organization is queued (has the tester uploaded one, or restarted a failed one?)")
     built: list[tuple] = []

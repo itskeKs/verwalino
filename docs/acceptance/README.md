@@ -117,11 +117,12 @@ when that run does not hold the test database lock; none of them touches the ins
 | `process … --fail-extraction` | after the phase that queued the scan whose extraction must fail | As above, but the extraction model times out after the reading was paid, for every scan this run processes. The worker takes the oldest waiting attempt first, so run `process` after the first scan, then let the tester upload the second one and run it with the option. |
 | `stub stop`, `discard` | after the last phase, before `acceptance-env.sh stop` | `stub stop` ends the stub after checking that the recorded PID is still that process (start time and command line), and says when it was already gone. `discard` removes the run's model metering rows and model-read proposals (migrations 0197 and 0198) from the shared test database, which `stop` leaves behind and which make a later migration-chain test refuse the downgrade. |
 
-`process` refuses an unknown organization, an organization that has not enabled the AI import with a saved key, an installation whose
-`HV_INVOICE_EXTRACTION_ENABLED` is false and a queue with nothing waiting. The key the instance stored cannot be read with the
-command's own settings (the instance has a random session secret), so the command replaces `ai_settings_service._cipher` by a stand-in
-that returns fixed bytes; the switch, the confirmation, the models and the budget are the product's own, so what the tester
-has not set up shows as the product's outcome. No provider is called.
+`process` refuses an unknown organization, an installation whose `HV_INVOICE_EXTRACTION_ENABLED` is false and a queue with nothing
+waiting. An organization without AI setup is processed like any other: each of its scans ends with the product's own outcome, and the
+line shows it with `no model asked` (`invoice <id> attempt 1: unavailable (ai_import_disabled); no model asked`). The key the instance
+stored cannot be read with the command's own settings (the instance has a random session secret), so the command replaces
+`ai_settings_service._cipher` by a stand-in that returns fixed bytes; the switch, the confirmation, the models and the budget are the
+product's own, so what the tester has not set up shows as the product's outcome. No real provider is called.
 
 The tester gets the URL and the sign-in, nothing else. While an instance runs, no backend test
 process may use the test database, because the lock stays with the run until `stop`. Production

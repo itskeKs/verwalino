@@ -133,19 +133,37 @@ def test_an_unknown_organization_is_refused(instance, capsys):
         assert status == 1 and out == "" and "organization" in err, err
 
 
-async def test_an_organization_without_the_ai_import_or_a_key_is_refused(worker_tenant):
-    _client, seed = worker_tenant
+async def test_an_organization_without_ai_setup_ends_each_scan_with_the_products_outcome_and_no_model_is_asked(
+        instance, worker_tenant, no_invoice_model_data, monkeypatch, capsys):
+    client, seed = worker_tenant
     organization = seed["org_a_id"]
-    # No settings at all, a saved key with the switch off, and neither: nothing for the offline models to stand in for.
-    with pytest.raises(offline.Refusal, match="AI import with a saved key"):
-        await offline.process_waiting(organization)
+    asked = []  # a provider the command built: the product builds none while the organization may not send a scan anywhere
+    reader, extractor = offline._printed_invoice, offline.FakeInvoiceExtractionProvider
+    monkeypatch.setattr(offline, "_printed_invoice", lambda: asked.append("reader") or reader())
+    monkeypatch.setattr(offline, "FakeInvoiceExtractionProvider", lambda *a, **kw: asked.append("extractor") or extractor(*a, **kw))
+
+    async def processed(name, variant, state):
+        _use_store(instance)
+        scan = await _upload(client, name, "application/pdf", offline.scan(variant))
+        status = await asyncio.to_thread(offline.main, ["process", "--organization", str(organization)])
+        out = capsys.readouterr().out
+        # The record line shows the product's outcome and that no model was asked; the original stays.
+        assert status == 0, f"{state}: {out}"
+        assert [line for line in out.splitlines() if line.startswith("invoice ")] == [
+            f"invoice {scan} attempt 1: unavailable (ai_import_disabled); no model asked"], f"{state}: {out}"
+        invoice = await _invoice(client, scan)
+        assert (invoice["processing_status"], invoice["processing_error_code"]) == ("unavailable", "ai_import_disabled"), state
+        _use_store(instance)
+        assert (await client.get(f"/api/invoice-documents/{scan}/content")).content.startswith(b"%PDF"), state
+        assert asked == [] and _model_rows() == (0, 0), state
+
+    await processed(SCAN, 0, "no AI settings at all")
     configure_ai(organization, import_enabled=False, qa_enabled=False)
-    with pytest.raises(offline.Refusal, match="AI import with a saved key"):
-        await offline.process_waiting(organization)
-    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
-        cursor.execute("UPDATE organization_ai_settings SET encrypted_api_key = NULL WHERE organization_id = %s", (str(organization),))
-    with pytest.raises(offline.Refusal, match="AI import with a saved key"):
-        await offline.process_waiting(organization)
+    await processed(SECOND_SCAN, 1, "a saved key with the switch off")
+    # The third state, the switch on without a key, cannot be reached: the settings page refuses to switch the import on
+    # before a key is saved, so there is no organization in it to process.
+    refused = await client.put(f"/api/organizations/{organization}/ai-settings", json={"model": "gpt-5.6-luna", "import_enabled": True, "api_key": None})
+    assert refused.status_code == 422 and "API-Schlüssel" in refused.json()["detail"]
 
 
 async def test_nothing_waiting_is_refused(worker_tenant, no_invoice_model_data):
