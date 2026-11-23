@@ -24,7 +24,7 @@ import asyncio
 import os
 import sys
 import uuid
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from decimal import Decimal
 from unittest.mock import patch
@@ -200,7 +200,9 @@ def _organization_id(name_or_id: str) -> uuid.UUID:
     return ids[0]
 
 
-async def _main(organization_id: uuid.UUID, store: DocumentStore) -> OfflineRun:
+@asynccontextmanager
+async def offline_worker_engine():
+    """The worker role of the disposable test database as this process's worker engine (shared with the invoice command)."""
     from sqlalchemy.engine import make_url
     from sqlalchemy.ext.asyncio import create_async_engine
     from app.core.config import settings
@@ -210,10 +212,15 @@ async def _main(organization_id: uuid.UUID, store: DocumentStore) -> OfflineRun:
     engine = create_async_engine(make_url(settings.database_url).set(username="app_worker", password="worker_secret"))
     override_worker_engine(engine)
     try:
-        return await process_queued_imports(organization_id, store=store)
+        yield
     finally:
         override_worker_engine(None)
         await engine.dispose()
+
+
+async def _main(organization_id: uuid.UUID, store: DocumentStore) -> OfflineRun:
+    async with offline_worker_engine():
+        return await process_queued_imports(organization_id, store=store)
 
 
 def main(argv: list[str] | None = None) -> int:

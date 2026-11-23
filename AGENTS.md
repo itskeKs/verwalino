@@ -207,6 +207,7 @@ Report cleanup in one line in the status/report, never in a repository file.
 | `make review-worktree-remove PR=<n>` | last step of a fresh review: removes that worktree when its tree is clean and no process uses it, otherwise says what keeps it |
 | `make hooks` | enables `.githooks/pre-commit` (ruff and eslint on staged code, docs link check) |
 | `scripts/merge-pr.sh <PR> --reviewed <sha> --note-file <file>` | the merge of a reviewed PR: needs the maintainer lock `/tmp/verwalino-maintainer.lock` held by its caller, takes the merge lock itself, merges `main` into the branch, waits for CI on that commit, posts the note, merges with a merge commit, ticks the issue's boxes, removes its worktree; contract test in `make test-installer` |
+| `python -m tests.offline_invoice_processing <form>` (from `backend/`, test database settings sourced) | the invoice path of a blind acceptance on an acceptance instance, which runs no worker: `fixtures`, `stub start` / `stub stop`, `process --organization <name> [--fail-extraction]`, `discard`; called by the session that launches the acceptance of an invoice change, between the tester's phases, never by the tester; refuses without a running `acceptance-env.sh` instance ([forms](docs/acceptance/README.md#where-a-run-happens)) |
 
 CI (`.github/workflows/tests-on-pr.yaml`) runs the same on every PR. A red job is fixed, not
 skipped. Do not bypass the hook to land code.
