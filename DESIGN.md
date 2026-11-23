@@ -262,7 +262,8 @@ the fresh-export control outside the viewport.
 horizontal navigation for Warm, plus a column of **Topbar**
 and `main` (the scroll container; the window itself never scrolls) with centred content.
 Klar has a pale 220 px desktop sidebar with grouped disclosures; Warm has petrol
-horizontal desktop navigation with the same grouped links in dropdowns. Topbar right side: role chip (from `sm`), "Passwort ändern"
+horizontal desktop navigation with the same grouped links in dropdowns. Topbar right side: role chip (from `sm`), "Meldungen" with
+its count (see [Meldungen](#meldungen-871)), "Einstellungen", "Passwort ändern"
 (opens the password dialog; label hidden below `sm`), "Abmelden". Signed out, `LoginPage` uses the shared public-auth layout; while the session is probed `App.tsx` shows a centred "Lade...".
 
 Below 768 px, a shortcut row offers Übersicht, Objekte and Posteingang.
@@ -448,7 +449,9 @@ Synthetic captures on the test database (1280 px and 360 px) live in
 Source: `GROUPS` in `Sidebar.tsx`, shared by both designs and the mobile menu.
 The active group opens automatically; native disclosures group the remaining links.
 Klar highlights the active link on white; Warm uses a pale petrol tint.
-Detail pages (`/objekte/:id`, `/mandate/:id`, ...) have no nav entry; the parent stays highlighted.
+Detail pages (`/objekte/:id`, `/mandate/:id`, ...) have no nav entry; the parent stays highlighted. „Meldungen“
+(`/meldungen`) is the one top-level screen without an entry in `GROUPS`: its entry sits in the topbar, so that it is reachable
+from every page at every width without opening a drawer.
 
 | Group | Entries | Visible to |
 |---|---|---|
@@ -1037,6 +1040,7 @@ The create form's "Abbrechen" in `MandatePage.tsx` explicitly uses `outline`.
 | `.form-grid`, `.form-full-width`, `.form-actions` | form layout |
 | `.error-text`, `.empty-hint`, `.muted` | error line (destructive), empty-state line (muted), muted text colour for a hint under a control or heading |
 | `.link`, `.link-button` | text link; button that looks like a link |
+| `.topbar-meldungen`, `.topbar-count`, `.topbar-count--open`, `.meldung-row` | the topbar entry „Meldungen“ and its count pill (muted; primary above 0); a Meldung of the list (a `card` that is a link as a whole) |
 | `.paged-list`, `.paged-list .paged-table` | list page wrapper; horizontally scrollable table wrapper only inside `.paged-list` |
 
 Legacy modifiers use two hyphens (`btn--primary`, `badge--warning`); `btn-primary` is a typo. A class in a
@@ -2628,8 +2632,8 @@ has no percentage and no `<progress>`: nothing on it is estimated, every figure 
   there is one („12 Seiten gelesen“, „2 Modellanfragen abgeschlossen“). The running item carries
   `aria-current="step"`. „Seiten lesen“ is listed only once a page was read, so a text-layer document has four
   steps. A queued import says „Wartet auf Verarbeitung“ and every step waits; a retry says „Neuer Versuch ist
-  eingeplant“. „Sie können diese Seite schließen; der serverseitige Importstatus bleibt erhalten.“ stays while the
-  import is processing.
+  eingeplant“. „Sie können diese Seite schließen; der serverseitige Importstatus bleibt erhalten. Unter Meldungen finden Sie den
+  Import wieder.“ stays while the import is processing; „Meldungen“ is a link (underlined) to `/meldungen`.
 - Card „Ergebnis“ (an import that finished or ended): „Bereit für die fachliche Prüfung“ with the primary link „Zur
   fachlichen Prüfung“, „Übernommen“, „Abgebrochen“ or, for a failure, the `role="alert"` paragraph of the section
   above with „Erneut versuchen“ as before. A failed or cancelled import lists no steps.
@@ -2647,6 +2651,47 @@ call; before = the page of `main`, whose bar and raw stage name this replaces):
 | Extraction running (page read, one request finished) | [view](docs/assets/design/declaration-status/running-before-1280.png) | [view](docs/assets/design/declaration-status/running-after-1280.png) | [view](docs/assets/design/declaration-status/running-before-360.png) | [view](docs/assets/design/declaration-status/running-after-360.png) |
 | Finished while the page is open | not shown (opened the review at once) | [view](docs/assets/design/declaration-status/finished-after-1280.png) | not shown | [view](docs/assets/design/declaration-status/finished-after-360.png) |
 | Failed (text unchanged) | [view](docs/assets/design/declaration-status/failed-before-1280.png) | [view](docs/assets/design/declaration-status/failed-after-1280.png) | [view](docs/assets/design/declaration-status/failed-before-360.png) | [view](docs/assets/design/declaration-status/failed-after-360.png) |
+
+### Meldungen (#871)
+
+„Meldungen“ is what the signed-in user is asked to look at, read from rows that already exist (no table of its own, no read
+state). The first kind is the Teilungserklärung import the user started and that is not finished; nobody else is told about it,
+an administrator included.
+
+- **Entry** (`components/meldungen/MeldungenLink.tsx`, in the topbar of every page, in front of „Einstellungen“): a lucide `Bell`,
+  the word „Meldungen“ and the count as a pill (`.topbar-count`). The word is hidden below 1024 px like „Einstellungen“; the icon
+  and the count stay, and the link keeps the accessible name „Meldungen, {n} offen“. The count is the number of rows of the list
+  (`GET /api/meldungen`). `0` is shown (muted pill); a number the server has not told yet (before the first answer, or when the
+  first request failed) is not shown at all, never as `0`. A pill with `n > 0` is primary blue (pale green with petrol text in the Warm
+  topbar below 768 px, where the topbar itself is petrol).
+- **List** (`pages/MeldungenPage.tsx`, `/meldungen`, every role): `h1` „Meldungen“, then one `card` row per Meldung (a link to its
+  target, whole card clickable, primary border on hover): the title „Teilungserklärung einlesen“ (bold) with a `Badge` for the state
+  on the right (wraps under the title at 360 px), what it is about (the property's name, or „Neues Objekt: {document titles}“, wrapping), and
+  „Gestartet: TT.MM.JJJJ, HH:MM Uhr“ (muted; absent when no start was recorded). Newest start first, at most 50. Badge tones:
+  waiting `default` („Wartet auf Verarbeitung“, „Neuer Versuch ist eingeplant“), running `primary` („Läuft: {step}“, taken from the
+  status page's step labels, „Wird übernommen“), review `warning` („Wartet auf Ihre Prüfung“, leads to „Teilungserklärung prüfen“),
+  failed `destructive` („Verarbeitung fehlgeschlagen“). Every other row leads to the status page of the import.
+- **States.** No answer yet: „Meldungen werden geladen…“ (`role="status"`). Empty: only „Keine Meldungen vorhanden.“ (`empty-hint`).
+  A request that failed: „Die Meldungen konnten nicht geladen werden.“ (`role="alert"`, `error-text`) with „Erneut laden“; the last
+  answer stays on screen when there was one.
+- **Refresh.** The frame asks on every navigation, once more when an import page sees the import's status change, and, only while a
+  Meldung waits or runs and the tab is visible, every 20 seconds (`MELDUNGEN_POLL_MS`). A user with nothing waiting or running
+  causes no request between two navigations; there is no push channel.
+
+The entry and the list read one answer (`MeldungenProvider` in `AppShell`). Which statuses are a Meldung, and every word they
+say, come from `backend/app/declarations/progress.py` (the table of the status page); a test fails for a status without a decision.
+
+Synthetic organization on the test database (the fictional Lindenallee imports in the four states; before = the frame of `main`,
+which has no entry):
+
+| Screen | Before, 1280 px | After, 1280 px | Before, 360 px | After, 360 px |
+| --- | --- | --- | --- | --- |
+| Objekte with four open imports (the entry with the count 4) | [view](docs/assets/design/meldungen/frame-before-1280.png) | [view](docs/assets/design/meldungen/frame-after-1280.png) | [view](docs/assets/design/meldungen/frame-before-360.png) | [view](docs/assets/design/meldungen/frame-after-360.png) |
+| Objekte without an open import (the count 0) | none | [view](docs/assets/design/meldungen/frame-empty-after-1280.png) | none | [view](docs/assets/design/meldungen/frame-empty-after-360.png) |
+| Meldungen: waiting, failed, waiting for review, running | none | [view](docs/assets/design/meldungen/list-after-1280.png) | none | [view](docs/assets/design/meldungen/list-after-360.png) |
+| Meldungen without any | none | [view](docs/assets/design/meldungen/list-empty-after-1280.png) | none | [view](docs/assets/design/meldungen/list-empty-after-360.png) |
+| Status page of the running import, with the way back | [view](docs/assets/design/meldungen/status-before-1280.png) | [view](docs/assets/design/meldungen/status-after-1280.png) | [view](docs/assets/design/meldungen/status-before-360.png) | [view](docs/assets/design/meldungen/status-after-360.png) |
+| Warm topbar below 768 px with the count 4 | none | none | none | [view](docs/assets/design/meldungen/frame-warm-after-360.png) |
 
 ### Hausgeld booking on the economic plan (#186)
 

@@ -247,6 +247,29 @@ provider, endpoint, timeout and key. One page is one request; a failed page is r
   `CANCELLED` import lists no steps and keeps its failure text. A test fails when a status, a stage
   written to `current_stage` or a pass kind has no label
   (`tests/test_declaration_import_progress.py`).
+- **Meldungen: finding an import again.** A user who left the status page finds the import under „Meldungen“, an entry in the
+  top bar of every page with the number of Meldungen and a list at `/meldungen`; the status page says so
+  („Unter Meldungen finden Sie den Import wieder.“). `GET /api/meldungen` (`api/meldungen.py`, `services/meldungen_service.py`)
+  returns `{items}`, each item with `kind` (`DECLARATION_IMPORT`), `id`, `title`, `subject` (the property's name, or „Neues Objekt:“ and the
+  titles of the import's documents), `state` (`WAITING`, `RUNNING`, `REVIEW`, `FAILED`), `state_label`, `at` (the time the status page names as
+  „Gestartet“, absent when no start was recorded) and `target` (a path of the application). Nothing is stored for it: no table, no read state,
+  no migration; the count in the frame is the number of items. A later kind adds its source in the service and its rows join the same
+  answer.
+  - *Whose.* Only the imports the signed-in user started (`declaration_import.initiated_by`), whatever the role: another user of the
+    organization, an administrator included, and another organization get nothing of them. An import the user may no longer read
+    (`property_import_runtime_access(…, 'read')`, as the import page checks it) is left out. The import pages need the role
+    `OWNER_ADMIN` or `CLERK`; the route is open to every member of the organization and answers a `READ_ONLY` user, whose pages would
+    refuse, with an empty list instead of a refusal, so that the frame can ask on every page.
+  - *Which.* `MELDUNG_STATES` in `declarations/progress.py` decides every status the database allows: `QUEUED` and `RETRY_WAIT` are
+    `WAITING`; `PREFLIGHT`, `EXTRACTING`, `RECONCILING` and `APPLYING` are `RUNNING` (the text is „Läuft:“ and the step the status page names,
+    for `APPLYING` „Wird übernommen“); `NEEDS_REVIEW` is `REVIEW` („Wartet auf Ihre Prüfung“, the target is the review page); `FAILED`
+    is `FAILED` („Verarbeitung fehlgeschlagen“). A `DRAFT` that was never started, an `APPLIED` and a `CANCELLED` import are no Meldung
+    and leave the list. All other words are the status page's own, from the same table.
+  - *Weight.* At most 50 items, newest start first. One query reads the imports with the property's name and the start time; the
+    document titles of imports of a new property are one more query, and only a running import also reads its runs, ledger rows and
+    saved page transcripts (once for all running imports) so that its step is named as its status page names it. A user with no open
+    import costs one query. The frame asks on every navigation and, while a Meldung waits or runs and the tab is visible, every 20 seconds
+    (no websocket, no push).
 
 ## Provider Failures, Recovery and Safe Telemetry
 

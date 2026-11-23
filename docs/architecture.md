@@ -463,6 +463,19 @@ and [RouterEval](https://aclanthology.org/2025.findings-emnlp.208.pdf) supports
 the decision to measure and compare variants; it does not replace
 representative domain labels.
 
+### Meldungen: what a user is asked to look at (issue #871)
+
+`GET /api/meldungen` (`api/meldungen.py`, `services/meldungen_service.py`) returns the signed-in user's Meldungen as `{items}`:
+kind, text parts, state, time and the path of the page they lead to. It reads rows that already exist and stores nothing (no table, no
+read state; the count in the application frame is the number of items). The first kind is the Teilungserklärung import: a started
+import that has not ended, waits for the starter's review or failed, belonging to the user who started it (`initiated_by`) and to nobody
+else. Isolation is explicit and tested at three levels: the organization (RLS and the repository's `organization_id`), the user
+(`initiated_by` is part of the query, so another user of the same organization, an administrator included, gets nothing) and the import's
+own read access (`property_import_runtime_access`, the check of the import page). The route sits in the isolation sweep
+(`tests/route_isolation/access.py`); the same-organization case is `tests/test_meldungen.py`. The answer is bounded (50 items) and the
+frame asks on navigation and, while an import waits or runs, every 20 seconds. Which import status is a Meldung, and the words it
+says, are one table in `declarations/progress.py` ([runbook](operations/declaration-imports.md)).
+
 > This document covers M0 (and the preparatory data model for M1). It makes the load-bearing architecture decisions that can hardly be retrofitted later (organization isolation, GoBD immutability). It contains **no** application code and **no** migration implementation — only design, rationale, and an actionable scaffolding plan for the implementer.
 >
 > **Binding status:** The SDD (v0.2) and the roadmap are the source of domain truth and remain untouched. Where this document goes beyond the SDD, this is marked as an *assumption* or *open item*. Points the human must decide are marked **[DECISION]**. The associated Architecture Decision Records are in [adr/](adr/).
