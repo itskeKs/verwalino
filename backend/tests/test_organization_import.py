@@ -1642,13 +1642,13 @@ async def test_import_ignores_the_generated_column_an_archive_carries(
 async def test_a_person_data_domain_beside_the_living_source_is_not_refused_for_its_generated_column(
     rent_world, import_target, rent_db, export_store, caplog,
 ):
-    """Here the archived creator is an inactive placeholder, so the actor-bound insert rule of the domain
-    (`protect_person_data_setup`, sqlstate 42501) may still refuse it; whatever it does, `label` (428C9) is not the cause."""
+    """Here the archived creator is an inactive placeholder; the domain keeps it (ADR 0016, issue #817) and is restored, and
+    `label` (428C9) is not a cause either."""
     await person_data_domain_of_an_owner(rent_world)
     archive = await exported(rent_world)
     async with api_client(import_target) as api:
         answer = await api.post('/api/organizations/import', files={'file': ('domain.tar.gz', archive)})
-    assert answer.status_code in (200, 422), answer.text
+    assert answer.status_code == 200, answer.text
     assert 'sqlstate=428C9' not in caplog.text
     await rent_db.rollback()
 

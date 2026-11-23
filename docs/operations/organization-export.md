@@ -323,15 +323,45 @@ administrator's live `prepare` grant on the scope (restored from the archive bef
 binding) and the origin `REVIEWED` are still required, and a binding stays immutable
 ([ADR 0016](../adr/0016-import-names-the-restored-dunning-context-for-its-preparer.md)).
 
-**Contact data domains.** A contact's data domain (`person_data_domain`) is
-evidence of an administrator's act and has the same limit. The trigger
-`protect_person_data_setup` accepts a new domain only when its `created_by` is
-the session user, so the domain is restored when the archived creator is the
-importing administrator's own account (source organization gone, same address)
-and refused with entity `person_data_domain` beside the living original or when
-another archived account created it. The same trigger accepts a grant
-(`person_data_grant`) only from the session user as `granted_by` and only for
-an active member.
+**Contact data domains and their grants.** A contact's data domain
+(`person_data_domain`) and a grant of it (`person_data_grant`) are evidence of an
+administrator's act, and the archived actor stays the actor. The restored domain
+records as `created_by` the account the import maps the archived creator to, and
+the restored grant records as `granted_by` the account the import maps the archived
+grantor to: the importing administrator's own account when that administrator carried
+the archived account's sign-in address (the source organization was deleted first),
+otherwise the inactive placeholder account of the second administrator (or any other
+administrator) who made it. A placeholder keeps the archived name, has no credentials
+and cannot sign in. The importing administrator is never recorded as the creator or
+grantor of a domain or grant they did not make, and no new column records the original
+actor. Normally the trigger `protect_person_data_setup` binds `created_by` of a new
+domain and `granted_by` of a new grant to the signed-in user. For the one row an import
+is restoring it accepts another actor: the import names that row and its archived actor
+in the transaction-local setting `app.organization_import_person_data_domain` or
+`app.organization_import_person_data_grant` around that one insert, and the trigger
+accepts it only for an inactive account of the same organization whose password is the
+unusable `!` the import writes for an archived user (a colleague deactivated in the user
+list keeps their password and is no placeholder), and only while the signed-in user is
+an active administrator of the organization. Every other rule of the trigger still
+holds, and a domain and a grant stay immutable (a grant allows only its one-way
+revocation) ([ADR 0016](../adr/0016-import-names-the-restored-dunning-context-for-its-preparer.md)).
+
+The grant rules limit what is restored. A grant is accepted only unrevoked and only for
+a grantee who is an active member of the organization, and after an import the only
+active member is the importing administrator. A grant to the importing administrator
+restores, whoever made it. A grant to any other archived account (a clerk), a revoked
+grant, and a grant whose expiry has passed (the restore stamps `created_at` again, and a
+grant must expire after it was created) are refused with entity `person_data_grant`, also
+when the importing administrator made them. Beside the living source organization no
+archived address is the importing administrator's, so a domain is restored with its
+placeholder creator, while a grant is refused because its grantee is a placeholder. What
+differs from the source in a restored domain and grant: the `label` (`Contact ` and the
+contact's id, which is a new id when the installation still holds the source's contacts,
+see "Generated columns"), `created_at` (the restore stamps it again) and the names the
+accounts carry in the importing organization. The trigger also writes its own audit
+event (`person_data.domain_prepared`, `person_data.grant_prepared`) for the restore
+insert, naming the importing administrator as the actor of that act, beside the archived
+event that keeps the archived actor.
 
 **Dunning notices.** A scoped dunning notice is restored with its immutable
 scope context (`dunning_scope_context`: scope, period, lease or plan, and for an

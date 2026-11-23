@@ -26,7 +26,7 @@ def _migration():
 def test_the_reading_model_is_the_release_target_after_0195():
     revision = ScriptDirectory('migrations').get_revision('0196')
     assert revision.down_revision == '0195'
-    assert deployment.TARGET == '0200'
+    assert deployment.TARGET == '0201'
 
 
 def test_upgrade_keeps_the_extraction_model_and_never_chooses_a_reading_model(seed_data):
