@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import text
 
 from app.declarations.progress import MELDUNG_STATES
+from app.repositories.declaration_import_repo import DeclarationImportRepository
 from app.services.meldungen_service import MELDUNGEN_LIMIT, MeldungenService
 from tests.test_declaration_job_principal import new_draft
 from tests.test_financial_scope_boundary import scope_seed as scope_seed, worker_tenant as worker_tenant
@@ -136,6 +137,26 @@ async def test_a_meldung_belongs_to_its_starter_alone(client_a_admin, client_a_c
     finally:
         await client_a_clerk.post(f"/api/declaration-imports/{by_clerk}/cancel")
         await client_a_admin.post(f"/api/declaration-imports/{by_admin}/cancel")
+
+
+@pytest.mark.asyncio
+async def test_the_query_names_the_organization_itself_not_only_row_level_security(migrator_session, seed_data) -> None:
+    """Row-level security alone also hides another organization's imports, so the route tests cannot tell whether the
+    query is bounded by the organization too. The migrator's session is one the policies do not apply to (as in the pass
+    ledger test): only the repository's own filter is left to keep an import of organization B out of A's answer. The
+    session says it acts for the organization that asks, as a request does, because the access function the query calls
+    admits an import only inside the session's own organization."""
+    org_a, org_b, user_b = seed_data["org_a_id"], seed_data["org_b_id"], seed_data["user_b_admin_id"]
+    statuses = [status for status, state in MELDUNG_STATES.items() if state is not None]
+    [(_status, import_id)] = await _insert_imports(migrator_session, org_b, user_b, ["FAILED"])
+    try:
+        await _set_organization(migrator_session, org_b)
+        assert [row.id for row in await DeclarationImportRepository(migrator_session, org_b).list_started_by(user_b, statuses, 50)] == [import_id]
+        # The same user id and status, asked as organization A: nothing, though no policy hides the row here.
+        await _set_organization(migrator_session, org_a)
+        assert await DeclarationImportRepository(migrator_session, org_a).list_started_by(user_b, statuses, 50) == []
+    finally:
+        await migrator_session.rollback()
 
 
 @pytest.mark.asyncio

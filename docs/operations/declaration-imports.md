@@ -252,8 +252,8 @@ provider, endpoint, timeout and key. One page is one request; a failed page is r
   („Unter Meldungen finden Sie den Import wieder.“). `GET /api/meldungen` (`api/meldungen.py`, `services/meldungen_service.py`)
   returns `{items}`, each item with `kind` (`DECLARATION_IMPORT`), `id`, `title`, `subject` (the property's name, or „Neues Objekt:“ and the
   titles of the import's documents), `state` (`WAITING`, `RUNNING`, `REVIEW`, `FAILED`), `state_label`, `at` (the time the status page names as
-  „Gestartet“, absent when no start was recorded) and `target` (a path of the application). Nothing is stored for it: no table, no read state,
-  no migration; the count in the frame is the number of items. A later kind adds its source in the service and its rows join the same
+  „Gestartet“, absent when no start was recorded) and `target` (a path of the application). Nothing is stored for it: no table, no read state
+  (migration 0204 adds only an index); the count in the frame is the number of items. A later kind adds its source in the service and its rows join the same
   answer.
   - *Whose.* Only the imports the signed-in user started (`declaration_import.initiated_by`), whatever the role: another user of the
     organization, an administrator included, and another organization get nothing of them. An import the user may no longer read
@@ -267,9 +267,15 @@ provider, endpoint, timeout and key. One page is one request; a failed page is r
     and leave the list. All other words are the status page's own, from the same table.
   - *Weight.* At most 50 items, newest start first. One query reads the imports with the property's name and the start time; the
     document titles of imports of a new property are one more query, and only a running import also reads its runs, ledger rows and
-    saved page transcripts (once for all running imports) so that its step is named as its status page names it. A user with no open
-    import costs one query. The frame asks on every navigation and, while a Meldung waits or runs and the tab is visible, every 20 seconds
-    (no websocket, no push).
+    saved page transcripts (once for all running imports) so that its step is named as its status page names it. The query is served by
+    `ix_declaration_import_org_initiator_status` (migration 0204, `organization_id, initiated_by, status`), so it reads the user's open
+    imports and not every import the organization ever created. A call by a user with no open import costs ten short statements in two
+    transactions: four to authenticate (the session's principal, the tenant and the user, the organization's deletion and second-factor
+    state), five for the live principal check of the data transaction (the tenant and the user, the shared ACL lock, the live role, the
+    principal again) and the one query of the list. The frame asks on every navigation and, while a Meldung waits or runs and the tab is
+    visible, every 20 seconds, until a request fails or the answer has not changed for 15 minutes (`MELDUNGEN_POLL_END_MS`, so an import
+    that stays queued because no worker runs does not keep a tab asking); the next navigation, a status change an import page reports and
+    showing the tab again ask once more (no websocket, no push).
 
 ## Provider Failures, Recovery and Safe Telemetry
 

@@ -469,11 +469,14 @@ representative domain labels.
 kind, text parts, state, time and the path of the page they lead to. It reads rows that already exist and stores nothing (no table, no
 read state; the count in the application frame is the number of items). The first kind is the Teilungserklärung import: a started
 import that has not ended, waits for the starter's review or failed, belonging to the user who started it (`initiated_by`) and to nobody
-else. Isolation is explicit and tested at three levels: the organization (RLS and the repository's `organization_id`), the user
-(`initiated_by` is part of the query, so another user of the same organization, an administrator included, gets nothing) and the import's
-own read access (`property_import_runtime_access`, the check of the import page). The route sits in the isolation sweep
-(`tests/route_isolation/access.py`); the same-organization case is `tests/test_meldungen.py`. The answer is bounded (50 items) and the
-frame asks on navigation and, while an import waits or runs, every 20 seconds. Which import status is a Meldung, and the words it
+else. Isolation is explicit and tested at three levels: the organization (row-level security, which the route sweep probe in
+`tests/route_isolation/access.py` exercises, and the repository's own `organization_id` filter, which `tests/test_meldungen.py` exercises
+on a session the policies do not apply to), the user (`initiated_by` is part of the query, so another user of the same organization, an
+administrator included, gets nothing) and the import's own read access (`property_import_runtime_access`, the check of the import
+page); the same-organization cases are in `tests/test_meldungen.py`. The answer is bounded (50 items) and read through
+`ix_declaration_import_org_initiator_status` (migration 0204; `tests/test_declaration_import_open_index.py` asserts the plan on thousands
+of imports). The frame asks on navigation and, while an import waits or runs, every 20 seconds until a request fails or the answer has
+not changed for 15 minutes. Which import status is a Meldung, and the words it
 says, are one table in `declarations/progress.py` ([runbook](operations/declaration-imports.md)).
 
 > This document covers M0 (and the preparatory data model for M1). It makes the load-bearing architecture decisions that can hardly be retrofitted later (organization isolation, GoBD immutability). It contains **no** application code and **no** migration implementation — only design, rationale, and an actionable scaffolding plan for the implementer.
