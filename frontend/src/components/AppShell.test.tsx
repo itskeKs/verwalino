@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { AuthCtx } from "../auth/useAuth";
+import * as endpoints from "../api/endpoints";
 import { AppShell } from "./AppShell";
 
 vi.mock("./OrganizationDeletionBanner", () => ({ OrganizationDeletionBanner: () => null }));
@@ -12,6 +13,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
 });
@@ -102,4 +104,16 @@ it("keeps page control focus when navigation changes at the desktop breakpoint",
   await userEvent.click(action);
   resize(true);
   expect(action).toHaveFocus();
+});
+
+it.each([true, false])("offers the Meldungen with their count in the top bar of every page (desktop: %s)", async desktop => {
+  vi.spyOn(endpoints, "listMeldungen").mockResolvedValue({ items: [{
+    kind: "DECLARATION_IMPORT", id: "import-1", title: "Teilungserklärung einlesen", subject: "Lindenallee 12", state: "RUNNING",
+    state_label: "Läuft: Angaben auslesen", at: "2026-11-23T13:05:00Z", target: "/teilungserklaerung/import/import-1",
+  }] });
+  shell(desktop);
+
+  const entry = await screen.findByRole("link", { name: "Meldungen, 1 offen" });
+  expect(entry).toHaveAttribute("href", "/meldungen");
+  expect(within(screen.getByRole("banner")).getByRole("link", { name: "Meldungen, 1 offen" })).toBe(entry);
 });

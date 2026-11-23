@@ -262,7 +262,8 @@ the fresh-export control outside the viewport.
 horizontal navigation for Warm, plus a column of **Topbar**
 and `main` (the scroll container; the window itself never scrolls) with centred content.
 Klar has a pale 220 px desktop sidebar with grouped disclosures; Warm has petrol
-horizontal desktop navigation with the same grouped links in dropdowns. Topbar right side: role chip (from `sm`), "Passwort ändern"
+horizontal desktop navigation with the same grouped links in dropdowns. Topbar right side: role chip (from `sm`), "Meldungen" with
+its count (see [Meldungen](#meldungen-871)), "Einstellungen", "Passwort ändern"
 (opens the password dialog; label hidden below `sm`), "Abmelden". Signed out, `LoginPage` uses the shared public-auth layout; while the session is probed `App.tsx` shows a centred "Lade...".
 
 Below 768 px, a shortcut row offers Übersicht, Objekte and Posteingang.
@@ -448,7 +449,9 @@ Synthetic captures on the test database (1280 px and 360 px) live in
 Source: `GROUPS` in `Sidebar.tsx`, shared by both designs and the mobile menu.
 The active group opens automatically; native disclosures group the remaining links.
 Klar highlights the active link on white; Warm uses a pale petrol tint.
-Detail pages (`/objekte/:id`, `/mandate/:id`, ...) have no nav entry; the parent stays highlighted.
+Detail pages (`/objekte/:id`, `/mandate/:id`, ...) have no nav entry; the parent stays highlighted. „Meldungen“
+(`/meldungen`) is the one top-level screen without an entry in `GROUPS`: its entry sits in the topbar, so that it is reachable
+from every page at every width without opening a drawer.
 
 | Group | Entries | Visible to |
 |---|---|---|
@@ -1037,6 +1040,7 @@ The create form's "Abbrechen" in `MandatePage.tsx` explicitly uses `outline`.
 | `.form-grid`, `.form-full-width`, `.form-actions` | form layout |
 | `.error-text`, `.empty-hint`, `.muted` | error line (destructive), empty-state line (muted), muted text colour for a hint under a control or heading |
 | `.link`, `.link-button` | text link; button that looks like a link |
+| `.topbar-meldungen`, `.topbar-count`, `.topbar-count--open`, `.meldung-row` | the topbar entry „Meldungen“ and its count pill (muted; primary above 0); a Meldung of the list (a `card` that is a link as a whole) |
 | `.paged-list`, `.paged-list .paged-table` | list page wrapper; horizontally scrollable table wrapper only inside `.paged-list` |
 
 Legacy modifiers use two hyphens (`btn--primary`, `badge--warning`); `btn-primary` is a typo. A class in a
@@ -1124,8 +1128,9 @@ imports and on a design token nothing reads.
   form: `AttachmentsPanel.tsx` (documents, metadata upload limit stated in the copy), `MasterImport.tsx` (CSV with
   preview table and row errors), the mandate upload in `MandateDetailPage.tsx`. These forms have no drag
   and drop or progress bar; controls are disabled while requests run. CSV import and attachments report
-  outcomes in `role="status"` lines. `DeclarationImportPage.tsx` renders a `<progress>` for processing,
-  styled by `.declaration-import-section progress` in `index.css`.
+  outcomes in `role="status"` lines. `DeclarationImportPage.tsx` shows the form for a draft only; a started
+  import has its own status page without a progress bar (see "Declaration import: status page of a
+  started import").
 - **Money and date fields.** Date: `<input type="date">` (63 uses), value ISO `YYYY-MM-DD`, the browser
   shows its locale format. Money: `<input type="text" inputMode="decimal">` (62 uses) with placeholder
   `0.00`; the user may type a comma, helpers turn it into a dot (`moneyInput` in `SpecialLeviesPage.tsx`,
@@ -1160,7 +1165,8 @@ its reconciliation total excludes non-income rows, as the server note explains.
 Every async region provides loading, empty, error and success copy using the patterns below.
 Failed requests preserve the user's input.
 
-Loading, error and success are inline text, there is no toast, spinner or skeleton component.
+Loading, error and success are inline text, there is no toast, spinner or skeleton component; the only moving
+indicator is the running step of the declaration import status page (a lucide icon, see its section).
 
 | State | Markup | Copy patterns (German text verbatim; `{...}` is a value) |
 |---|---|---|
@@ -1289,6 +1295,7 @@ Inputs show and accept what the user types: they are not display call sites.
 | Money | `1.234,56 €`: `.` thousands, `,` decimals, always two, sign first (`-1.234,56 €`), no float arithmetic | Shared `formatMoney(cents)` in `lib/format.ts`, fed by `centsFromDecimal()` for API decimal strings; used by every money call site |
 | Date | `TT.MM.JJJJ`, e.g. `05.03.2026`, from the ISO API value | Shared `formatDate(iso)` in `lib/format.ts` |
 | Date and time | `TT.MM.JJJJ, HH:MM Uhr`, e.g. `31.10.2026, 14:05 Uhr`, Europe/Berlin calendar, no seconds | Shared `formatDateTime(iso)` in `lib/format.ts`; `formatDate(iso)` maps timestamps to the Europe/Berlin calendar date |
+| Elapsed time | `42 s`, `2 Min. 5 s`, `1 Std. 2 Min.`: whole seconds under a minute, minutes with seconds under an hour, then hours with minutes; never negative | Shared `formatElapsed(seconds)` in `lib/format.ts`; used by the running step of the declaration import status page |
 | Long date | weekday and month in words ("Freitag, 30. Oktober 2026") | `dateLabel` in `DashboardPage.tsx` |
 | Plain numbers | `Intl.NumberFormat("de-DE")` / `toLocaleString("de-DE")` (`1.234.567`) | `PropertyDetailPage.tsx`, `AttachmentsPanel.tsx`, `IntakeBatchPage.tsx` |
 | File size | `1.5 KB` / `1.0 MB` with a dot (`toFixed(1)`); mandates use whole KB (`12 KB`, `toFixed(0)`). Attachments show `1.234 Bytes` (`Intl.NumberFormat("de-DE")`); intake shows `1,5 KiB` (`toLocaleString("de-DE")`) | `formatBytes()` in `InvoiceDocumentsPage.tsx`, `formatSize()` in `MandateDetailPage.tsx`, `AttachmentsPanel.tsx`, `IntakeBatchPage.tsx` |
@@ -2523,7 +2530,7 @@ dessen Abschluss wird der Verbrauch der Stufe zugeordnet.“
 A run with tokens and no entry shows that block and the total. A run with neither a stage nor such a
 remainder keeps the model name and the total as before. Nothing scrolls horizontally at 360 px.
 
-The import screen's „4. Ergebnis“ card explains every failure code in German, in one
+The import status page's „Ergebnis“ card explains every failure code in German, in one
 `role="alert"` paragraph under „Verarbeitung fehlgeschlagen.“: what happened, that the uploaded
 original is kept and nothing was applied (“Das hochgeladene Dokument bleibt erhalten; es wurde
 nichts übernommen.”), and what to do (choose another model in Einstellungen, import less, contact
@@ -2603,6 +2610,90 @@ explicit reservations on both import and review screens at 1280 and 360 px.
 | --- | --- | --- |
 | Before | [view](docs/assets/design/ai-budget-reserved-before-1280.png) | [view](docs/assets/design/ai-budget-reserved-before-360.png) |
 | Import after | [view](docs/assets/design/ai-budget-reserved-after-1280.png) | [view](docs/assets/design/ai-budget-reserved-after-360.png) |
+
+### Declaration import: status page of a started import (#870)
+
+A started import has its own page at `/teilungserklaerung/import/<id>`, the address of the upload wizard.
+`pages/DeclarationImportPage.tsx` renders the wizard (steps „Ziel“ to „Ergebnis“, the upload form, „Import
+starten“) for a draft only; every other status renders `components/declarations/DeclarationImportStatus.tsx`, and
+an address that has not been read yet shows „Import wird geladen…“ (`role="status"`) instead of the form. The page
+has no percentage and no `<progress>`: nothing on it is estimated, every figure is something the server recorded
+(`GET /api/declaration-imports/{id}`: `status_label`, `started_at`, `steps`).
+
+- Badge and the line „Importstatus: …“ carry the server's `status_label`; the page never shows a stage name.
+  The labels of statuses, steps and pass kinds come from the one table in `backend/app/declarations/progress.py`.
+- Card „Import“: the target text of the wizard, the titles of the uploaded documents (a wrapping list) and
+  „Gestartet: TT.MM.JJJJ, HH:MM Uhr“.
+- Card „Verarbeitung“ (only while the response lists steps): an ordered list (`aria-label="Verarbeitungsschritte"`)
+  with one item per step: a mark (lucide `Check` green = done, `LoaderCircle` in the primary colour and turning =
+  running, `Circle` muted = waiting; the turning stops under `prefers-reduced-motion`), the label (bold unless the
+  step waits) and a muted line with the state word „Erledigt“, „Läuft“ or „Wartet“, for the running step „seit {Zeit}“
+  (counted on every second from the figure of the last answer, `formatElapsed`) and, after ` · `, the count when
+  there is one („12 Seiten gelesen“, „2 Modellanfragen abgeschlossen“). The running item carries
+  `aria-current="step"`. „Seiten lesen“ is listed only once a page was read, so a text-layer document has four
+  steps. A queued import says „Wartet auf Verarbeitung“ and every step waits; a retry says „Neuer Versuch ist
+  eingeplant“. „Sie können diese Seite schließen; der serverseitige Importstatus bleibt erhalten. Unter Meldungen finden Sie den
+  Import wieder.“ stays while the import is processing; „Meldungen“ is a link (underlined) to `/meldungen`.
+- Card „Ergebnis“ (an import that finished or ended): „Bereit für die fachliche Prüfung“ with the primary link „Zur
+  fachlichen Prüfung“, „Übernommen“, „Abgebrochen“ or, for a failure, the `role="alert"` paragraph of the section
+  above with „Erneut versuchen“ as before. A failed or cancelled import lists no steps.
+- An import that finishes while the page is open shows every step done and the link for two seconds
+  (`REVIEW_HANDOVER_MS`) and then opens „Teilungserklärung prüfen“; an address opened on an import that already waits
+  for review goes there at once.
+- At 360 px the cards are one column and long document titles wrap; nothing scrolls sideways.
+
+Synthetic import on the test database (the fictional Lindenallee scan, processed by the offline worker with a held
+call; before = the page of `main`, whose bar and raw stage name this replaces):
+
+| State | Before, 1280 px | After, 1280 px | Before, 360 px | After, 360 px |
+| --- | --- | --- | --- | --- |
+| Waiting for processing | [view](docs/assets/design/declaration-status/queued-before-1280.png) | [view](docs/assets/design/declaration-status/queued-after-1280.png) | [view](docs/assets/design/declaration-status/queued-before-360.png) | [view](docs/assets/design/declaration-status/queued-after-360.png) |
+| Extraction running (page read, one request finished) | [view](docs/assets/design/declaration-status/running-before-1280.png) | [view](docs/assets/design/declaration-status/running-after-1280.png) | [view](docs/assets/design/declaration-status/running-before-360.png) | [view](docs/assets/design/declaration-status/running-after-360.png) |
+| Finished while the page is open | not shown (opened the review at once) | [view](docs/assets/design/declaration-status/finished-after-1280.png) | not shown | [view](docs/assets/design/declaration-status/finished-after-360.png) |
+| Failed (text unchanged) | [view](docs/assets/design/declaration-status/failed-before-1280.png) | [view](docs/assets/design/declaration-status/failed-after-1280.png) | [view](docs/assets/design/declaration-status/failed-before-360.png) | [view](docs/assets/design/declaration-status/failed-after-360.png) |
+
+### Meldungen (#871)
+
+„Meldungen“ is what the signed-in user is asked to look at, read from rows that already exist (no table of its own, no read
+state). The first kind is the Teilungserklärung import the user started and that is not finished; nobody else is told about it,
+an administrator included.
+
+- **Entry** (`components/meldungen/MeldungenLink.tsx`, in the topbar of every page, in front of „Einstellungen“): a lucide `Bell`,
+  the word „Meldungen“ and the count as a pill (`.topbar-count`). The word is hidden below 1024 px like „Einstellungen“; the icon
+  and the count stay, and the link keeps the accessible name „Meldungen, {n} offen“. The count is the number of rows of the list
+  (`GET /api/meldungen`). `0` is shown (muted pill); a number the server has not told yet (before the first answer, or when the
+  first request failed) is not shown at all, never as `0`. A pill with `n > 0` is primary blue (pale green with petrol text in the Warm
+  topbar below 768 px, where the topbar itself is petrol).
+- **List** (`pages/MeldungenPage.tsx`, `/meldungen`, every role): `h1` „Meldungen“, then one `card` row per Meldung (a link to its
+  target, whole card clickable, primary border on hover): the title „Teilungserklärung einlesen“ (bold) with a `Badge` for the state
+  on the right (wraps under the title at 360 px), what it is about (the property's name, or „Neues Objekt: {document titles}“, wrapping), and
+  „Gestartet: TT.MM.JJJJ, HH:MM Uhr“ (muted; absent when no start was recorded). Newest start first, at most 50. Badge tones:
+  waiting `default` („Wartet auf Verarbeitung“, „Neuer Versuch ist eingeplant“), running `primary` („Läuft: {step}“, taken from the
+  status page's step labels, „Wird übernommen“), review `warning` („Wartet auf Ihre Prüfung“, leads to „Teilungserklärung prüfen“),
+  failed `destructive` („Verarbeitung fehlgeschlagen“). Every other row leads to the status page of the import.
+- **States.** No answer yet: „Meldungen werden geladen…“ (`role="status"`). Empty: only „Keine Meldungen vorhanden.“ (`empty-hint`).
+  A request that failed: „Die Meldungen konnten nicht geladen werden.“ (`role="alert"`, `error-text`) with „Erneut laden“; the last
+  answer stays on screen when there was one.
+- **Refresh.** The frame asks on every navigation, once more when an import page sees the import's status change, and, only while a
+  Meldung waits or runs and the tab is visible, every 20 seconds (`MELDUNGEN_POLL_MS`), until a request fails (a session that ended,
+  a server error) or the answer has not changed for 15 minutes (`MELDUNGEN_POLL_END_MS`, so an import that stays queued does not keep
+  a tab asking); the next navigation, a status change an import page reports and showing the tab again ask once more. A user with
+  nothing waiting or running causes no request between two navigations; there is no push channel.
+
+The entry and the list read one answer (`MeldungenProvider` in `AppShell`). Which statuses are a Meldung, and every word they
+say, come from `backend/app/declarations/progress.py` (the table of the status page); a test fails for a status without a decision.
+
+Synthetic organization on the test database (the fictional Lindenallee imports in the four states; before = the frame of `main`,
+which has no entry):
+
+| Screen | Before, 1280 px | After, 1280 px | Before, 360 px | After, 360 px |
+| --- | --- | --- | --- | --- |
+| Objekte with four open imports (the entry with the count 4) | [view](docs/assets/design/meldungen/frame-before-1280.png) | [view](docs/assets/design/meldungen/frame-after-1280.png) | [view](docs/assets/design/meldungen/frame-before-360.png) | [view](docs/assets/design/meldungen/frame-after-360.png) |
+| Objekte without an open import (the count 0) | none | [view](docs/assets/design/meldungen/frame-empty-after-1280.png) | none | [view](docs/assets/design/meldungen/frame-empty-after-360.png) |
+| Meldungen: waiting, failed, waiting for review, running | none | [view](docs/assets/design/meldungen/list-after-1280.png) | none | [view](docs/assets/design/meldungen/list-after-360.png) |
+| Meldungen without any | none | [view](docs/assets/design/meldungen/list-empty-after-1280.png) | none | [view](docs/assets/design/meldungen/list-empty-after-360.png) |
+| Status page of the running import, with the way back | [view](docs/assets/design/meldungen/status-before-1280.png) | [view](docs/assets/design/meldungen/status-after-1280.png) | [view](docs/assets/design/meldungen/status-before-360.png) | [view](docs/assets/design/meldungen/status-after-360.png) |
+| Warm topbar below 768 px with the count 4 | none | none | none | [view](docs/assets/design/meldungen/frame-warm-after-360.png) |
 
 ### Hausgeld booking on the economic plan (#186)
 

@@ -241,6 +241,14 @@ export interface DeclarationRunBudget {
   estimated_cost_usd: string | null;
 }
 
+/** One step of a started import with what the server recorded for it; `elapsed_seconds` only for the running step. */
+export interface DeclarationImportStep {
+  label: string;
+  state: "DONE" | "RUNNING" | "WAITING";
+  detail: string | null;
+  elapsed_seconds: number | null;
+}
+
 export interface DeclarationImport {
   runs?: DeclarationRunBudget[];
   queue_request_id?: string | null;
@@ -250,9 +258,12 @@ export interface DeclarationImport {
   target_property_id: string | null;
   applied_property_id: string | null;
   status: DeclarationImportStatus;
+  /** The server's German status line, from the same table as the step labels. */
+  status_label: string;
+  /** When the start (or the last retry) was recorded; null for a draft. */
+  started_at: string | null;
+  steps: DeclarationImportStep[];
   draft_revision: number;
-  progress_percent: number;
-  current_stage: string | null;
   error_code: string | null;
   error_message: string | null;
   input_tokens: number;
@@ -260,6 +271,25 @@ export interface DeclarationImport {
   estimated_cost_usd: string;
   attempt_count: number;
   max_cost_usd: string;
+}
+
+/** What a Meldung is in: waiting or running (the import is started and not ended), waiting for the user's review, or failed. */
+export type MeldungState = "WAITING" | "RUNNING" | "REVIEW" | "FAILED";
+
+/** One thing the signed-in user is asked to look at; the first kind is the Teilungserklärung import the user started. */
+export interface Meldung {
+  kind: "DECLARATION_IMPORT";
+  id: string;
+  title: string;
+  /** What it is about: the property, or the new property with the titles of its documents. */
+  subject: string;
+  state: MeldungState;
+  /** The server's German state text. */
+  state_label: string;
+  /** When the import was started (or last retried); null when no start was recorded. */
+  at: string | null;
+  /** The path of the application page that shows what the Meldung is about. */
+  target: string;
 }
 
 export type DeclarationImportCreate =

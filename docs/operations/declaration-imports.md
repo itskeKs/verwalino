@@ -224,6 +224,58 @@ provider, endpoint, timeout and key. One page is one request; a failed page is r
   inference; it is absent when zero. The stages and `unassigned` add up to the run's tokens and cost.
   The import and review screens show them as „Dokumente einlesen“, „Informationen extrahieren“ and
   „Nicht zugeordnet“ before the run total.
+- **Status of a started import.** The same `GET /api/declaration-imports/{id}` (and the answers of
+  `POST …/start` and `POST …/retry`) carries what the import page shows while the import runs:
+  `status_label` (the German status line), `started_at` (when the start or the last retry was
+  recorded) and `steps`, each with `label`, `state` (`DONE`, `RUNNING` or `WAITING`), `detail` (what
+  the step counted, such as „12 Seiten gelesen“) and `elapsed_seconds` (only the running step). There
+  is no percentage and no raw stage name: `progress_percent` and `current_stage` stay in the table
+  but leave the response. `declarations/progress.py` holds the one table of German labels (every status the
+  database allows, every kind of pass the ledger accepts and the steps) and derives the steps from
+  recorded data only: the import's status, the passes of its open run (the last run once the import
+  has finished) and the saved page transcripts. A step is running only while the status names it
+  (`PREFLIGHT` runs „Dateien prüfen“, or „Seiten lesen“ once a page of this run was read; `EXTRACTING`
+  runs „Angaben auslesen“; `RECONCILING` runs „Angaben abgleichen“). „Seiten lesen“ is listed only for an
+  import of which a page was read, so a text-layer document has no such step. The count of a step is
+  the number of recorded rows: transcripts saved for the import (any run) for the reading, finished
+  model requests of the open run for the two others (an attempt that failed is not counted). The pass
+  ledger row of a call is written when the call has ended, so the page cannot tell which call of a
+  stage is in flight, and the page names stages, not single calls. The time of the running step counts
+  from the last row the run recorded for an earlier step, or from the start of the run, to the moment
+  of the answer; the page counts on from that figure until its next poll. A queued import waits
+  („Wartet auf Verarbeitung“), a `RETRY_WAIT` import says that a new attempt is scheduled; a `FAILED` or
+  `CANCELLED` import lists no steps and keeps its failure text. A test fails when a status, a stage
+  written to `current_stage` or a pass kind has no label
+  (`tests/test_declaration_import_progress.py`).
+- **Meldungen: finding an import again.** A user who left the status page finds the import under „Meldungen“, an entry in the
+  top bar of every page with the number of Meldungen and a list at `/meldungen`; the status page says so
+  („Unter Meldungen finden Sie den Import wieder.“). `GET /api/meldungen` (`api/meldungen.py`, `services/meldungen_service.py`)
+  returns `{items}`, each item with `kind` (`DECLARATION_IMPORT`), `id`, `title`, `subject` (the property's name, or „Neues Objekt:“ and the
+  titles of the import's documents), `state` (`WAITING`, `RUNNING`, `REVIEW`, `FAILED`), `state_label`, `at` (the time the status page names as
+  „Gestartet“, absent when no start was recorded) and `target` (a path of the application). Nothing is stored for it: no table, no read state
+  (migration 0204 adds only an index); the count in the frame is the number of items. A later kind adds its source in the service and its rows join the same
+  answer.
+  - *Whose.* Only the imports the signed-in user started (`declaration_import.initiated_by`), whatever the role: another user of the
+    organization, an administrator included, and another organization get nothing of them. An import the user may no longer read
+    (`property_import_runtime_access(…, 'read')`, as the import page checks it) is left out. The import pages need the role
+    `OWNER_ADMIN` or `CLERK`; the route is open to every member of the organization and answers a `READ_ONLY` user, whose pages would
+    refuse, with an empty list instead of a refusal, so that the frame can ask on every page.
+  - *Which.* `MELDUNG_STATES` in `declarations/progress.py` decides every status the database allows: `QUEUED` and `RETRY_WAIT` are
+    `WAITING`; `PREFLIGHT`, `EXTRACTING`, `RECONCILING` and `APPLYING` are `RUNNING` (the text is „Läuft:“ and the step the status page names,
+    for `APPLYING` „Wird übernommen“); `NEEDS_REVIEW` is `REVIEW` („Wartet auf Ihre Prüfung“, the target is the review page); `FAILED`
+    is `FAILED` („Verarbeitung fehlgeschlagen“). A `DRAFT` that was never started, an `APPLIED` and a `CANCELLED` import are no Meldung
+    and leave the list. All other words are the status page's own, from the same table.
+  - *Weight.* At most 50 items, newest start first. One query reads the imports with the property's name and the start time; the
+    document titles of imports of a new property are one more query, and only a running import also reads its runs, ledger rows and
+    saved page transcripts (once for all running imports) so that its step is named as its status page names it. The query is served by
+    `ix_declaration_import_org_initiator_status` (migration 0204, `organization_id, initiated_by, status`), so it reads the user's open
+    imports and not every import the organization ever created. A call by a user with no open import costs ten short statements in two
+    transactions: four to authenticate (the session's principal, the tenant and the user, the organization's deletion and second-factor
+    state), five for the live principal check of the data transaction (the tenant and the user, the shared ACL lock, the live role, the
+    principal again) and the one query of the list. The frame asks on every navigation and, while a Meldung waits or runs and the tab is
+    visible, every 20 seconds, until a request fails or the answer has not changed for 15 minutes (`MELDUNGEN_POLL_END_MS`, so an import
+    that stays queued because no worker runs does not keep a tab asking); the next navigation, a status change an import page reports and
+    showing the tab again ask once more (no websocket, no push).
 
 ## Provider Failures, Recovery and Safe Telemetry
 

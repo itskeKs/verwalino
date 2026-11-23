@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Sequence
 
-from sqlalchemy import func, select, text
+from sqlalchemy import and_, func, select, text
 
 from app.models.declaration_import import (
     DeclarationExtractionRun,
@@ -14,8 +14,10 @@ from app.models.declaration_import import (
     DeclarationImportDocument,
     DeclarationImportPass,
     DeclarationPageReading,
+    DeclarationQueueRequest,
 )
 from app.declarations.observability import PassLedgerEntry
+from app.models.property import Property
 from app.models.property_document import PropertyDocument
 from app.repositories.base import TenantRepository
 
@@ -51,6 +53,81 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
             DeclarationExtractionRun.organization_id == self._org_id,
             DeclarationExtractionRun.import_id == import_id,
         ).order_by(DeclarationExtractionRun.started_at, DeclarationExtractionRun.id))).all()
+
+    async def count_page_readings(self, import_id: uuid.UUID) -> int:
+        """The page transcripts saved for the import, by any of its runs."""
+        return int(await self._session.scalar(
+            select(func.count()).select_from(DeclarationPageReading)
+            .where(DeclarationPageReading.organization_id == self._org_id)
+            .where(DeclarationPageReading.import_id == import_id)) or 0)
+
+    async def queue_request_time(self, request_id: uuid.UUID) -> datetime | None:
+        """When the user's start (or retry) command was recorded: the time the import was started."""
+        return await self._session.scalar(select(DeclarationQueueRequest.created_at).where(
+            DeclarationQueueRequest.organization_id == self._org_id, DeclarationQueueRequest.id == request_id))
+
+    async def list_started_by(self, user_id: uuid.UUID, statuses: Sequence[str], limit: int):
+        """The imports this user started that are in one of `statuses` and that the user may read, in one query.
+
+        Each row is (import id, mode, status, the name of the target property, when the start or the last retry was
+        recorded); the newest start comes first, an import with no recorded start last. Nobody else's import is
+        returned, whatever the reader's role. `limit` bounds the rows.
+        """
+        started = DeclarationQueueRequest.created_at
+        result = await self._session.execute(
+            select(DeclarationImport.id, DeclarationImport.mode, DeclarationImport.status,
+                   Property.name.label("property_name"), started.label("started_at"))
+            .outerjoin(Property, and_(Property.organization_id == DeclarationImport.organization_id,
+                                      Property.id == DeclarationImport.target_property_id))
+            .outerjoin(DeclarationQueueRequest, and_(DeclarationQueueRequest.organization_id == DeclarationImport.organization_id,
+                                                     DeclarationQueueRequest.id == DeclarationImport.queue_request_id))
+            .where(DeclarationImport.organization_id == self._org_id,
+                   DeclarationImport.initiated_by == user_id,
+                   DeclarationImport.status.in_(statuses),
+                   func.property_import_runtime_access(self._org_id, DeclarationImport.id, "read"))
+            .order_by(started.desc().nulls_last(), DeclarationImport.id)
+            .limit(limit))
+        return result.all()
+
+    async def document_titles(self, import_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, list[str]]:
+        """The titles of the documents of these imports, in the order of their sequence numbers."""
+        result = await self._session.execute(
+            select(DeclarationImportDocument.import_id, PropertyDocument.title)
+            .join(PropertyDocument, and_(PropertyDocument.organization_id == DeclarationImportDocument.organization_id,
+                                         PropertyDocument.id == DeclarationImportDocument.document_id))
+            .where(DeclarationImportDocument.organization_id == self._org_id,
+                   DeclarationImportDocument.import_id.in_(import_ids))
+            .order_by(DeclarationImportDocument.import_id, DeclarationImportDocument.sequence_no))
+        titles: dict[uuid.UUID, list[str]] = {}
+        for import_id, title in result.all():
+            titles.setdefault(import_id, []).append(title)
+        return titles
+
+    async def runs_of(self, import_ids: Sequence[uuid.UUID]):
+        """The extraction runs of these imports, oldest first."""
+        return (await self._session.scalars(select(DeclarationExtractionRun).where(
+            DeclarationExtractionRun.organization_id == self._org_id,
+            DeclarationExtractionRun.import_id.in_(import_ids),
+        ).order_by(DeclarationExtractionRun.started_at, DeclarationExtractionRun.id))).all()
+
+    async def passes_of(self, import_ids: Sequence[uuid.UUID]):
+        """The ledger rows of the runs of these imports."""
+        return (await self._session.scalars(select(DeclarationImportPass).join(
+            DeclarationExtractionRun,
+            (DeclarationExtractionRun.id == DeclarationImportPass.declaration_extraction_run_id)
+            & (DeclarationExtractionRun.organization_id == DeclarationImportPass.organization_id),
+        ).where(DeclarationImportPass.organization_id == self._org_id,
+            DeclarationExtractionRun.import_id.in_(import_ids))
+        .order_by(DeclarationImportPass.attempt_no))).all()
+
+    async def page_reading_counts(self, import_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, int]:
+        """How many page transcripts each of these imports has saved; an import with none is not in the answer."""
+        result = await self._session.execute(
+            select(DeclarationPageReading.import_id, func.count())
+            .where(DeclarationPageReading.organization_id == self._org_id,
+                   DeclarationPageReading.import_id.in_(import_ids))
+            .group_by(DeclarationPageReading.import_id))
+        return {import_id: int(count) for import_id, count in result.all()}
 
     async def lock_acl(self):
         await self._session.execute(text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),
