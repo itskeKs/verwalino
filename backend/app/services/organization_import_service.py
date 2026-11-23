@@ -66,13 +66,19 @@ def refuse(message, **details):
 
 def archived_actor_marker(name, row, importer):
     """(setting, JSON) that names the row of `name` about to be inserted and its archived actor; None when the
-    importer is that actor or the table has no such guard. The row of a table in `ARCHIVED_ROW_MARKERS` is always named."""
+    importer is that actor, the table has no such guard or an identifier the setting needs is not valid. The row of a
+    table in `ARCHIVED_ROW_MARKERS` is always named."""
     setting, column, (identity, key) = ARCHIVED_ACTOR_MARKERS.get(name, (None, None, (None, None)))
     further = ARCHIVED_ROW_MARKERS.get(name, {})
     if setting is None or (row.get(column) in (None, str(importer)) and not further):
         return None
-    named = {key: str(uuid.UUID(row[identity])), column: str(uuid.UUID(row[column]))}
-    named.update({setting_key: str(uuid.UUID(row[source])) for setting_key, source in further.items()})
+    try:
+        named = {key: str(uuid.UUID(row[identity])), column: str(uuid.UUID(row[column]))}
+        named.update({setting_key: str(uuid.UUID(row[source])) for setting_key, source in further.items()})
+    except (KeyError, TypeError, ValueError, AttributeError):
+        # A null, missing or malformed identifier names no row. The row is inserted like any other row, the database
+        # refuses it and the import answers with IMPORT_INTEGRITY_REFUSAL, as it did before every grant was named.
+        return None
     return setting, json.dumps(named)
 
 

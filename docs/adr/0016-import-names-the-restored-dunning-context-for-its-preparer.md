@@ -109,11 +109,14 @@ The setting is a promise of the code, not of a user. A guard that accepts it che
 
 - Scope grants and attachments still take only the importer's own account; each needs its own guard
   under the checks above.
-- A grant to a colleague who was deactivated in the user list and keeps their password is still refused: the
-  import maps an archived address to such an account when the target organization already holds it, it is no
-  placeholder, and reactivating it would hand a real person the access. The same holds for an account of another
-  organization. Normal writes are as strict as before: a new grant needs an active member as grantee, is inserted
-  unrevoked and is stamped with the clock.
+- A grant to a colleague who was deactivated in the user list and keeps their password (no placeholder) is refused, and
+  so is a grant to an account of another organization. That is a case of a direct insert, not of an import: before it
+  inserts any row the import sets every account the target organization already holds under an archived address, except
+  the importing administrator's own, inactive with the unusable password `!` (`organization_import_service.py`,
+  `test_relinked_nonadmin_account_is_inactive_and_requires_a_reset`). Such a colleague is a placeholder like any archived
+  member, and the archived grants to them are restored to that account, which keeps its own name and address
+  (`test_a_grant_to_a_colleague_the_target_already_holds_is_restored_to_that_deactivated_account`). Normal writes are as
+  strict as before: a new grant needs an active member as grantee, is inserted unrevoked and is stamped with the clock.
 - The restore does not reactivate anybody and writes no password: reactivating a placeholder is an administrator's
   act on the user page ([#851](https://github.com/itskeKs/verwalino/issues/851) leaves it out of scope).
 - The trigger writes its own audit event for the restore insert (`person_data.domain_prepared` or
@@ -135,11 +138,27 @@ The access function `has_person_data_capability` answers for the signed-in user:
 role, a live grant (`revoked_at IS NULL`, `expires_at` absent or in the future) that holds the capability. It is
 unchanged, so the grants this ADR restores mean, per case:
 
-- A grant to a placeholder gives no access. The account is inactive, which the function reads as no role, and no
-  session of it is accepted; its password is the unusable `!`. An administrator can reactivate it on the user page
-  (`PATCH /api/users/{id}`, the placeholder has its archived membership); the account then holds exactly the rights
-  of its restored live grants and still cannot sign in until the administrator sets a password for it. Nothing in the
-  import does either.
+- A grant to a placeholder gives no access while the account stays deactivated. The account is inactive, which the
+  function reads as no role, and no session of it is accepted; its password is the unusable `!`. An administrator can
+  reactivate it on the user page (`PATCH /api/users/{id}` with `is_active: true`, the placeholder has its archived
+  membership). Reactivation sets no password and the unusable one still matches nothing, but the account is then
+  reachable by whoever holds its sign-in address. An administrator's reset (`POST /api/users/{id}/reset-password`) gives it
+  a password. So does the self-service reset ("Passwort vergessen?") where the installation can send mail (SMTP and
+  `HV_PUBLIC_HOST` are configured, as on the hosted service, see
+  [DEPLOY.md](../../DEPLOY.md#password-recovery-configuration)): it finds an active account by its address, mails the
+  link to that address and lets the holder set a password without an administrator. While the account is deactivated the
+  page finds no account and sends nothing, and without mail it never issues a link, so there the administrator's reset is
+  the only way (tests `test_a_reactivated_placeholder_gets_a_password_from_the_administrators_reset`,
+  `test_a_reactivated_placeholder_resets_its_own_password_by_mail_where_mail_is_configured` and
+  `test_a_reactivated_placeholder_cannot_reset_its_own_password_without_mail`). A placeholder whose archived address was
+  taken carries a synthetic address (`…@imported.archive.invalid`) that no mailbox receives, so only the administrator's
+  reset reaches it. Reactivating a placeholder therefore gives the account back, with the rights of its restored live
+  grants, to the holder of the archived address; nothing in the import decides who that is. The import reactivates nobody
+  and sets no password.
+- The rights are those `has_person_data_capability` answers: exactly the restored live grants. What they change for what
+  the account reads depends on the organization's source-security mode. In the default mode `PREPARATION` the contact
+  policies already admit every contact (`person_source_row_access` answers true, migration 0069), with or without a grant,
+  as they did in the source; the grants decide once the organization enforces source security.
 - A revoked grant gives no access, before and after a reactivation. An expired grant gives none either.
 - The importing administrator gains no access to a contact through the grants of other users: the function asks
   for a grant of the signed-in user. Administrators see the grant rows and the domain (the read policies of both

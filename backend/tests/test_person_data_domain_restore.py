@@ -30,8 +30,12 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import settings
 from tests.conftest import APP_RW_URL, MIGRATOR_SYNC_URL, MIGRATOR_URL
-from tests.test_organization_export import export_store as export_store
-from tests.test_organization_import import import_target as import_target, in_target_ids, source_organization_deleted
+from tests.password_reset_support import NEW_PASSWORD, reset_store, reset_token, signup_mail as signup_mail  # noqa: F401
+from tests.password_reset_support import MESSAGE as RESET_MESSAGE, REFUSED as RESET_REFUSED
+from tests.test_organization_export import export_store as export_store, unpack
+from tests.test_organization_import import (
+    archive_with_user_email, import_target as import_target, in_target_ids, repack, source_organization_deleted,
+)
 from tests.test_rent_changes import api_client, rent_db as rent_db, rent_world as rent_world  # noqa: F401
 from tests.test_scope_binding_restore import second_administrator
 
@@ -341,8 +345,9 @@ async def test_a_restored_grant_to_a_placeholder_gives_no_access_until_an_admini
     """What the restored grants mean, per case. Before the export the clerk reads the contact of the live grant and nobody
     else holds a right on it. After the import the clerk's account is an inactive placeholder: it holds none, and no session
     of it is accepted. The importing administrator gains none through grants of other users. An administrator can reactivate
-    the placeholder (the user page does, `PATCH /api/users/{id}`); the account then holds exactly the rights of the live grant
-    and none of the revoked or the expired one, and it still cannot sign in until a password is set."""
+    the placeholder (the user page does, `PATCH /api/users/{id}`); the account then answers `has_person_data_capability`
+    with the rights of the live grant and none of the revoked or the expired one, and it cannot sign in with the placeholder's
+    unusable password: how it gets a password is shown by the three tests after this one."""
     world = rent_world
     made = await clerk_contacts(world, rent_db)
     domains = {kind: one['domain']['id'] for kind, one in made.items()}
@@ -379,12 +384,154 @@ async def test_a_restored_grant_to_a_placeholder_gives_no_access_until_an_admini
         page = await clerk_api.get('/api/person-data-domains/page')
         assert page.status_code == 200, page.text
         assert [row['id'] for row in page.json()['items']] == [restored['live']]
-        # No password was set: the unusable one of a placeholder matches nothing, so the account cannot sign in yet.
+        # Reactivation sets no password: the unusable one of a placeholder matches nothing, so the account cannot sign in yet.
         email = await account(rent_db, import_target, clerk)
         login = await clerk_api.post('/api/auth/login', json={'email': email[0], 'password': '!'})
         assert login.status_code == 401, login.text
     # The importing administrator still holds nothing on the clerk's contacts.
     assert await answers(rent_db, target, import_target['admin'], list(restored.values())) == nobody
+
+
+async def test_a_grant_to_a_colleague_the_target_already_holds_is_restored_to_that_deactivated_account(
+    rent_world, import_target, rent_db, export_store,
+):
+    """The target organization already holds an active colleague with a password under the clerk's archived address. The
+    import does not restore that user: it maps the archived clerk to the account and, before any row is inserted, sets every
+    account it reuses except the importing administrator's inactive with the unusable password (the case of
+    `test_relinked_nonadmin_account_is_inactive_and_requires_a_reset`). So the colleague is a placeholder like any archived
+    member and the grant is restored to that account: a grant to a deactivated colleague who keeps a password is a refusal
+    of a direct insert (the trigger tests below), which an import never meets."""
+    colleague, email = uuid.uuid4(), f'colleague-{uuid.uuid4().hex}@rent-change.invalid'
+    await rent_db.execute(text('INSERT INTO "user"(id,organization_id,email,password_hash,display_name,is_active) '
+                               "VALUES (:id,:org,:email,'$argon2id$real','Existing colleague',true)"),
+                          {**import_target, 'id': colleague, 'email': email})
+    await rent_db.execute(text("INSERT INTO membership(organization_id,user_id,role) VALUES (:org,:id,'CLERK')"),
+                          {**import_target, 'id': colleague})
+    await rent_db.commit()
+    person, domain, grant = await contact_setup(rent_world, maker='admin', grantee='clerk')
+    source_domains, source_grants = await listed(rent_world, person)
+    async with api_client(rent_world) as api:
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    files = archive_with_user_email(unpack(archive.content), rent_world['clerk'], email)
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('grant-to-the-colleague.tar.gz', repack(files))})
+        assert answer.status_code == 200, answer.text
+    ids = answer.json()['id_map']
+    assert ids['user'][str(rent_world['clerk'])] == str(colleague)
+    # The account keeps its own name and address and is deactivated without a usable password.
+    assert await account(rent_db, import_target, colleague) == (email, 'Existing colleague', False, '!')
+    restored_domains, restored_grants = await listed(import_target, ids['person'][person])
+    assert without_stamp(restored_domains) == without_stamp(in_target_ids(source_domains, ids))
+    assert [(row['id'], row['user_id'], row['user_display_name'], row['capabilities'], row['reason_code'], row['revoked_at'])
+            for row in restored_grants] == [
+        (ids['person_data_grant'][grant['id']], str(colleague), 'Existing colleague', ['export', 'read'], 'TEAM_ACCESS', None)]
+    domain_id = ids['person_data_domain'][domain['id']]
+    assert await answers(rent_db, import_target['org'], colleague, [domain_id]) == {domain_id: []}
+
+
+async def restored_clerk(world, target, db):
+    """The user check up to the restore: the administrator grants the data of one contact to the clerk, exports the
+    organization, has the source erased and imports the archive into `target`. Returns the clerk's account in the target,
+    which is the archived inactive placeholder with the archived sign-in address, and the restored domain."""
+    _, domain, _ = await contact_setup(world, maker='admin', grantee='clerk')
+    async with api_client(world) as api:
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    await source_organization_deleted(db, world['org'], world['admin'], target)
+    async with api_client(target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('grant-to-the-clerk.tar.gz', archive.content)})
+        assert answer.status_code == 200, answer.text
+    ids = answer.json()['id_map']
+    clerk = ids['user'][str(world['clerk'])]
+    email, _, active, password = await account(db, target, clerk)
+    assert (active, password) == (False, '!') and email.endswith('@rent-change.invalid'), (email, active, password)
+    return {'org': target['org'], 'clerk': clerk, 'email': email, 'domain': ids['person_data_domain'][domain['id']]}
+
+
+async def reactivated(target, clerk):
+    """The "Aktiv" switch of the user page."""
+    async with api_client(target) as api:
+        answer = await api.patch(f'/api/users/{clerk}', json={'is_active': True})
+        assert answer.status_code == 200 and answer.json()['is_active'] is True, answer.text
+
+
+async def signed_in_as_the_clerk(client, held, password):
+    """The sign-in page: the answer names the account of the restored clerk in the target organization."""
+    answer = await client.post('/api/auth/login', json={'email': held['email'], 'password': password})
+    assert answer.status_code == 200, answer.text
+    assert (answer.json()['user_id'], answer.json()['organization_id'], answer.json()['role']) == (
+        held['clerk'], str(held['org']), 'CLERK')
+
+
+async def reset_requests_of(user):
+    """Rows of the privileged reset table for `user`, which the runtime role cannot read."""
+    async with reset_store() as session:
+        return await session.scalar(text('SELECT count(*) FROM password_reset_request WHERE user_id=:user'),
+                                    {'user': uuid.UUID(user)})
+
+
+async def test_a_reactivated_placeholder_gets_a_password_from_the_administrators_reset(
+    rent_world, import_target, rent_db, export_store, client_unauth,
+):
+    """Reactivation sets no password; the administrator's reset (`POST /api/users/{id}/reset-password`) does, and the
+    account then signs in with the rights of its restored live grant."""
+    held = await restored_clerk(rent_world, import_target, rent_db)
+    await reactivated(import_target, held['clerk'])
+    assert (await account(rent_db, import_target, held['clerk']))[3] == '!'
+    assert (await client_unauth.post('/api/auth/login', json={'email': held['email'], 'password': '!'})).status_code == 401
+    async with api_client(import_target) as api:
+        reset = await api.post(f"/api/users/{held['clerk']}/reset-password", json={'password': NEW_PASSWORD})
+        assert reset.status_code == 204, reset.text
+    await signed_in_as_the_clerk(client_unauth, held, NEW_PASSWORD)
+    assert await answers(rent_db, held['org'], held['clerk'], [held['domain']]) == {held['domain']: ['read', 'export']}
+
+
+async def test_a_reactivated_placeholder_resets_its_own_password_by_mail_where_mail_is_configured(
+    rent_world, import_target, rent_db, export_store, client_unauth, signup_mail,
+):
+    """The self-service reset finds an active account by its address (`app_auth_lookup`): the restored placeholder keeps the
+    archived address, so nothing is sent while it is deactivated, and once an administrator reactivated it the holder of that
+    address gets the link, sets a password without an administrator and signs in with the rights of the live grant."""
+    held = await restored_clerk(rent_world, import_target, rent_db)
+    # Deactivated: the page answers as for any address, and no mail is sent and no request is issued.
+    answer = await client_unauth.post('/api/auth/password-reset', json={'email': held['email']})
+    assert (answer.status_code, answer.json()) == (202, RESET_MESSAGE)
+    assert signup_mail.messages == [] and await reset_requests_of(held['clerk']) == 0
+    await reactivated(import_target, held['clerk'])
+    answer = await client_unauth.post('/api/auth/password-reset', json={'email': held['email']})
+    assert (answer.status_code, answer.json()) == (202, RESET_MESSAGE)
+    assert [to for _, _, to in signup_mail.messages] == [[held['email']]]
+    assert await reset_requests_of(held['clerk']) == 1
+    confirmed = await client_unauth.post('/api/auth/password-reset/confirm', json={'token': reset_token(signup_mail), 'password': NEW_PASSWORD})
+    assert confirmed.status_code == 204, confirmed.text
+    # The notice that the password changed goes to the same address.
+    assert [to for _, _, to in signup_mail.messages] == [[held['email']]] * 2
+    assert (await client_unauth.post('/api/auth/login', json={'email': held['email'], 'password': '!'})).status_code == 401
+    await signed_in_as_the_clerk(client_unauth, held, NEW_PASSWORD)
+    assert await answers(rent_db, held['org'], held['clerk'], [held['domain']]) == {held['domain']: ['read', 'export']}
+
+
+async def test_a_reactivated_placeholder_cannot_reset_its_own_password_without_mail(
+    rent_world, import_target, rent_db, export_store, client_unauth, signup_mail, monkeypatch,
+):
+    """Without SMTP (a self-hosted installation that has none) the reset page issues and sends nothing, whoever asks, so a
+    reactivated placeholder has no password and cannot sign in until an administrator resets it."""
+    from app.services import mail_service
+    monkeypatch.setattr(settings, 'smtp_host', None)
+    assert mail_service.password_reset_available(settings) is False
+    held = await restored_clerk(rent_world, import_target, rent_db)
+    await reactivated(import_target, held['clerk'])
+    answer = await client_unauth.post('/api/auth/password-reset', json={'email': held['email']})
+    assert (answer.status_code, answer.json()) == (202, RESET_MESSAGE)
+    assert signup_mail.messages == [] and signup_mail.calls == [] and await reset_requests_of(held['clerk']) == 0
+    # Nothing was issued, so no token exists that could be redeemed.
+    confirmed = await client_unauth.post('/api/auth/password-reset/confirm', json={'token': '0' * 64, 'password': NEW_PASSWORD})
+    assert (confirmed.status_code, confirmed.json()) == (403, RESET_REFUSED)
+    for password in ('!', NEW_PASSWORD):
+        assert (await client_unauth.post('/api/auth/login', json={'email': held['email'], 'password': password})).status_code == 401
+    assert (await account(rent_db, import_target, held['clerk']))[2:] == (True, '!')
 
 
 @pytest.mark.no_db
@@ -402,6 +549,69 @@ def test_the_import_names_every_grant_with_its_grantor_and_its_grantee():
     assert archived_actor_marker('person_data_domain', domain, uuid.UUID(importer)) is None
     assert archived_actor_marker('person_data_domain', {**domain, 'created_by': other}, uuid.UUID(importer)) == (
         DOMAIN_MARKER, json.dumps({'domain_id': row, 'created_by': other}))
+
+
+MISSING = object()
+
+
+@pytest.mark.no_db
+@pytest.mark.parametrize('column', ['granted_by', 'user_id'])
+@pytest.mark.parametrize('value', [None, MISSING, 'not-a-uuid', 5], ids=['null', 'missing', 'not-a-uuid', 'number'])
+def test_the_import_names_no_grant_whose_grantor_or_grantee_is_not_a_valid_identifier(column, value):
+    """Naming every grant must not turn a row the database refuses into an error of the import itself: a null, missing or
+    malformed grantor or grantee names nothing, so the row is inserted like any other row and the refusal is the database's."""
+    from app.services.organization_import_service import archived_actor_marker
+    importer, row = (str(uuid.uuid4()) for _ in range(2))
+    grant = {'id': row, 'granted_by': importer, 'user_id': str(uuid.uuid4())}
+    if value is MISSING:
+        del grant[column]
+    else:
+        grant[column] = value
+    assert archived_actor_marker('person_data_grant', grant, uuid.UUID(importer)) is None
+    assert archived_actor_marker('person_data_grant', {**grant, 'granted_by': str(uuid.uuid4()), column: grant.get(column)},
+                                 uuid.UUID(importer)) is None
+
+
+def archive_with_grant_value(files, column, value):
+    """The archive with `column` of every contact data grant set to `value`, or left out of the row when it is MISSING."""
+    rows = [json.loads(line) for line in files['entities/person_data_grant.jsonl'].splitlines()]
+    assert rows
+    for row in rows:
+        if value is MISSING:
+            del row[column]
+        else:
+            row[column] = value
+    return {**files, 'entities/person_data_grant.jsonl': b''.join(json.dumps(row).encode() + b'\n' for row in rows)}
+
+
+@pytest.mark.parametrize('column', ['granted_by', 'user_id'])
+@pytest.mark.parametrize('value', [None, MISSING, 'not-a-uuid'], ids=['null', 'missing', 'not-a-uuid'])
+async def test_an_archive_whose_grant_has_no_valid_grantor_or_grantee_is_refused_in_the_imports_own_words(
+    rent_world, import_target, rent_db, export_store, column, value,
+):
+    """A crafted archive: the grant's grantor or grantee is null, left out or no identifier. The answer is the import's
+    structured refusal, as it was before every grant was named, and nothing is written. A string that is no identifier
+    is already a missing dependency, which the import lists by entity."""
+    _, _, grant = await contact_setup(rent_world, maker='admin', grantee='clerk')
+    async with api_client(rent_world) as api:
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    files = archive_with_grant_value(unpack(archive.content), column, value)
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('crafted.tar.gz', repack(files))})
+    assert answer.status_code == 422, answer.text
+    if value == 'not-a-uuid':
+        assert answer.json()['detail']['missing_dependencies'] == [
+            {'entity': 'user', 'source_ids': [value], 'count': 1}]
+    else:
+        assert answer.json()['detail'] == {
+            'message': 'Die Daten können unter den aktuellen Integritäts- und Freigaberegeln nicht importiert werden.',
+            'code': 'IMPORT_INTEGRITY_REFUSAL', 'entity': 'person_data_grant', 'source_ids': [grant['id']], 'count': 1}
+    for table in ('person_data_domain', 'person_data_grant'):
+        assert await rent_db.scalar(text(f'SELECT count(*) FROM {table} WHERE organization_id=:org'), import_target) == 0, table
+    assert await rent_db.scalar(text('SELECT count(*) FROM "user" WHERE organization_id=:org'), import_target) == 1
+    await rent_db.rollback()
 
 
 # ---- the trigger itself: direct writes under the runtime role --------------------------------------
