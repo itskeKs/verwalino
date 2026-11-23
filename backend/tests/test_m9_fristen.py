@@ -90,7 +90,8 @@ async def test_deadline_uses_canonical_ledger_in_the_admitted_scope():
     service._repo = SimpleNamespace(all_leases=AsyncMock(return_value=[lease]))
     service._payments = SimpleNamespace(tenant_statement_in_current_scope=ledger)
     assert await service._overdue_count(end) == 0
-    ledger.assert_awaited_once_with(lease, start, end)
+    # The statement is read at the reference date: a surplus settles only what is due on that day (#806).
+    ledger.assert_awaited_once_with(lease, start, end, as_of=end)
 
 
 @pytest_asyncio.fixture

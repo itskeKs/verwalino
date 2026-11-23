@@ -1109,8 +1109,15 @@ async def test_combined_prepayment_cannot_reassign_later_operating_overpayment(r
         await advance_test_book(api, w, bank, "KALTMIETE", "750.00")
         await advance_test_book(api, w, bank, "NK_VORAUSZAHLUNG", "200.00")
         result = await statement(api, w, "2026-04-01", "2026-04-30")
+        # April owes 150.00 operating + 90.00 heating advance. The joint 40.00 cannot be moved to the operating advance:
+        # they credit the heating advance (90.00 - 40.00 = 50.00 open), and the named 200.00 stay on the operating
+        # advance (150.00 - 200.00 = 50.00 credit). That credit is a surplus of the operating advance (#806): within its
+        # calendar year and its type it settles the oldest due open operating advance of 2026, January's (the lease runs
+        # since 1 January and nothing was paid for January to March). It settles no heating advance, another type, and no
+        # rent. So April's operating advance holds its own 150.00 (open 0.00) and the heating advance stays open with
+        # 50.00. (Before the set-off the 50.00 stayed a credit on the operating advance: [-50, 50].)
         advances = [Decimal(row["open_amount"]) for row in result["open_items"] if row["payment_type"] != "KALTMIETE"]
-        assert sorted(advances) == [Decimal("-50"), Decimal("50")]
+        assert sorted(advances) == [Decimal("0"), Decimal("50")]
         notice = await api.post("/api/dunning/tenant", json={
             "lease_agreement_id": str(w["lease"]), "tenant_profile_id": str(w["tenant"]),
             "period_start": "2026-04-01", "period_end": "2026-04-30", "reference_date": "2026-04-08"})

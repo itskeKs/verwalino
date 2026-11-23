@@ -104,7 +104,11 @@ async def test_explicit_read_scope_selects_only_its_money(migrator_session, scop
         if kind == 'lease':
             items = await api.get(f"/api/payments/open-items/lease/{ids['lease']}", params=query(ids))
             assert items.status_code == 200, items.text
-            assert sum(float(row['ist']) for row in items.json()) == 1000
+            # 7200.00 owed in 2025, 1000.00 paid in both scopes for June's rent (500.00 owed). The 500.00 over settle the
+            # oldest due open rent of 2025, January's: no credit is listed, and the listed positions add up to
+            # 7200.00 - 1000.00 = 6200.00 (#806).
+            assert sum(Decimal(row['open_amount']) for row in items.json()) == Decimal('6200.00')
+            assert all(Decimal(row['open_amount']) > 0 for row in items.json())
             assert (await api.get(f"/api/payments/mietkonto/lease/{ids['excluded_lease']}", params=query(ids))).status_code == 404
             bulk = await api.get('/api/payments/open-items', params=query(ids))
             assert bulk.status_code == 200, bulk.text
@@ -214,11 +218,11 @@ async def test_the_debt_of_a_lease_counts_the_payments_of_every_scope(migrator_s
     ids = await statement_fixture(migrator_session, scope_seed, 'lease')
     async with client(ids) as api:
         (statement,) = (await statements(api, ids, (selected,))).values()
-        # 12 x 600.00 owed, 100.00 + 900.00 paid: 6.200,00 open, whichever scope is read; the payments of the
-        # other scope are one summed amount.
+        # 12 x 600.00 owed, 100.00 + 900.00 paid: 6.200,00 open, whichever scope is read; the payments of the other
+        # scope are one summed amount.
         assert (statement['soll_total'], statement['ist_total'], statement['balance']) == ('7200.00', '1000.00', '6200.00')
         assert statement['other_scope_ist'] == elsewhere
-        # 11 months of 500.00 rent, June's 500.00 rent overpaid by 500.00, 12 x 100.00 advance.
+        # 11 months of 500.00 rent (June's rent was overpaid by 500.00, which settle January's), 12 x 100.00 advance (#806).
         assert sum(Decimal(row['open_amount']) for row in statement['open_items']) == Decimal('6200.00')
         items = await api.get(f"/api/payments/open-items/lease/{ids['lease']}", params=scoped_query(ids, selected))
         assert items.status_code == 200, items.text
@@ -322,18 +326,22 @@ async def test_what_a_scope_does_not_count_stays_out_whichever_scope_it_was_book
         assert (await api.get(f"/api/payments/mietkonto/lease/{ids['excluded_lease']}", params=query(ids))).status_code == 404
 
 
-@pytest.mark.parametrize('period_start,period_end,soll,ist,elsewhere', [
-    ('2025-01-01', '2025-05-31', '3000.00', '0.00', None),         # June is outside: neither payment counts
-    ('2025-06-01', '2025-06-30', '600.00', '1000.00', '900.00'),   # June only: both count, the other scope's one summed
+@pytest.mark.parametrize('period_start,period_end,soll,ist,balance,elsewhere', [
+    # January to May: 5 x 600.00 owed. June is outside, but its rent was paid 1000.00 for 500.00 owed and the 500.00 over
+    # settle January's rent (#806): January's rent holds 500.00, nothing else of the period was paid (balance 2500.00).
+    ('2025-01-01', '2025-05-31', '3000.00', '500.00', '2500.00', None),
+    # June only: 600.00 owed (rent 500.00 + advance 100.00); the rent holds its own 500.00, the 500.00 over left it for
+    # January, the advance is open (balance 100.00); the other scope's 900.00 are one summed amount.
+    ('2025-06-01', '2025-06-30', '600.00', '500.00', '100.00', '900.00'),
 ])
-async def test_a_payment_assigned_to_a_month_outside_the_requested_period_is_not_counted(
-        migrator_session, scope_seed, period_start, period_end, soll, ist, elsewhere):
+async def test_a_payment_assigned_to_a_month_outside_the_requested_period_counts_only_by_what_it_settles(
+        migrator_session, scope_seed, period_start, period_end, soll, ist, balance, elsewhere):
     ids = await statement_fixture(migrator_session, scope_seed, 'lease')
     async with client(ids) as api:
         statement = await api.get(url(ids, 'lease'), params={**scoped_query(ids, 'scope'), 'period_start': period_start, 'period_end': period_end})
         assert statement.status_code == 200, statement.text
         body = statement.json()
-        assert (body['soll_total'], body['ist_total'], body['other_scope_ist']) == (soll, ist, elsewhere)
+        assert (body['soll_total'], body['ist_total'], body['balance'], body['other_scope_ist']) == (soll, ist, balance, elsewhere)
         assert Decimal(body['balance']) == Decimal(soll) - Decimal(ist)
 
 

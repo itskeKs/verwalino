@@ -197,7 +197,7 @@ class DunningService:
         fees, rates = await self.terms()
         result = await PaymentService(self._session, self._org_id, self._user_id).account_statement_for_lease(
             lease.id, period_start, period_end, accounting_scope_id,
-            include_payment_dates=rates is not None,
+            as_of=reference_date, include_payment_dates=rates is not None,
         )
         overdue = self._engine_result(find_overdue_items, list(result.open_items),
             reference_date, grace_days=grace_days, current_year=date.today().year)

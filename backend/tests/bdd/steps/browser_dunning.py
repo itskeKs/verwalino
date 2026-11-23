@@ -234,11 +234,11 @@ async def create_scoped_notice(browser_world):
     browser_world.world.data["notice_url"] = browser_world.page.url
 
 
-@then("the notice demands the eleven months that neither scope was paid for")
+@then("the notice demands what the lease owes in total")
 @browser_step
 async def scoped_amount(browser_world):
-    # June was paid twice over (1.000,00 € for 850,00 €) and is no arrears; the other eleven months are: 11 x 850,00 €.
-    await browser_world.row("Hauptforderung (Rückstand)", "9.350,00 €")
+    # 12 x 850,00 € owed - 1.000,00 € paid for June: the 150,00 € June did not need settle the oldest month (#806).
+    await browser_world.row("Hauptforderung (Rückstand)", "9.200,00 €")
 
 
 @when('the manager confirms "Entwurf verwerfen"')

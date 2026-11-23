@@ -181,3 +181,27 @@ def test_no_automatic_allocation_to_oldest_month():
 def test_invalid_mixed_target_is_rejected():
     with pytest.raises(BankMatchingError):
         suggest_matches(row(), [replace(tenant(), owner_profile_id=OWNER)])
+
+
+def test_a_month_that_a_surplus_settled_in_part_is_proposed_only_for_what_is_left():
+    # 700.00 rent and 150.00 advance a month. January is paid in full, February not at all, March's rent was paid
+    # 1350.00 for 700.00 owed: the 650.00 left settle the oldest due position, February's rent (700.00), which leaves
+    # 50.00. February's open items are then 50.00 rent and 150.00 advance, 200.00 in all.
+    charges = tenant_expected_charges(LeaseChargeInput(LEASE, date(2026, 1, 1), None, Decimal('700'), Decimal('150')),
+                                      date(2026, 1, 1), date(2026, 3, 31))
+
+    def paid(payment_type, amount, month):
+        return PaymentInput(uuid.uuid4(), payment_type, 'IN', Decimal(amount), 2026, month, lease_agreement_id=LEASE)
+
+    payments = [paid('KALTMIETE', '700.00', 1), paid('NK_VORAUSZAHLUNG', '150.00', 1), paid('KALTMIETE', '1350.00', 3)]
+    settled = replace(tenant(), open_items=account_statement(
+        charges, payments, as_of=date(2026, 4, 1), set_off_surplus=True).open_items)
+    february = 'Warmmiete Februar 2026'
+    assert not suggest_matches(row('850.00', february), [settled])
+    match, = suggest_matches(row('200.00', february), [settled])
+    assert [(line.payment_type, line.amount) for line in match.lines] == [
+        ('KALTMIETE', Decimal('50.00')), ('NK_VORAUSZAHLUNG', Decimal('150.00'))]
+    # Without the set-off the credit stays on March and the whole of February is open.
+    plain = replace(tenant(), open_items=account_statement(charges, payments).open_items)
+    match, = suggest_matches(row('850.00', february), [plain])
+    assert [line.amount for line in match.lines] == [Decimal('700.00'), Decimal('150.00')]

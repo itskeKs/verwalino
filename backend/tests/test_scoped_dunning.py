@@ -59,9 +59,11 @@ async def test_created_draft_is_readable_at_response_start(creation_case, app_rw
             response = await writer.post(f'/api/dunning/{kind}', json=body)
         assert response.status_code == 201, response.text
         assert observed == [response.json()['id']], 'Draft not committed at http.response.start'
-        # Tenant: 11 months of 500.00 rent and 12 x 100.00 advance are open; June's rent was paid twice over
-        # (100.00 + 900.00 into the two scopes), which is no credit against another type or month.
-        assert response.json()['principal_amount'] == ('6700.00' if kind == 'tenant' else '1100.00')
+        # Tenant: 12 x (500.00 rent + 100.00 advance) = 7200.00 owed in 2025. June's rent was paid 1000.00 (100.00 + 900.00
+        # into the two scopes) for 500.00 owed; the 500.00 over settle the oldest due open rent of 2025, January's (#806):
+        # 7200.00 - 1000.00 = 6200.00. (The lease runs since 1 January 2024 and nothing was paid for 2024; a surplus is
+        # set off within its calendar year, so 2024 takes none of it.) The owner's Hausgeld account does not set off.
+        assert response.json()['principal_amount'] == ('6200.00' if kind == 'tenant' else '1100.00')
         assert [row['id'] for row in (await api.get('/api/dunning')).json()] == observed
 
 
@@ -125,7 +127,7 @@ async def test_scoped_dunning_distinguishes_prepare_approve_export_and_revocatio
         created = await api.post('/api/dunning/tenant', json=tenant_body(ids))
         assert created.status_code == 201, created.text
         notice = created.json()
-        assert notice['principal_amount'] == '6700.00'
+        assert notice['principal_amount'] == '6200.00'  # 7200.00 owed in 2025 - 1000.00 paid for June's rent, see the first test
         assert notice['accounting_scope_id'] == str(ids['scope'])
         assert (await api.post(f"/api/dunning/{notice['id']}/issue")).status_code == 404
     async with client(ids, 'actor') as admin:
@@ -271,7 +273,7 @@ async def test_other_scopes_escalate_the_level_of_this_scope_but_not_its_amount(
         assert other.status_code == 201, other.text
         # The issued notice of the first scope counts (its draft does not): level 2 with the level-2 fee (#818, 0203);
         # the principal is the lease's and the same in both scopes.
-        assert (other.json()['level'], other.json()['fee_amount'], other.json()['principal_amount']) == (2, '2.50', '6700.00')
+        assert (other.json()['level'], other.json()['fee_amount'], other.json()['principal_amount']) == (2, '2.50', '6200.00')
 
 
 async def test_tenant_recipient_must_match_selected_lease(migrator_session, scope_seed):

@@ -293,6 +293,13 @@ def _sum_rate_segments(segments: list[tuple[Decimal, int]], days_in_month: int) 
     return _money(numerator / Decimal(days_in_month))
 
 
+# The payment types of a lease that have a Soll in its statement: exactly the types `tenant_expected_charges` charges
+# (guarded by a test). Only their positions take part in the set-off of a surplus (#806), each type within itself;
+# a payment of any other type on a lease (a settlement balance, NACHZAHLUNG, or a deposit, KAUTION) has no Soll to be
+# paid beyond and settles nothing.
+TENANT_SOLL_TYPES = frozenset({PT_KALTMIETE, PT_NK_VORAUSZAHLUNG, PT_HK_VORAUSZAHLUNG})
+
+
 def tenant_expected_charges(
     lease: LeaseChargeInput,
     period_start: date,
@@ -519,6 +526,8 @@ class OpenItem:
 
     open = Soll - zugeordnetes Ist.
       open > 0 -> Rueckstand (owes); open < 0 -> Guthaben; 0 -> ausgeglichen.
+    On a lease the Ist of a position includes what the surplus of another position of the same calendar year and
+    payment type settled on it (`_set_off_surplus`, #806); the sum of Ist over those positions stays what was paid.
     NOT persisted (ADR-0009): purely computed and returned read-only.
     """
 
@@ -569,10 +578,177 @@ def _ist_key(p: PaymentInput) -> tuple[int | None, int | None, str]:
     return (p.period_year, p.period_month, p.payment_type)
 
 
+def _in_period(
+    year: int | None, month: int | None, period: tuple[date, date] | None, value_date: date | None = None,
+) -> bool:
+    """Whether a position or a payment of (year, month) belongs to the period (None: every one does).
+
+    By the month it names, by the year when it names no month, exactly as a payment's assigned period is read
+    for a statement (`PaymentService._scope_payments_to_period`); a booking without a year is read by its value date
+    (one without a value date is in).
+    """
+    if period is None:
+        return True
+    start, end = period
+    if year is None:
+        return value_date is None or start <= value_date <= end
+    if month is None:
+        return start.year <= year <= end.year
+    return (start.year, start.month) <= (year, month) <= (end.year, end.month)
+
+
+def _unassigned_groups(
+    ist: Decimal, changes: list[tuple[date, Decimal]], period: tuple[date, date] | None,
+) -> list[tuple[Decimal, list[tuple[date, Decimal]], bool]]:
+    """The money booked without a year of one type as (Ist, dated changes, outside the period) groups.
+
+    A booking without a year counts in the calendar year of its value date, so the bookings of two years are two
+    positions; the bookings of one year that the period holds and those it does not hold are two positions as well,
+    because the period lists only the money whose value date it holds. Money without a value date is one group
+    of its own, first, and is in.
+    """
+    groups: dict[tuple[int, bool], list[tuple[date, Decimal]]] = {}
+    for day, delta in changes:
+        groups.setdefault((day.year, period is not None and not period[0] <= day <= period[1]), []).append((day, delta))
+    undated = _money(ist - sum((delta for _, delta in changes), Decimal("0.00")))
+    result = [(undated, [], False)] if undated or not groups else []
+    for (year, outside) in sorted(groups):
+        result.append((_money(sum((delta for _, delta in groups[year, outside]), Decimal("0.00"))),
+                       groups[year, outside], outside))
+    return result
+
+
+def _due_on(item: OpenItem) -> date:
+    """The day a position of a month falls due."""
+    return item.due_date or date(item.period_year, item.period_month or 1, 1)
+
+
+def _surplus_lots(item: OpenItem) -> list[list]:
+    """What a credit position holds as [value date or None, amount] lots, the oldest money first.
+
+    The booked payments of the position, in the order of their value dates, cover its Soll first; what exceeds it
+    after a payment is a lot of that payment's value date. A payment paid back (OUT) takes the latest lots back
+    first. Money without a known value date (a booking without one) comes first as one lot without a date, so the
+    lots always add up to the credit.
+    """
+    credit = -item.open_amount
+    lots: list[list] = []
+    paid = held = Decimal("0.00")
+    for day, delta in sorted(item.payment_changes):
+        paid += delta
+        change = max(paid - item.soll, Decimal("0.00")) - held
+        held += change
+        if change > 0:
+            lots.append([day, change])
+        while change < 0 and lots:
+            take = min(-change, lots[-1][1])
+            lots[-1][1] -= take
+            change += take
+            if not lots[-1][1]:
+                lots.pop()
+    known = sum((amount for _, amount in lots), Decimal("0.00"))
+    if known < credit:
+        lots.insert(0, [None, credit - known])
+    while known > credit:
+        take = min(known - credit, lots[-1][1])
+        lots[-1][1] -= take
+        known -= take
+        if not lots[-1][1]:
+            lots.pop()
+    return lots
+
+
+def _set_off_surplus(items: list[OpenItem], as_of: date) -> list[OpenItem]:
+    """Settle the oldest due open positions with the surplus other positions hold (owner decision of #806).
+
+    A credit position (open < 0) is money paid beyond what that position owed. Its lots settle the open
+    positions of the same calendar year and the same payment type that are due at `as_of`, the oldest due date
+    first and, on one due date, in the order of the open items; the oldest money is used first. Nothing is set off
+    across the year end or between payment types. A position that is not yet due is never settled, so a surplus
+    larger than the due debt of its year and type stays a credit. The positions keep their Soll; Ist and open
+    amount move, the settled part of a payment is named on the position it settles with the value date of the
+    payment that produced the surplus, so that interest on it ends there and not before. Totals stay as they are.
+    The year of a position is the year of its month; a payment without an assigned year counts in the year of its
+    value date (one without a value date in no year), a refund without a year is no position of a year and is not
+    settled.
+    Only positions of the types that have a Soll on a lease (`TENANT_SOLL_TYPES`) take part, as a surplus or as
+    a debt: a payment of another type is no money paid beyond a charge, and a position of another type is no
+    charge that a surplus of rent or advances was meant for.
+    """
+    pools: dict[tuple[int, str], list[list]] = {}
+    dues: dict[tuple[int, str], list[int]] = {}
+    for index, item in enumerate(items):
+        if item.payment_type not in TENANT_SOLL_TYPES:
+            continue
+        if item.open_amount < 0:
+            for day, amount in _surplus_lots(item):
+                year = item.period_year if item.period_year is not None else day.year if day is not None else None
+                if year is not None:
+                    pools.setdefault((year, item.payment_type), []).append([day, index, amount])
+        elif item.open_amount > 0 and item.period_year is not None and _due_on(item) <= as_of:
+            dues.setdefault((item.period_year, item.payment_type), []).append(index)
+    settled = [Decimal("0.00")] * len(items)
+    moved = [Decimal("0.00")] * len(items)
+    changes: list[dict[date, Decimal]] = [{} for _ in items]
+    for key in pools.keys() & dues.keys():
+        pool = sorted(pools[key], key=lambda lot: (lot[0] or date.min, lot[1]))
+        pending = iter(pool)
+        lot = next(pending, None)
+        for target in sorted(dues[key], key=lambda index: (_due_on(items[index]), index)):
+            need = items[target].open_amount
+            while need > 0 and lot is not None:
+                day, source, amount = lot
+                take = min(need, amount)
+                need -= take
+                settled[target] += take
+                moved[source] += take
+                if day is not None:
+                    changes[target][day] = changes[target].get(day, Decimal("0.00")) + take
+                    changes[source][day] = changes[source].get(day, Decimal("0.00")) - take
+                lot[2] -= take
+                if not lot[2]:
+                    lot = next(pending, None)
+    result = []
+    for index, item in enumerate(items):
+        if not (settled[index] or moved[index]):
+            result.append(item)
+            continue
+        merged = dict(item.payment_changes)
+        for day, delta in changes[index].items():
+            merged[day] = merged.get(day, Decimal("0.00")) + delta
+        result.append(replace(
+            item, ist=_money(item.ist + settled[index] - moved[index]),
+            open_amount=_money(item.open_amount - settled[index] + moved[index]),
+            payment_changes=tuple(sorted((day, delta) for day, delta in merged.items() if delta))))
+    return result
+
+
+def _show_period_soll(items: list[OpenItem], period_charges: list[ExpectedCharge]) -> list[OpenItem]:
+    """The listed positions with the Soll of the period itself instead of that of the whole month.
+
+    The set-off reads every month in full; a statement over a period that starts or ends inside a month has always
+    shown that month day-accurate. A position the period has no charge for (the lease ends before the period starts
+    inside the month) is shown with no Soll, and not at all when nothing was paid on it.
+    """
+    shown: dict[tuple[int, int | None, str], Decimal] = {}
+    for charge in period_charges:
+        key = (charge.period_year, charge.period_month, charge.payment_type)
+        shown[key] = shown.get(key, Decimal("0.00")) + _money(charge.amount)
+    listed = []
+    for item in items:
+        key = (item.period_year, item.period_month, item.payment_type)
+        if key not in shown and item.soll and not item.ist:
+            continue
+        soll = shown.get(key, Decimal("0.00"))
+        listed.append(item if soll == item.soll else replace(item, soll=soll, open_amount=_money(soll - item.ist)))
+    return listed
+
+
 def account_statement(
     expected_charges: list[ExpectedCharge],
     payments: list[PaymentInput],
-    *, as_of: date | None = None, include_payment_dates: bool = False,
+    *, as_of: date | None = None, include_payment_dates: bool = False, set_off_surplus: bool = False,
+    period: tuple[date, date] | None = None, period_charges: list[ExpectedCharge] | None = None,
 ) -> MietkontoResult:
     """Soll vs Ist per (period, type) -> offene Posten + Saldo (m6 section 3.1).
 
@@ -588,9 +764,29 @@ def account_statement(
     With as_of, partition the signed open amounts by their existing due dates,
     inclusive of the cutoff. Undated buckets fall back to their period start;
     bookings without a period are due. No payment allocation or total changes.
+
+    set_off_surplus (a lease's statement, #806; needs as_of, the reference date): what a position was paid
+    beyond its Soll settles the oldest due open positions of the same calendar year and the same payment type
+    (`_set_off_surplus`, only the types in `TENANT_SOLL_TYPES` take part), never across the year end and never
+    between rent and advances. Only the split of the same Ist over the positions changes, never a total.
+
+    period (the lease's statement): the charges and payments given are those of the complete calendar years the
+    period touches, and all of them take part in the set-off, so that a month the period starts or ends in is read
+    in full and a payment of the whole month is never taken for a surplus; the statement lists only the positions
+    of the months the period names (`_in_period`), as they stand after the set-off. Its totals and its due and not
+    yet due balances add up those listed positions, so the rows, the balance and the due balance always agree. For
+    the whole of the years touched they are what was charged and paid. The period selects what is shown, it never
+    changes what a position owes.
+
+    period_charges (with the period): the charges of the period itself, `tenant_expected_charges` over the period
+    as every statement shows them, day-accurate in a month the period starts or ends in. The listed positions show
+    this Soll; the Ist they hold is the one the set-off over the complete years left on them.
     """
+    if set_off_surplus and as_of is None:
+        raise ValueError("The set-off of a surplus needs the reference date (as_of)")
     payments = [p for p in payments if p.is_booked and not p.is_reversed and not p.is_reversal]
-    elsewhere = [p.signed_amount for p in payments if p.other_scope]
+    elsewhere = [p.signed_amount for p in payments
+                 if p.other_scope and _in_period(p.period_year, p.period_month, period, p.value_date)]
     heating_periods = {(c.period_year, c.period_month) for c in expected_charges if c.payment_type == PT_HK_VORAUSZAHLUNG}
     combined_prepayments = {(p.period_year, p.period_month) for p in payments if p.combined_advance}
     reconciled_periods = heating_periods & combined_prepayments
@@ -621,12 +817,16 @@ def account_statement(
         ]
     # Otherwise a joint receipt covers the same-day components together.
     if reconciled_periods:
-        expected_charges = [
-            replace(c, payment_type=PT_NK_VORAUSZAHLUNG, combined_advance=True)
-            if c.payment_type in (PT_NK_VORAUSZAHLUNG, PT_HK_VORAUSZAHLUNG)
-            and (c.period_year, c.period_month) in reconciled_periods else c
-            for c in expected_charges
-        ]
+        def joint(charges):
+            return [
+                replace(c, payment_type=PT_NK_VORAUSZAHLUNG, combined_advance=True)
+                if c.payment_type in (PT_NK_VORAUSZAHLUNG, PT_HK_VORAUSZAHLUNG)
+                and (c.period_year, c.period_month) in reconciled_periods else c
+                for c in charges
+            ]
+        expected_charges = joint(expected_charges)
+        if period_charges is not None:
+            period_charges = joint(period_charges)
     combined_periods = {(c.period_year, c.period_month) for c in expected_charges if c.combined_advance}
     if combined_periods:
         # Also credit separately booked heating when the assigned month now
@@ -650,18 +850,20 @@ def account_statement(
 
     # Dunning can retain the dates of the same allocations for interest.
     # Neither the allocation order nor the resulting open balances change.
+    # The set-off needs them too: it places a payment without a year by its value date.
     dated_ist: dict[tuple[int | None, int | None, str], dict[date, Decimal]] = {}
     # Aggregate Ist per key (booked, not reversed, not a reversal-of -> net).
     ist_by_key: dict[tuple[int | None, int | None, str], Decimal] = {}
     for p in payments:
         key = _ist_key(p)
-        if include_payment_dates and p.value_date is not None:
+        if (include_payment_dates or set_off_surplus) and p.value_date is not None:
             daily = dated_ist.setdefault(key, {})
             daily[p.value_date] = daily.get(p.value_date, Decimal("0")) + p.signed_amount
         ist_by_key[key] = ist_by_key.get(key, Decimal("0.00")) + p.signed_amount
 
     all_keys = set(soll_by_key) | set(ist_by_key)
     items: list[OpenItem] = []
+    outside_period: set[int] = set()  # the positions (by index) of bookings without a year that the period does not hold
     soll_total = Decimal("0.00")
     ist_total = Decimal("0.00")
     for key in sorted(all_keys, key=lambda k: (k[0] or 0, k[1] or 0, k[2])):
@@ -674,7 +876,8 @@ def account_statement(
         if dates:
             # Payments have a month, not a levy ID: consume that month's money
             # oldest due first, exactly once. Future levies must not accelerate
-            # arrears, and surplus credit remains on the last dated position.
+            # arrears, and surplus credit remains on the last dated position
+            # (until `_set_off_surplus` moves it, where the statement asks for that).
             remaining = ist
             dated_amounts = sorted(dates.items())
             undated = soll - sum(dates.values(), Decimal("0.00"))
@@ -707,8 +910,27 @@ def account_statement(
                     payment_changes=tuple(paid_changes), combined_advance=key in combined_keys,
                     reconciled_advance=key in combined_keys and key[:2] in reconciled_periods))
         else:
-            items.append(OpenItem(period_year=key[0], period_month=key[1], payment_type=key[2],
-                soll=soll, ist=ist, open_amount=_money(soll - ist), payment_changes=tuple(changes)))
+            # A booking without a year is positioned by the calendar year of its value date and by whether the
+            # period holds it (`_unassigned_groups`); the set-off reads all of them, the period lists those it holds.
+            groups = _unassigned_groups(ist, changes, period) if set_off_surplus and key[0] is None else [(ist, changes, False)]
+            for held, dated, outside in groups:
+                if outside:
+                    outside_period.add(len(items))
+                items.append(OpenItem(period_year=key[0], period_month=key[1], payment_type=key[2],
+                    soll=soll, ist=held, open_amount=_money(soll - held), payment_changes=tuple(dated)))
+    if set_off_surplus:
+        items = _set_off_surplus(items, as_of)
+        if not include_payment_dates:
+            items = [replace(item, payment_changes=()) for item in items]
+    if period is not None:
+        # A position of money outside the period is no row of it; one that holds nothing any more (its money settled
+        # other positions) changes no figure and stays listed, as it always was.
+        items = [item for index, item in enumerate(items) if _in_period(item.period_year, item.period_month, period)
+                 and (index not in outside_period or not (item.ist or item.open_amount))]
+        if period_charges is not None:
+            items = _show_period_soll(items, period_charges)
+        soll_total = sum((item.soll for item in items), Decimal("0.00"))
+        ist_total = sum((item.ist for item in items), Decimal("0.00"))
     due_balance = None
     not_yet_due_balance = None
     if as_of is not None:
