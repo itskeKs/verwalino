@@ -59,10 +59,12 @@ async def test_created_draft_is_readable_at_response_start(creation_case, app_rw
             response = await writer.post(f'/api/dunning/{kind}', json=body)
         assert response.status_code == 201, response.text
         assert observed == [response.json()['id']], 'Draft not committed at http.response.start'
-        # Tenant: 12 x (500.00 rent + 100.00 advance) = 7200.00 owed, 1000.00 paid for June's rent (100.00 + 900.00
-        # into the two scopes): 6200.00 are open, the 500.00 June's rent did not need settle the oldest position (#806).
+        # Tenant: 12 x (500.00 rent + 100.00 advance) = 7200.00 owed in 2025. June's rent was paid 1000.00 (100.00 + 900.00
+        # into the two scopes) for 500.00 owed; the 500.00 over settle the oldest due open position of the lease, which is
+        # January 2024's rent (the lease runs since 1 January 2024, nothing was paid for 2024) and outside this notice
+        # (#806). 2025 stays open with 7200.00 - 500.00 paid for June's own rent = 6700.00.
         # The owner's Hausgeld account does not set off a surplus.
-        assert response.json()['principal_amount'] == ('6200.00' if kind == 'tenant' else '1100.00')
+        assert response.json()['principal_amount'] == ('6700.00' if kind == 'tenant' else '1100.00')
         assert [row['id'] for row in (await api.get('/api/dunning')).json()] == observed
 
 
@@ -126,7 +128,7 @@ async def test_scoped_dunning_distinguishes_prepare_approve_export_and_revocatio
         created = await api.post('/api/dunning/tenant', json=tenant_body(ids))
         assert created.status_code == 201, created.text
         notice = created.json()
-        assert notice['principal_amount'] == '6200.00'  # 7200.00 owed - 1000.00 paid, see the first test
+        assert notice['principal_amount'] == '6700.00'  # 7200.00 owed in 2025 - 500.00 paid for June's rent, see the first test
         assert notice['accounting_scope_id'] == str(ids['scope'])
         assert (await api.post(f"/api/dunning/{notice['id']}/issue")).status_code == 404
     async with client(ids, 'actor') as admin:
@@ -272,7 +274,7 @@ async def test_other_scopes_escalate_the_level_of_this_scope_but_not_its_amount(
         assert other.status_code == 201, other.text
         # The issued notice of the first scope counts (its draft does not): level 2 with the level-2 fee (#818, 0203);
         # the principal is the lease's and the same in both scopes.
-        assert (other.json()['level'], other.json()['fee_amount'], other.json()['principal_amount']) == (2, '2.50', '6200.00')
+        assert (other.json()['level'], other.json()['fee_amount'], other.json()['principal_amount']) == (2, '2.50', '6700.00')
 
 
 async def test_tenant_recipient_must_match_selected_lease(migrator_session, scope_seed):

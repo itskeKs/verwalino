@@ -39,6 +39,7 @@ from app.engine.types import OwnerPeriodInput
 from app.engine.reserve_ledger import covered_reserve
 from app.engine.rounding import distribute_amount
 from app.engine.mietkonto import (
+    TENANT_SOLL_TYPES,
     AdvanceFilter,
     AdvanceCredit,
     advance_modes_for_period,
@@ -56,7 +57,7 @@ from app.engine.mietkonto import (
     deposit_statement,
     owner_expected_charges,
     special_levy_expected_charges,
-    tenant_expected_charges,
+    tenant_lease_charges,
     tenant_refund_buckets,
 )
 from app.models.audit_event import AuditEvent
@@ -700,22 +701,38 @@ class PaymentService:
         prop = await PropertyRepository(self._session, self._org_id).get_by_id(unit.property_id) if unit else None
         if prop is None:
             raise HTTPException(404, "Property not found")
-        charges = tenant_expected_charges(lc, period_start, period_end, federal_state=prop.federal_state)
-
-        def counted(rows):
-            return [p for p in self._scope_payments_to_period(rows, period_start, period_end) if p.payment_type != "KAUTION"]
-
+        reference = as_of or date.today()
         # The debt of a lease counts every booked payment of it, whichever accounting scope's account received it
         # (#803): the selected scope decides what the caller may open, not what the lease owes. The payments it
         # cannot read come as amounts only and are shown as one summed amount.
         payments = await self._repo.list_for_lease(lease.id)
-        elsewhere = counted(await self._repo.list_outside_scope_for_lease(lease.id, [p.id for p in payments]))
-        inputs = await self._tenant_payment_inputs(lease, rent_changes, counted(payments))
+        elsewhere = await self._repo.list_outside_scope_for_lease(lease.id, [p.id for p in payments])
+
+        def read(rows):
+            """The payments the statement reads: the period's, and what a surplus of the lease can come from (#806).
+
+            A surplus settles the oldest due open position of the whole lease, so the rent and advance payments of
+            every other month, made up to the reference date, are read as well; the period only selects which
+            positions are shown. A deposit is no rent and is never read. The payments are already loaded for the
+            lease (one query), nothing is read per month.
+            """
+            in_period = {id(p) for p in self._scope_payments_to_period(rows, period_start, period_end)}
+            return [p for p in rows if p.payment_type != "KAUTION" and (id(p) in in_period or (
+                period_start <= period_end and p.payment_type in TENANT_SOLL_TYPES
+                and p.period_year is not None and p.value_date <= reference))]
+
+        payments, elsewhere = read(payments), read(elsewhere)
+        charges = tenant_lease_charges(
+            lc, period_start, period_end, reference, federal_state=prop.federal_state,
+            payment_months={(p.period_year, p.period_month) for p in (*payments, *elsewhere)
+                            if p.period_year is not None and p.period_month is not None})
+        inputs = await self._tenant_payment_inputs(lease, rent_changes, payments)
         inputs += [replace(row, other_scope=True) for row in await self._tenant_payment_inputs(lease, rent_changes, elsewhere)]
-        # What a payment paid beyond its position owed settles the lease's oldest due open positions (#806): the open
-        # items, the rent account, the bank matching and a dunning notice all read the same positions.
-        return account_statement(charges, inputs, as_of=as_of or date.today(),
-                                 include_payment_dates=include_payment_dates, set_off_surplus=True)
+        # What a payment paid beyond its position owed settles the lease's oldest due open position (#806): the open
+        # items, the rent account, the bank matching, the deadline monitor and a dunning notice all read the same
+        # positions of the period.
+        return account_statement(charges, inputs, as_of=reference, include_payment_dates=include_payment_dates,
+                                 set_off_surplus=True, period=(period_start, period_end))
 
     async def _owner_plan_inputs(self, plan: EconomicPlan):
         """Frozen owner advances, dated ownership and the property of a plan's Hausgeld Soll."""

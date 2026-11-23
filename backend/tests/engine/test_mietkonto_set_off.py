@@ -22,6 +22,8 @@ from app.engine.mietkonto import (
     PaymentInput,
     PT_HK_VORAUSZAHLUNG,
     PT_KALTMIETE,
+    PT_KAUTION,
+    PT_NACHZAHLUNG,
     PT_NK_VORAUSZAHLUNG,
     account_statement,
     tenant_expected_charges,
@@ -190,6 +192,38 @@ def test_a_position_that_is_not_yet_due_is_not_settled_early_and_nothing_due_mea
     assert positions(early) == {(1, PT_KALTMIETE): Decimal('600.00'), (2, PT_KALTMIETE): Decimal('600.00'),
                                 (3, PT_KALTMIETE): Decimal('-1000.00')}
     assert (early.due_balance, notice_principal(early, date(2025, 1, 2))) == (Decimal('0.00'), Decimal('0.00'))
+
+
+# --- which types take part -------------------------------------------------------------------------------------------
+
+def test_a_nachzahlung_is_no_surplus_and_settles_no_rent():
+    # Rent 500 for January to March; February and March are paid, January is not. The tenant also paid a
+    # NACHZAHLUNG of 300 for March: the balance of a settlement, which has no Soll in this statement. It is no money
+    # paid beyond a rent: January stays open with its 500, and the 300 stay a credit of their own. Owed 1500, paid
+    # 1000 as rent: the notice of 15 April demands 500 (the review of #885 saw 200: the 300 counted twice).
+    charges = [owes(m, '500') for m in (1, 2, 3)]
+    payments = [paid(2, '500.00'), paid(3, '500.00'), paid(3, '300.00', PT_NACHZAHLUNG)]
+    result = statement(charges, payments, as_of=date(2025, 4, 15))
+    assert positions(result) == {(1, PT_KALTMIETE): Decimal('500.00'), (2, PT_KALTMIETE): Decimal('0.00'),
+                                 (3, PT_KALTMIETE): Decimal('0.00'), (3, PT_NACHZAHLUNG): Decimal('-300.00')}
+    assert notice_principal(result, date(2025, 4, 15)) == Decimal('500.00')
+
+
+@pytest.mark.parametrize('kind', [PT_NACHZAHLUNG, PT_KAUTION])
+def test_a_payment_of_a_type_without_a_soll_neither_feeds_the_pool_nor_is_settled_by_it(kind):
+    # Rent 500 for January and February, January unpaid. February was paid 800 (300 over its rent) and 300 came in
+    # of the other type for February. The 300 of rent settle January (500 - 300 = 200); the 300 of the other type
+    # have no Soll, feed nothing and stay a credit of -300.
+    charges = [owes(1, '500'), owes(2, '500')]
+    result = statement(charges, [paid(2, '800.00'), paid(2, '300.00', kind)])
+    assert positions(result) == {(1, PT_KALTMIETE): Decimal('200.00'), (2, PT_KALTMIETE): Decimal('0.00'),
+                                 (2, kind): Decimal('-300.00')}
+    # Of the other type 200 went out alone for January: no Soll, so that position owes 200 back (due on 1 January,
+    # before the rent). The 300 of rent do not settle it: they settle January's rent (500 - 300 = 200), and the 200
+    # owed back stay open.
+    owed_back = statement(charges, [paid(2, '800.00'), paid(1, '200.00', kind, direction='OUT')])
+    assert positions(owed_back) == {(1, PT_KALTMIETE): Decimal('200.00'), (1, kind): Decimal('200.00'),
+                                    (2, PT_KALTMIETE): Decimal('0.00')}
 
 
 # --- sign: refunds and reversals -----------------------------------------------------------------------------------

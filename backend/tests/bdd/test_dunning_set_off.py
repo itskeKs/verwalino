@@ -1,4 +1,5 @@
 """Bind features/dunning_set_off.feature: a lease whose June was paid beyond its charge."""
+from calendar import monthrange
 from decimal import Decimal
 from pathlib import Path
 
@@ -20,25 +21,36 @@ def lease(world, seed_data, period_data_cleanup, rent, advance):
     assert response.status_code == 200, world.describe_response()
 
 
-def book_rent(world, amount, month, value_date):
-    account = bank_account(world)
+MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+          "November", "December"]
+PAYMENT_TYPES = {"rent": "KALTMIETE"}
+
+
+def month_number(name):
+    return MONTHS.index(name) + 1
+
+
+def book(world, amount, kind, month, value_date):
+    """A booked payment of the lease for a month of 2026, into the one rental account of the scenario."""
+    account = world.data.get("account") or bank_account(world, deposit=kind == "KAUTION")
     payment = create(world, "/api/payments", {
         "accounting_scope_id": world.data["scope"]["id"], "bank_account_id": account["id"],
         "tenant_profile_id": world.data["tenants"][0]["id"], "lease_agreement_id": world.data["leases"][0]["id"],
-        "amount": f"{amount}.00", "direction": "IN", "value_date": value_date, "payment_type": "KALTMIETE",
+        "amount": f"{amount}.00", "direction": "IN", "value_date": value_date, "payment_type": kind,
         "period_year": 2026, "period_month": month,
     })
     assert world.act("POST", f"/api/payments/{payment['id']}/book").status_code == 200, world.describe_response()
 
 
-@given(parsers.parse("{amount:d} EUR is booked as rent for June 2026"))
-def book_june(world, amount):
-    book_rent(world, amount, 6, "2026-06-02")
+@given(parsers.re(r"(?P<amount>\d+) EUR is booked as (?P<kind>rent|[A-Z_]+) for (?P<month>[A-Za-z]+) 2026$"))
+def book_for_month(world, amount, kind, month):
+    book(world, amount, PAYMENT_TYPES.get(kind, kind), month_number(month), f"2026-{month_number(month):02d}-02")
 
 
-@given(parsers.parse("{amount:d} EUR is booked as rent for April 2026 on 10 April 2026"))
-def book_april(world, amount):
-    book_rent(world, amount, 4, "2026-04-10")
+@given(parsers.re(r"(?P<amount>\d+) EUR is booked as rent for (?P<month>[A-Za-z]+) 2026 on (?P<day>\d+) "
+                  r"(?P<paid_month>[A-Za-z]+) 2026$"))
+def book_on_a_day(world, amount, month, day, paid_month):
+    book(world, amount, "KALTMIETE", month_number(month), f"2026-{month_number(paid_month):02d}-{int(day):02d}")
 
 
 @when("the manager looks at the open items of 2026 as of 15 January 2027")
@@ -62,9 +74,12 @@ def create_year_notice(world):
     create_notice(world, "2026-01-01", "2026-12-31", "2027-01-15")
 
 
-@when("the manager creates a notice for March and April 2026 as of 1 May 2026")
-def create_spring_notice(world):
-    create_notice(world, "2026-03-01", "2026-04-30", "2026-05-01")
+@when(parsers.re(r"the manager creates a notice for (?P<first>[A-Za-z]+)(?: to (?P<last>[A-Za-z]+))? 2026 as of "
+                 r"(?P<day>\d+) (?P<month>[A-Za-z]+) (?P<year>\d{4})$"))
+def create_notice_for_months(world, first, last, day, month, year):
+    first_month, last_month = month_number(first), month_number(last or first)
+    create_notice(world, f"2026-{first_month:02d}-01", f"2026-{last_month:02d}-{monthrange(2026, last_month)[1]}",
+                  f"{year}-{month_number(month):02d}-{int(day):02d}")
 
 
 @then(parsers.parse("the open items add up to {amount:d} EUR"))
@@ -93,6 +108,12 @@ def notice_matches_open_items(world, amount):
 def no_notice(world):
     assert world.response.status_code == 422, world.describe_response()
     assert world.response.json()["detail"] == "No overdue items found for this tenant in the given period"
+
+
+@then(parsers.parse("the notice demands {amount:d} EUR"))
+def notice_principal(world, amount):
+    assert world.response.status_code == 201, world.describe_response()
+    assert Decimal(world.response.json()["principal_amount"]) == Decimal(amount), world.response.json()
 
 
 @then(parsers.parse("the notice demands {amount:d} EUR with {interest} EUR interest"))
