@@ -683,7 +683,10 @@ not as a claim that OpenAI is free. Token/time limits remain bounded. The extrac
 harness version is `7` (compatible endpoints `9`, Anthropic fingerprint `v6`), with wire schema version `3`. The adapter converts only
 the two known, disjoint `kind` unions to `anyOf` after the SDK's strict-schema
 transformation. Parsing, reservations and schema fingerprints use that same
-wire model; inherited local validation remains unchanged. Offline SDK transport
+wire model, except for the inventory pass, whose request narrows an entry's
+`document_key` to the keys of the request while its fingerprint stays on the
+model without that narrowing (see "Inventory keys" below); inherited local
+validation remains unchanged. Offline SDK transport
 checks verify serialization, not live provider acceptance. Pass metadata states the
 reasoning effort that the answered request carried (`default` when none was sent, see below).
 

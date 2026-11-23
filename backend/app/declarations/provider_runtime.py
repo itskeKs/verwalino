@@ -212,7 +212,8 @@ class ProviderClient:
             schema = _anthropic_schema(schema)
             return {"model":model,"system":system,"messages":messages,"max_tokens":max_output_tokens,"output_config":{"format":{"type":"json_schema","schema":schema}}}
         # Some compatible servers accept response_format without enforcing it.
-        # The exact same static schema is therefore also visible to the model.
+        # The schema of the request (for the inventory pass: narrowed to the request's document keys) is therefore
+        # also visible to the model.
         instruction = {"type":"text", "text":_schema_instruction(schema)}
         if messages and messages[0]["role"] == "system":
             messages[0]["content"].append(instruction)
