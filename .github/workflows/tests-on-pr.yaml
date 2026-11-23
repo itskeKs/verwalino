@@ -99,6 +99,63 @@ jobs:
           path: backend/test-durations-${{ matrix.shard }}.json
           if-no-files-found: error
 
+  # The hosted API scenarios are their own matrix job, so that their run time does not add to the
+  # pytest shard of the same number: that sum came close to the 30-minute limit of one job.
+  # The selection is the one the shard step ran: the same split of tests/bdd with the committed timings.
+  backend-hosted:
+    name: Backend hosted scenarios ${{ matrix.shard }}/4
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    services:
+      mailpit:
+        image: axllent/mailpit:v1.32.0@sha256:0790692be935ea4420d085694f7985b1f692ca6a8771ab0e0bd8ba75ac180498
+        ports:
+          - 1025:1025
+          - 8025:8025
+        options: >-
+          --health-cmd="/mailpit readyz"
+          --health-interval=2s --health-timeout=2s --health-retries=15
+    env:
+      # uv run must never rewrite uv.lock in CI.
+      UV_LOCKED: "1"
+      HV_SMTP_HOST: "127.0.0.1"
+      HV_SMTP_PORT: "1025"
+      HV_SMTP_SECURITY: "plain"
+      HV_SMTP_FROM: "verwaltung@example.invalid"
+      HV_SMTP_USERNAME: ""
+      HV_SMTP_PASSWORD: ""
+      VERWALINO_MAILPIT_API: "http://127.0.0.1:8025"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install system libraries
+        run: >-
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 libcairo2
+          libgdk-pixbuf-2.0-0 libffi8 fonts-dejavu-core shared-mime-info
+          poppler-utils qpdf
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: uv sync --locked --extra dev --extra ops
+
+      # Same disposable database and Mailpit as the pytest shards, one set per matrix job.
+      - name: Start test database
+        run: docker compose -f infra/docker-compose.declaration-test.yml up -d --wait postgres
+
       - name: Hosted API scenarios (Postgres and Mailpit)
         env:
           HV_DEPLOYMENT_MODE: hosted
@@ -170,10 +227,10 @@ jobs:
             caddy:2.10.2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
   # Keep the branch-protection context stable and fail closed on failed,
-  # skipped or cancelled dependencies, covering ruff and every test shard.
+  # skipped or cancelled dependencies, covering ruff, every pytest shard and every hosted scenario job.
   backend:
     name: Backend (ruff, pytest)
-    needs: [backend-shards, backend-checks]
+    needs: [backend-shards, backend-hosted, backend-checks]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -181,8 +238,9 @@ jobs:
       - name: Require all backend shards
         env:
           SHARD_RESULT: ${{ needs.backend-shards.result }}
+          HOSTED_RESULT: ${{ needs.backend-hosted.result }}
           CHECK_RESULT: ${{ needs.backend-checks.result }}
-        run: test "$SHARD_RESULT" = success && test "$CHECK_RESULT" = success
+        run: test "$SHARD_RESULT" = success && test "$HOSTED_RESULT" = success && test "$CHECK_RESULT" = success
 
       - name: Checkout repository
         uses: actions/checkout@v6
