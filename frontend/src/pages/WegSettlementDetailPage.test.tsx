@@ -116,6 +116,25 @@ it.each(['m4.3.2', 'm4.4.0'])('explains the capped reserve payment source for %s
   else expect(source).not.toHaveTextContent(sentence);
 });
 
+it.each([
+  [undefined, '(Periodenzuordnung, einschließlich Erstattungen)', 'Objekts im Abrechnungszeitraum. Der Zahlbetrag'],
+  ['m4.10.0', '(Periodenzuordnung, einschließlich Erstattungen)', 'Objekts im Abrechnungszeitraum. Der Zahlbetrag'],
+  ['m4.11.0', '(Periodenzuordnung, einschließlich Erstattungen)', 'Objekts im Abrechnungszeitraum. Der Zahlbetrag'],
+  ['m4.12.0', '(nach Wertstellung, einschließlich Erstattungen)', 'Objekts mit Wertstellung im Abrechnungszeitraum. Der Zahlbetrag'],
+  ['m4.13.0', '(nach Wertstellung, einschließlich Erstattungen)', 'Objekts mit Wertstellung im Abrechnungszeitraum. Der Zahlbetrag'],
+])('names the basis of the paid amounts of a statement of engine %s', async (engine_version, hausgeld, levy) => {
+  install([{ ...draft(), status: 'finalized' as const, ...(engine_version ? { engine_version } : {}),
+    lines: [frozenLine('seller', seller, '7200.00')],
+    owner_results: [{ owner_profile_id: seller, owner_cost_total: '7200.00', plan_soll: '4200.00', paid: '4200.00',
+      abrechnungsspitze: '0.00', account_balance: '0.00', payment_amount: '2000.00',
+      levy_soll: '3000.00', levy_paid: '1000.00', levy_balance: '2000.00', ownership_periods: [] }] }]);
+  show();
+  const section = await screen.findByLabelText('Hausgeld-Abgleich · Anna Alt');
+  expect(section).toHaveTextContent(hausgeld);
+  expect(section).toHaveTextContent(levy);
+  expect(section.textContent?.includes('Periodenzuordnung')).toBe(hausgeld.includes('Periodenzuordnung'));
+});
+
 it('shows the current opening beside the corrected balance input and reason', async () => {
   install(); show();
   expect(await screen.findByText(/Aktueller Anfangsbestand: 0,00/)).toBeInTheDocument();

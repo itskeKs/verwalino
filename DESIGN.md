@@ -2042,6 +2042,25 @@ identifiers and keep the existing detail tables within the phone viewport.
 | Before | [view](docs/assets/design/weg-owner-balance/before-1280.png) | [view](docs/assets/design/weg-owner-balance/before-360.png) |
 | After | [view](docs/assets/design/weg-owner-balance/after-1280.png) | [view](docs/assets/design/weg-owner-balance/after-360.png) |
 
+### WEG annual statement: payments by value date (#904)
+
+The source note under the balance block names the basis of the paid amounts. A statement of engine
+`m4.12.0` or later says “… im Abrechnungszeitraum (nach Wertstellung, einschließlich Erstattungen).”
+and, in the levy paragraph, “… Sonderzahlungen dieses Eigentümers und Objekts mit Wertstellung im
+Abrechnungszeitraum.”; a statement of an earlier engine keeps “(Periodenzuordnung, einschließlich
+Erstattungen)” and the old levy sentence. The page reads the run's `engine_version`, the PDF the frozen
+payload's, so a finalized statement is never relabelled. No new component, row or colour: the longer
+sentence wraps inside the existing paragraph and needs no horizontal scrolling at 360 px. The captures
+use synthetic data on the test database: Clara Nachfolgerin owns unit 2 from 01.07.2026 with a plan Soll
+of 2.400,00 €; 1.900,00 € of Hausgeld assigned to December 2026 arrive on 05.01.2027. Before: “Hausgeld
+gezahlt” 1.900,00 €, “Rückstand / Guthaben aus Hausgeld” 500,00 € and “Periodenzuordnung”; after:
+0,00 €, 2.400,00 € and “nach Wertstellung”.
+
+| WEG payments by value date | 1280 px | 360 px |
+| --- | --- | --- |
+| Before | [view](docs/assets/design/weg-value-date/before-1280.png) | [view](docs/assets/design/weg-value-date/before-360.png) |
+| After | [view](docs/assets/design/weg-value-date/after-1280.png) | [view](docs/assets/design/weg-value-date/after-360.png) |
+
 ### WEG annual statement: special levy (#405)
 
 When the frozen result carries levy figures for an owner, the balance block gains three rows of

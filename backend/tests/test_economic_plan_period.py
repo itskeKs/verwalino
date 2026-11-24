@@ -230,10 +230,11 @@ async def test_paid_hausgeld_and_finalized_periods_survive_property_change(clien
     frozen_plan = answer.json()
     run = await create(api, "/api/weg-settlements", {"property_id": april["property"]["id"],
         "economic_plan_id": plan["id"], "period_start": "2025-04-01", "period_end": "2026-03-31"})
+    # Each payment is received in the month it is assigned to, so the statement counts April 2025 to March 2026.
     for year, month in ((2025, 3), (2025, 4), (2025, 12), (2026, 1), (2026, 3), (2026, 4)):
-        await booked(api, april, year, month, hausgeld=True)
+        await booked(api, april, year, month, hausgeld=True, value_date=f"{year}-{month:02d}-05")
     # Draft and reversed payments must not enter the derived total.
-    payment = await booked(api, april, 2026, 2, hausgeld=True, amount="999.00")
+    payment = await booked(api, april, 2026, 2, hausgeld=True, amount="999.00", value_date="2026-02-05")
     answer = await api.post(f"/api/payments/{payment['id']}/reverse", json={"note": "Test reversal"})
     assert answer.status_code == 201, answer.text
     answer = await api.post(f"/api/weg-settlements/{run['id']}/paid-advances-derived")
@@ -263,10 +264,11 @@ async def test_identical_plan_period_stays_allowed(client_a_admin, april):
 
 
 @pytest.mark.parametrize("month", [1, 4])
-async def test_year_only_hausgeld_is_split_between_calendar_year_months(client_a_admin, month):
+async def test_year_only_hausgeld_is_credited_whole_in_the_period_of_its_value_date(client_a_admin, month):
     api = client_a_admin
     data = await period_property(api, month=month)
-    await booked(api, data, 2025, None, hausgeld=True)
+    # Assigned to the year 2025 as a whole, received on 05.08.2025: no split by days, whatever the period start.
+    await booked(api, data, 2025, None, hausgeld=True, value_date="2025-08-05")
     totals = []
     for year in (2024, 2025):
         start = f"{year}-{month:02d}-01"
@@ -277,7 +279,7 @@ async def test_year_only_hausgeld_is_split_between_calendar_year_months(client_a
         answer = await api.post(f"/api/weg-settlements/{run['id']}/paid-advances-derived")
         assert answer.status_code == 200, answer.text
         totals.append(Decimal(answer.json()[0]["paid_total"]))
-    assert totals == ([Decimal("0.00"), Decimal("100.00")] if month == 1 else [Decimal("24.99"), Decimal("75.01")])
+    assert totals == [Decimal("0.00"), Decimal("100.00")]
 
 
 async def test_weg_rejects_overlong_period(client_a_admin, april):
@@ -381,7 +383,7 @@ async def test_requested_dates_reach_scope_validation_unchanged(monkeypatch, mon
 async def test_year_only_hausgeld_is_not_credited_twice_across_adjacent_periods(client_a_admin):
     api = client_a_admin
     data = await period_property(api, month=1)
-    await booked(api, data, 2025, None, hausgeld=True, amount="1200.00")
+    await booked(api, data, 2025, None, hausgeld=True, amount="1200.00", value_date="2025-08-05")
     totals = []
     for start, end in (("2025-01-01", "2025-06-30"), ("2025-07-01", "2025-12-31")):
         plan = await finalized_plan(api, data, start, end)
@@ -389,9 +391,9 @@ async def test_year_only_hausgeld_is_not_credited_twice_across_adjacent_periods(
             "economic_plan_id": plan["id"], "period_start": start, "period_end": end})
         answer = await api.post(f"/api/weg-settlements/{run['id']}/paid-advances-derived")
         assert answer.status_code == 200, answer.text
-        total = Decimal(answer.json()[0]["paid_total"])
-        assert total == Decimal("600.00")
-        totals.append(total)
+        totals.append(Decimal(answer.json()[0]["paid_total"]))
+    # The payment counts once, in the period that contains its value date.
+    assert totals == [Decimal("0.00"), Decimal("1200.00")]
     assert sum(totals) == Decimal("1200.00")
 
 
@@ -399,9 +401,10 @@ async def test_month_assigned_hausgeld_reconciles_adjacent_march_cut(client_a_ad
     api = client_a_admin
     data = await period_property(api, month=1)
     for month in range(1, 13):
-        await booked(api, data, 2025, month, hausgeld=True)
+        await booked(api, data, 2025, month, hausgeld=True, value_date=f"2025-{month:02d}-05")
     totals = []
-    for start, end, expected in (("2025-01-01", "2025-03-14", "245.16"), ("2025-03-15", "2025-12-31", "954.84")):
+    # January, February and March (received 05.03.) precede the cut of 14.03.; the other nine months follow it.
+    for start, end, expected in (("2025-01-01", "2025-03-14", "300.00"), ("2025-03-15", "2025-12-31", "900.00")):
         plan = await finalized_plan(api, data, start, end)
         run = await create(api, "/api/weg-settlements", {"property_id": data["property"]["id"],
             "economic_plan_id": plan["id"], "period_start": start, "period_end": end})

@@ -33,13 +33,31 @@ Feature: WEG settlement and the owner's Hausgeld balance
     And the owner's ledger is unchanged by finalization
     And finalization has not changed the booked Hausgeld payments
 
-  Scenario: A successor's assigned payment remains visible with her dated plan Soll
+  # The statement counts receipts in the year they were received (value date, #904); the owner's ledger
+  # keeps the month a payment is assigned to.
+  Scenario: A payment received in January is not credited in the statement of the year it was assigned to
     Given a successor owns unit 2 from July after the plan was finalized and all costs belong to January through June
     And the successor has booked 1900 euros for December 2026 with a January 2027 value date
     When I finalize their WEG annual settlement
-    Then the finalized statement and PDF show the successor's 1900 euro credit with unit and ownership dates
+    Then the finalized statement and PDF show the successor's Hausgeld gezahlt as 0 euros and her Rückstand as 2400 euros with unit and ownership dates
+    And the PDF names the value date as the basis of the paid Hausgeld
     And the owner's ledger is unchanged by finalization
     And finalization has not changed the booked Hausgeld payments
+
+  @browser
+  Scenario: The explanation of the paid Hausgeld names the value date at desktop width and on a 360 pixel phone
+    Given a successor owns unit 2 from July after the plan was finalized and all costs belong to January through June
+    And the successor has booked 1900 euros for December 2026 with a January 2027 value date
+    When I finalize their WEG annual settlement
+    Then Clara's Einzelabrechnung shows Hausgeld gezahlt 0,00 and Rückstand 2.400,00 and names the value date without horizontal scrolling
+
+  Scenario: The payment received in January is credited in the statement of the next year
+    Given a successor owns unit 2 from July after the plan was finalized and all costs belong to January through June
+    And the successor has booked 1900 euros for December 2026 with a January 2027 value date
+    When I finalize their WEG annual settlement
+    And I compute the 2027 WEG annual settlement of the same property
+    Then the successor's 2027 statement shows Hausgeld gezahlt 1900 euros against a plan Soll of 4800 euros
+    And the 2026 and 2027 statements together credit exactly the 1900 euros received
 
   @browser
   Scenario: The owner's payment explanation fits desktop and a 360 pixel phone
@@ -168,6 +186,23 @@ Feature: WEG settlement and the owner's Hausgeld balance
       | 5000 | 1 March 2026    | 1000      | 2000       | 0           | 0            | 3000      | 2000       | 2000         | 0             |
       | 5000 | 1 March 2026    | 3500      | 2000       | 0           | 0            | 3000      | 2000       | -500         | 0             |
       | 5000 | 15 January 2027 | 0         | 0          | 3000        | 2000         | 0         | 0          | 3000         | 2000          |
+
+  Scenario Outline: A special levy payment counts in the year it was received, whatever month it is assigned to
+    Given the WEG plan has 7000 euros of costs and the roof repair cost another 5000 euros
+    And Anna and Berta have paid their Hausgeld in full
+    And a resolved special levy of 5000 euros is due on 1 March 2026
+    And Anna has paid 3000 euros of the levy assigned to <month> with value date <value date>
+    When I finalize their WEG annual settlement
+    Then their levy Soll is 3000 and 2000 euros and paid <anna paid> and 0 euros
+    And Anna's payment is <anna payment> euros and Berta's is 2000 euros
+
+    Examples:
+      | month         | value date       | anna paid | anna payment |
+      | March 2026    | 5 March 2026     | 3000      | 0            |
+      | March 2026    | 5 January 2027   | 0         | 3000         |
+      | December 2025 | 5 January 2026   | 3000      | 0            |
+      | December 2026 | 31 December 2026 | 3000      | 0            |
+      | January 2027  | 28 December 2026 | 3000      | 0            |
 
   Scenario: The finalized statement and PDF show the special levy and keep their figures
     Given the WEG plan has 7000 euros of costs and the roof repair cost another 5000 euros

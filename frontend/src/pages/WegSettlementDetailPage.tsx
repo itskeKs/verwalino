@@ -27,6 +27,19 @@ const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Fi
 const STATUS_CSS: Record<string, string> = { draft: "badge--draft", finalized: "badge--confirmed" };
 const eur = (value: string) => formatMoney(centsFromDecimal(value));
 
+/** Component-wise >= for "m<major>.<minor>.<patch>" engine versions; a missing or unparseable one is older than any floor. */
+function engineVersionAtLeast(version: string | null | undefined, floor: string): boolean {
+  const parts = (text: string) => text.replace(/^m/, "").split(".").map(Number);
+  const have = parts(version ?? "");
+  const need = parts(floor);
+  if (have.some(Number.isNaN)) return false;
+  for (let i = 0; i < Math.max(have.length, need.length); i += 1) {
+    const diff = (have[i] ?? 0) - (need[i] ?? 0);
+    if (diff !== 0) return diff > 0;
+  }
+  return true;
+}
+
 function balanceRows(o: WegOwnerBalance): [string, string][] {
   const levy: [string, string][] = o.levy_soll != null && o.levy_paid != null && o.levy_balance != null
     ? [["Sonderumlage-Soll", o.levy_soll], ["Sonderumlage gezahlt", o.levy_paid], ["Rückstand / Guthaben aus Sonderumlage", o.levy_balance]]
@@ -151,6 +164,9 @@ export function WegSettlementDetailPage() {
     <button className="btn" onClick={() => setGeneration(value => value + 1)}>Erneut laden</button>
   </div>;
 
+  // From engine m4.12.0 the statement counts a payment in the year it was received (Wertstellung), not by its assigned month.
+  const byValueDate = engineVersionAtLeast(run.engine_version, "m4.12.0");
+
   // Group lines by owner.
   const ownerIds = Array.from(new Set(run.lines.map((l) => l.addressee_owner_profile_id ?? "—")));
 
@@ -263,8 +279,8 @@ export function WegSettlementDetailPage() {
                 </dl>
                 <p><strong>{Number(o.payment_amount) < 0 ? "Guthaben zugunsten des Eigentümers" : Number(o.payment_amount) > 0 ? "Zahlung an die Gemeinschaft" : "Ausgeglichen"}</strong></p>
                 <p>Nur die Abrechnungsspitze ist beschlossen; Rückstände werden aus dem Wirtschaftsplan geschuldet. Der Zahlbetrag verrechnet die Spitze mit Rückstand oder Guthaben aus Hausgeld und begründet keinen neuen Anspruch.</p>
-                <p>Quelle: Soll aus dem verknüpften Wirtschaftsplan; gezahlt aus gebuchten, nicht stornierten Hausgeldzahlungen dieses Eigentümers und Objekts im Abrechnungszeitraum (Periodenzuordnung, einschließlich Erstattungen). {run.engine_version === "m4.4.0" && <>Gesondert gebuchte Rücklagenzahlungen zählen nur, soweit das Hausgeld-Soll nicht bereits durch Hausgeldzahlungen gedeckt ist; ein Überschuss bleibt in der Rücklage. </>}Offene oder ungebuchte Zahlungen zählen nicht. Bei Eigentümerwechsel bleiben Zahlungen beim zugeordneten Eigentümer.</p>
-                {o.levy_soll != null && <p>Sonderumlage: Soll aus den beschlossenen Sonderumlagen, die im Abrechnungszeitraum fällig waren, verteilt auf die Eigentümer am Fälligkeitstag. Sie vermindert die Abrechnungsspitze als zusätzliches Soll; ein Überschuss oder Fehlbetrag erscheint als Guthaben oder Nachschuss. Gezahlt aus gebuchten, nicht stornierten Sonderzahlungen dieses Eigentümers und Objekts im Abrechnungszeitraum. Der Zahlbetrag verrechnet zusätzlich den Rückstand oder das Guthaben aus der Sonderumlage.</p>}
+                <p>Quelle: Soll aus dem verknüpften Wirtschaftsplan; gezahlt aus gebuchten, nicht stornierten Hausgeldzahlungen dieses Eigentümers und Objekts im Abrechnungszeitraum ({byValueDate ? "nach Wertstellung" : "Periodenzuordnung"}, einschließlich Erstattungen). {run.engine_version === "m4.4.0" && <>Gesondert gebuchte Rücklagenzahlungen zählen nur, soweit das Hausgeld-Soll nicht bereits durch Hausgeldzahlungen gedeckt ist; ein Überschuss bleibt in der Rücklage. </>}Offene oder ungebuchte Zahlungen zählen nicht. Bei Eigentümerwechsel bleiben Zahlungen beim zugeordneten Eigentümer.</p>
+                {o.levy_soll != null && <p>Sonderumlage: Soll aus den beschlossenen Sonderumlagen, die im Abrechnungszeitraum fällig waren, verteilt auf die Eigentümer am Fälligkeitstag. Sie vermindert die Abrechnungsspitze als zusätzliches Soll; ein Überschuss oder Fehlbetrag erscheint als Guthaben oder Nachschuss. Gezahlt aus gebuchten, nicht stornierten Sonderzahlungen dieses Eigentümers und Objekts {byValueDate && "mit Wertstellung "}im Abrechnungszeitraum. Der Zahlbetrag verrechnet zusätzlich den Rückstand oder das Guthaben aus der Sonderumlage.</p>}
                 <p>Eigentümerzuordnung im Abrechnungszeitraum:</p>
                 {o.ownership_periods.map((p, i) => <p key={i}>Einheit {p.unit_number}: {formatDate(p.valid_from)} bis {formatDate(p.valid_to)}</p>)}
               </section>

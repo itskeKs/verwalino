@@ -194,7 +194,8 @@ Soll of amendment #401 is unchanged.
 
 The booked `SONDERZAHLUNG` payments appear as their own block, “Sonderumlage gezahlt”: the
 owner's net booked `SONDERZAHLUNG` of the period counted exactly as the owner account's Ist
-(assigned month, else value date; booked, not reversed, OUT reducing it). They change only the
+(assigned month, else value date; booked, not reversed, OUT reducing it; counted by value date from
+engine `m4.12.0`, see the amendment of 2026-11-22). They change only the
 payment amount: `levy_balance = levy_soll − levy_paid` and
 `payment_amount = abrechnungsspitze + account_balance + levy_balance`, so an unpaid levy is owed
 and not a credit of the Spitze, and an unused paid levy is a credit.
@@ -211,3 +212,21 @@ The engine input gains the levy shares and the levy payments, the payload freeze
 their digest. Engine `m4.10.0` introduced them; finalized runs are never recalculated and keep
 their figures, digest and PDF bytes. Liability between seller and buyer for a levy remains out
 of scope.
+
+## Amendment 2026-11-22 (#904)
+
+The owner decided on #787 („Zahlungsjahr, Heizung nach Verbrauch") that the WEG Jahresabrechnung works
+by the receipts and payments of the year. This amendment applies the principle to the owner's side
+of the statement. The paid Hausgeld, the separately paid reserve shares (decision 1(b) of #401
+continues to cap them at the unpaid Soll) and the paid levy payments are the owner's net booked
+amounts, booked, not reversed, not a reversal and OUT reducing them, **whose value date lies within the
+settlement period**, for every payment, whether it is assigned to a year and month or not. The assigned
+month no longer decides which statement a payment belongs to, and nothing is prorated by days. A
+payment of December 2026 received on 05.01.2027 is no payment of 2026: the 2026 statement shows
+„Hausgeld gezahlt" 0,00 and the arrears of the whole Soll, and the 2027 statement credits it. Payments
+stay with the payer; nothing moves between owners.
+
+The owner account (the ledger by month), owner dunning, the Fristenmonitor and „Hausgeld buchen" are
+not part of the statement and keep the assigned month; the reserve ledger already counted cash by value
+date. Engine `m4.12.0` carries the rule, page and PDF name the basis „Wertstellung" only for a
+statement of that version, and finalized statements keep payload, digest and PDF bytes (ADR-0003). The change needs no migration.

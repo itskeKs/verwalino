@@ -65,21 +65,13 @@ and `settlement_period_conflict` for WEG annual runs.
 
 The previous-actuals preview and adoption use the preceding property period, including
 its scope boundaries, source digest and day-based cost proration. Paid Hausgeld is
-summed over the settlement's assigned months across calendar years using
-the shared `derive_advance_total_for_period` calculation, also used by NK.
-Booked, active payments only are included. Year-only
-Hausgeld had the same double-credit risk as NK when adjacent periods started
-in the same year, so both now share the calendar-month allocation: twelve equal
-month shares rounded down to cents, with the remaining cents in December.
-Each period credits only its covered months in each assigned year. For an
-April property, a year-only 1,200-euro payment for 2025 credits 300 euros to
-2024/2025 and 900 euros to 2025/2026; adjacent half-years credit 600 euros each.
-For 1,000 euros, January–November credit 83.33 euros each and December 83.37 euros.
-Shares are independent of draft/finalization order. Full calendar-year results
-are retained; split months use day-based cumulative cent boundaries so adjacent
-partial-month statements also reconcile. Explicit monthly assignments use the
-same boundary-day rule described above; ledger filtering is unchanged. Paid advances
-remain informational
+the net booked Hausgeld whose value date lies within the settlement period (§2.4, engine `m4.12.0`,
+#904), counted whole by `PaymentService.net_received_in_period`; a payment is never split by
+days or months and never counted twice by adjacent periods (a payment of 1,200 euros received on
+05.08. credits the period that contains that day and no other). Booked, active payments only are
+included. Until engine `m4.11.0` the sum followed the payment's assigned months with the shared
+`derive_advance_total_for_period` calculation, also used by NK, which still applies to the tenant
+statements. Paid advances remain informational
 and do not change the Abrechnungsspitze calculation. Changing the start month never
 rewrites existing plans, settlement dates or finalized snapshots. The WEG statement
 form initially adopts the selected plan's persisted dates, even if the property's
@@ -315,10 +307,12 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
   repair it financed leaves a credit (Guthaben) or an additional payment (Nachschuss) in the Spitze.
   The planned reserve Soll (#401) is unchanged. A run without levies computes exactly the figures it
   did before and its payload carries no levy key.
-- **Special levy payments:** `levy_paid` is the owner's net booked `SONDERZAHLUNG` of the period,
-  counted exactly like the owner account's Ist (`PaymentService.derive_special_levy_total_for_period`:
-  the payments the account statement keeps for the period by assigned month, else value date;
-  booked, not reversed, not a reversal, OUT reducing it). A levy payment names a month, not a levy,
+- **Special levy payments:** `levy_paid` is the owner's net booked `SONDERZAHLUNG` received in the
+  period (`PaymentService.derive_special_levy_total_for_period`: every payment of the owner and
+  property whose value date lies in the period, whatever month it is assigned to; booked, not
+  reversed, not a reversal, OUT reducing it). From engine `m4.12.0` (#904) this is no longer the
+  owner account's rule (assigned month, else value date), which the account and dunning keep, and
+  which `m4.10.0` and `m4.11.0` statements used. A levy payment names a month, not a levy,
   so the total is compared with the owner's levy Soll as a whole. `levy_balance = levy_soll − levy_paid`
   (positive: still owed, negative: overpaid). Like the Hausgeld payments, they change only the
   payment amount and never the Spitze.
@@ -329,14 +323,21 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
   Hausgeld overpayments keep their full credit; negative net reserve adds nothing.
   Excess reserve stays in the reserve ledger and cannot offset higher actual
   costs. Both net sums use the same owner, property and signed IN/OUT/Storno rules. Other Hausgeld derivations
-  keep their existing payment-type selection. An explicit period year/month takes
-  precedence over the value date (December 2026 assigned to a January 2027 receipt
-  still belongs to December). Assigned annual amounts are split into stable calendar-month
-  shares; assigned monthly amounts are prorated by days at period boundaries using
-  cumulative cent boundaries, so adjacent periods reconcile to the booked amount.
-  Without an assigned year, the signed payment counts once in the period containing
-  its actual value date. Refunds reduce the paid total; drafts, reversed originals and reversal rows
-  do not count.
+  keep their existing payment-type selection. **Since engine `m4.12.0` (#904) the statement
+  counts receipts in the year they were made:** a payment counts, whole, in the period that
+  contains its value date (both days inclusive), whatever year and month it is assigned to. The
+  assigned period no longer decides: December 2026 Hausgeld received on 05.01.2027 is no payment of
+  2026 (arrears stay in full) and counts in the 2027 statement; December 2025 Hausgeld received on
+  05.01.2026 counts in 2026 and not in 2025; a payment with no assigned year is read by its value
+  date as before. A refund (OUT) reduces its type in the year of its value date, so a refund
+  received after the year end is a negative payment of the next statement; drafts, reversed
+  originals and reversal rows do not count in any year, so two consecutive statements add up to
+  exactly what was received in both. Statements of `m4.11.0` and earlier followed the assigned
+  month (annual amounts in calendar-month shares, monthly amounts prorated by days at period
+  boundaries); finalized ones keep their figures, digest and PDF. The owner account
+  (`account_statement_for_owner`), owner dunning, the Fristenmonitor and „Hausgeld buchen" keep the
+  assigned month, so the account of an owner can show a payment in December that the statement
+  counts in the following year.
   Payments stay with their assigned owner after an ownership change; there is no transfer
   of a predecessor's arrears. Manual coverage entries cannot create paid amounts.
   A successor with only booked payments is included even with no cost or plan lines:
@@ -424,6 +425,13 @@ chosen rows (`HAUSGELD_VORSCHUSS`, direction IN, `period_year` and `period_month
   was zero. Finalized runs are never rewritten or re-hashed, and no read derives the key from
   the plan or the reserve ledger. `reserve_paid_contributions` is not frozen as an input; its
   values remain recoverable from the frozen ledger's `CONTRIBUTION` rows.
+- Engine `m4.12.0` counts the paid Hausgeld, the separately paid reserve shares and the paid
+  levy by value date (#904, owner decision on #787, „Zahlungsjahr"). No key or shape of the payload
+  changes, only the amounts under `inputs.paid_advances`, `inputs.levy_paid` and the owner results.
+  Page and PDF name the basis of a statement of this version „nach Wertstellung" (Hausgeld) and
+  „mit Wertstellung im Abrechnungszeitraum" (levy); a payload of an older engine keeps
+  „Periodenzuordnung" and its old wording, chosen by the frozen `engine_version`. Drafts follow at their
+  next computation, finalized runs are never recalculated. No migration.
 
 ### 2.5 Lifecycle, Snapshot, Correction — Identical to M3
 
@@ -1142,9 +1150,9 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   credited Hausgeld share, using the frozen period's plan Soll and planned reserve.
   Late cash thus corrects legacy totals that lack a correction row; issued
   snapshots remain unchanged.
-  The ledger uses cash value dates; the paid side retains assigned-period rules
-  (§2.4). Arrears assigned to an earlier year but paid in this period count as
-  this period's Hausgeld cash.
+  The ledger uses cash value dates, and since engine `m4.12.0` so does the paid side (§2.4):
+  arrears assigned to an earlier year but paid in this period count as this period's Hausgeld cash
+  in both.
   Without a determinable
   ratio (no usable finalized plan, no dated unit assignment or no positive annual
   Hausgeld denominator) at booking,

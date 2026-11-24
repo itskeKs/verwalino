@@ -50,7 +50,6 @@ from app.engine.mietkonto import (
     PaymentInput,
     account_statement,
     derive_advance_total,
-    derive_advance_total_for_period,
     derive_advance_credits_for_period,
     uncredited_advance_total,
     deposit_statement,
@@ -1156,28 +1155,39 @@ class PaymentService:
         )
         return derive_advance_total([to_payment_input(p) for p in rows], filt)
 
+    @staticmethod
+    def net_received_in_period(payments, payment_type: str, period_start: date, period_end: date) -> Decimal:
+        """Net booked amount of one payment type received in the period, by value date.
+
+        The WEG Jahresabrechnung counts receipts and payments in the year they were made (owner
+        decision of #787): every payment whose value date lies in the period counts, whatever year
+        and month it is assigned to, and counts once, so consecutive periods add up to what was
+        received. The sum is the account statement's Ist: booked, not reversed, not a reversal,
+        OUT reducing it. The owner account keeps `_scope_payments_to_period` (the assigned month).
+        """
+        return account_statement([], [
+            to_payment_input(p) for p in payments
+            if p.payment_type == payment_type and period_start <= p.value_date <= period_end]).ist_total
+
     async def derive_special_levy_total_for_period(
         self, owner_profile_id: uuid.UUID, period_start: date, period_end: date,
         *, property_id: uuid.UUID | None = None,
     ) -> Decimal:
-        """Net booked SONDERZAHLUNG of the owner in the period, exactly as the owner account counts it.
+        """Net booked SONDERZAHLUNG of the owner received in the period (value date, see `net_received_in_period`).
 
-        The payments are the ones `account_statement_for_owner` keeps for the period (assigned
-        month, else value date) and the sum is the statement's Ist: booked, not reversed, not a
-        reversal, OUT reducing it. A levy payment names a month, not a levy, so the total is
-        compared with the owner's levy Soll as a whole (#405).
+        A levy payment names a month, not a levy, so the total is compared with the owner's levy
+        Soll as a whole (#405).
         """
         rows = await self._repo.list_for_owner(owner_profile_id, property_id=property_id)
-        scoped = self._scope_payments_to_period(rows, period_start, period_end)
-        return account_statement(
-            [], [to_payment_input(p) for p in scoped if p.payment_type == "SONDERZAHLUNG"]).ist_total
+        return self.net_received_in_period(rows, 'SONDERZAHLUNG', period_start, period_end)
 
     async def derive_hausgeld_total_for_period(
         self, owner_profile_id: uuid.UUID, period_start: date, period_end: date,
         *, property_id: uuid.UUID | None = None, plan_soll: Decimal | None = None,
     ) -> Decimal:
-        """Read net Hausgeld; separate WEG reserve covers only unpaid plan Soll.
+        """Read net Hausgeld received in the period; separate WEG reserve covers only unpaid plan Soll.
 
+        Both sums are the payments received in the period by value date (`net_received_in_period`).
         An absent plan Soll never credits reserve, including against negative
         Hausgeld. The draft ledger shares Rc = min(max(R, 0), max(Soll-H, 0)),
         using in-period value-date cash and the owner Soll of the run's plan (its
@@ -1190,22 +1200,8 @@ class PaymentService:
         late cash books the difference to the correction stored for that period.
         """
         rows = await self._repo.list_for_owner(owner_profile_id, property_id=property_id)
-        assigned = [to_payment_input(p) for p in rows if p.period_year is not None]
-        scoped = self._scope_payments_to_period(
-            [p for p in rows if p.period_year is None], period_start, period_end)
-        totals = {}
-        types = ('HAUSGELD_VORSCHUSS', 'RUECKLAGENANTEIL') if plan_soll is not None else ('HAUSGELD_VORSCHUSS',)
-        for payment_type in types:
-            assigned_total = sum((sign * derive_advance_total_for_period(
-                [p for p in assigned if p.direction == direction], AdvanceFilter(
-                    types=frozenset({payment_type}), year=year,
-                    owner_profile_id=owner_profile_id,
-                ), period_start, period_end)
-                for direction, sign in (("IN", 1), ("OUT", -1))
-                for year in range(period_start.year, period_end.year + 1)), Decimal("0.00"))
-            totals[payment_type] = assigned_total + account_statement(
-                [], [to_payment_input(p) for p in scoped if p.payment_type == payment_type]).ist_total
-        hausgeld = totals['HAUSGELD_VORSCHUSS']
+        hausgeld = self.net_received_in_period(rows, 'HAUSGELD_VORSCHUSS', period_start, period_end)
         if plan_soll is None:
             return hausgeld
-        return hausgeld + covered_reserve(hausgeld, totals['RUECKLAGENANTEIL'], plan_soll)
+        reserve = self.net_received_in_period(rows, 'RUECKLAGENANTEIL', period_start, period_end)
+        return hausgeld + covered_reserve(hausgeld, reserve, plan_soll)
