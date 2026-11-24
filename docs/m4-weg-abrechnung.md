@@ -342,7 +342,7 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
   stay outside that sum: a separately paid reserve share counts only up to the cover above, and a year
   finalized by `m4.11.0` or earlier keeps its assigned-month figures, so the first statement computed by
   value date after it can count a payment around their common year end twice or not at all (the switch
-  is recorded as its own issue). Statements of `m4.11.0` and earlier followed the assigned
+  is issue #907). Statements of `m4.11.0` and earlier followed the assigned
   month (annual amounts in calendar-month shares, monthly amounts prorated by days at period
   boundaries); finalized ones keep their figures, digest and PDF. The owner account
   (`account_statement_for_owner`), owner dunning, the Fristenmonitor and „Hausgeld buchen" keep the
