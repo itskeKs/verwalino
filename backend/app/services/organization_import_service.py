@@ -567,7 +567,7 @@ async def import_organization(db, auth, source):
                             if name == 'dunning_scope_context' and parent == 'dunning_notice':
                                 # Reversed edge: see the dependency on the context above.
                                 continue
-                            if name == 'payment' and list(child_columns) == ['reversed_by_id']:
+                            if name == 'payment' and child_columns[parent_columns.index('id')] == 'reversed_by_id':
                                 # The original and its Storno point at each other; the Storno
                                 # comes first and links the original below.
                                 continue

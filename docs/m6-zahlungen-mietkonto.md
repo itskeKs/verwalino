@@ -108,8 +108,8 @@ A `payment` row is **one recorded money movement** (inflow or outflow) against a
 | `status` | `String(12) NOT NULL DEFAULT 'draft'` | `draft` (recording, editable) \| `booked` (booked, frozen). CHECK. Freeze condition: `booked`. |
 | `booked_at` | `TIMESTAMPTZ NULL` | Time of booking. |
 | `booked_by` | `UUID NULL` FK→`user` (`SET NULL`) | Who booked (audit). |
-| `reverses_id` | `UUID NULL` FK self (`RESTRICT`) | for a **reversal payment**: points to the reversed original payment. |
-| `reversed_by_id` | `UUID NULL` FK self (`RESTRICT`) | for the **reversed** payment: points to the reversal row (forward pointer, E-4 convention like `superseded_by_id`). |
+| `reverses_id` | `UUID NULL` composite FK self `(organization_id, reverses_id)` → `payment(organization_id, id)` (`RESTRICT`, migration 0206) | for a **reversal payment**: points to the reversed original payment of the same organization. |
+| `reversed_by_id` | `UUID NULL` composite FK self `(organization_id, reversed_by_id)` → `payment(organization_id, id)` (`RESTRICT`, migration 0206) | for the **reversed** payment: points to the reversal row of the same organization (forward pointer, E-4 convention like `superseded_by_id`). |
 | `retention_until` | `DATE NULL` | Retention anchor (8 years, architecture.md §3.3 / ADR-0003 #3) — booking voucher retention; GDPR (DSGVO) interlocking (§5). Set once when the row becomes `booked`: 31 December of the anchor year + 8 years. The anchor of a booked payment is its `value_date`; the anchor of a reversal row is the later of the original's `value_date` and its own booking date (`booked_at`, UTC), see §5. |
 | `note` | `String(500) NULL` | Payment reference/note (e.g. original transfer text, where entered manually). |
 | `created_at`/`updated_at` | `TIMESTAMPTZ` | as everywhere. |
