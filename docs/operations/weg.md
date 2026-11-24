@@ -16,6 +16,27 @@ checks the visible detail explanations at 1280 px and 360 px; the
 [organization-isolation feature](../../features/organization_isolation.feature)
 checks that foreign financial records remain indistinguishable from missing ones.
 
+## Payments in the annual settlement: the year they were received
+
+The annual settlement counts what an owner paid in the year the money was received: the booked Hausgeld,
+the separately booked reserve shares and the special levy payments whose **value date** (Wertstellung) lies
+in the settlement period, whichever year and month the payment is assigned to ([M4 §2.4](../m4-weg-abrechnung.md#24-origin-of-expected-advances-booked-hausgeld-and-the-payment-amount),
+ADR-0007 amendment of 2026-11-22). Hausgeld of December 2026 that arrives on 05.01.2027 is therefore
+no payment of the 2026 statement („Hausgeld gezahlt“ 0,00 €, the arrears are the whole Soll) and counts in
+the 2027 statement; Hausgeld of December 2025 that arrives on 05.01.2026 counts in 2026. A refund to the
+owner reduces the payments of the year of its value date, a reversed payment and its Storno count in no
+year. An owner who paid in the period belongs to its statement even without a unit in it: a seller who
+pays an arrear after the year of the sale is credited in the year of the payment („Hausgeld-Soll laut
+Wirtschaftsplan“ 0,00, „Hausgeld gezahlt“ the amount), a buyer who pays before his first year is credited in
+the year of the payment, and the statement of the year of the sale or of the first year of ownership shows the
+arrears as they stood in it. Each Hausgeld and levy payment is therefore credited in exactly one statement and
+consecutive statements of engine `m4.12.0` or later add up to exactly what was received (a separately paid
+reserve share counts only up to the Soll still unpaid by Hausgeld). Payments stay with the owner who paid.
+The owner account (Mietkonto), owner dunning and „Hausgeld buchen“ keep the assigned month, so the account
+can show a payment for December that the statement counts in January. The page and PDF of a statement
+computed by engine `m4.12.0` or later say „nach Wertstellung“; a draft follows at its next calculation, a
+finalized statement and its PDF stay as they were.
+
 ## Co-owner shares in the Wirtschaftsplan and the annual settlement
 
 Enter the „MEA-Anteil“ of every co-owner of a unit in the unit's Eigentumshistorie as a fraction

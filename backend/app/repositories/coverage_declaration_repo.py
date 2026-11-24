@@ -50,6 +50,20 @@ class CoverageDeclarationRepository(TenantRepository[CoverageDeclaration]):
             {"org": self._org_id, "property": subject.property_id, "start": subject.period_start, "end": subject.period_end})
         owners = {str(i) for i in result.scalars()}
         is_plan = getattr(subject, '__tablename__', None) == 'economic_plan'
+        if getattr(subject, 'run_type', None) == 'WEG_JAHRESABRECHNUNG':
+            # The statement counts a payment in the year it was received (#904), so an owner with such a payment
+            # belongs to it without a unit in the period: a seller paying after the year of the sale, a buyer
+            # paying before his first year. The payments are the ones `PaymentService.net_received_in_period` sums:
+            # booked, not reversed, not a reversal, of the three types the statement credits, value date in the period.
+            result = await self._session.execute(text(
+                "SELECT DISTINCT p.owner_profile_id FROM payment p WHERE p.organization_id=:org "
+                "AND p.property_id=:property AND p.owner_profile_id IS NOT NULL AND p.status='booked' "
+                "AND p.reversed_by_id IS NULL AND p.reverses_id IS NULL "
+                "AND p.payment_type IN ('HAUSGELD_VORSCHUSS','RUECKLAGENANTEIL','SONDERZAHLUNG') "
+                "AND p.value_date BETWEEN :start AND :end"),
+                {"org": self._org_id, "property": subject.property_id,
+                 "start": subject.period_start, "end": subject.period_end})
+            owners.update(str(i) for i in result.scalars())
         if is_plan or getattr(subject, 'run_type', None) == 'WEG_JAHRESABRECHNUNG':
             result = await self._session.execute(text(
                 "SELECT DISTINCT l.owner_profile_id FROM economic_plan_line l JOIN economic_plan p "

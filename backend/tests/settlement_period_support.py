@@ -53,9 +53,9 @@ def statement(data, start="2025-04-01", end="2026-03-31"):
         "period_start": start, "period_end": end}
 
 
-async def booked(client, data, year, month, *, hausgeld=False, amount="100.00"):
+async def booked(client, data, year, month, *, hausgeld=False, amount="100.00", value_date="2026-07-05"):
     payload = {"bank_account_id": data["account"]["id"], "direction": "IN", "amount": amount,
-        "value_date": "2026-07-05", "payment_type": "HAUSGELD_VORSCHUSS" if hausgeld else "NK_VORAUSZAHLUNG",
+        "value_date": value_date, "payment_type": "HAUSGELD_VORSCHUSS" if hausgeld else "NK_VORAUSZAHLUNG",
         "period_year": year, "period_month": month}
     if hausgeld:
         payload["owner_profile_id"] = data["owner"]["id"]

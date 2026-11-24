@@ -84,7 +84,7 @@ from app.services.reserve_ledger_service import ReserveLedgerService
 from app.services.payment_service import dated_plan_soll
 from app.services.special_levy_service import SpecialLevyService
 
-ENGINE_VERSION = "m4.11.0"
+ENGINE_VERSION = "m4.12.0"
 
 DELETE_MESSAGES = {
     'SETTLEMENT_DELETE_SOURCE_ACCESS_REQUIRED': 'Zum Löschen dieses Entwurfs benötigen Sie Zugriff auf alle Finanzquellen des Objekts.',
@@ -620,7 +620,7 @@ class WegSettlementService:
         self, economic_plan_id: uuid.UUID, period_year: int,
         period_start: date | None = None, period_end: date | None = None,
     ) -> list["ManualOwnerAdvance"]:
-        """Read net booked Hausgeld by assigned owner, object and period.
+        """Read net booked Hausgeld by assigned owner, object and period (value date, since m4.12.0, #904).
 
         Reuse the existing advance request shape for the coverage workflow and
         the engine. Plan owners and owners active within the period both belong
@@ -795,7 +795,7 @@ class WegSettlementService:
 
         A levy is an additional Soll of the owner its frozen allocation names; it counts when its
         due date lies within the settlement period, wherever the cost it financed falls. The
-        payments are the owner account's net booked SONDERZAHLUNG of the period. A scoped run
+        payments are the owner's net booked SONDERZAHLUNG received in the period (value date). A scoped run
         reads the levies only when every levy of its scope is visible to the actor: a hidden levy
         must refuse the calculation, never shrink the Soll.
         """

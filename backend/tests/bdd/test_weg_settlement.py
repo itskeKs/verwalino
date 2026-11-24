@@ -237,9 +237,6 @@ def cross_year_successor_payment(world, weg_balance):
         'payment_type': 'HAUSGELD_VORSCHUSS', 'period_year': 2026, 'period_month': 12})
     response = world.act('POST', f"/api/payments/{payment['id']}/book")
     assert response.status_code == 200, response.text
-    derived = world.act('POST', f"/api/weg-settlements/{w['run']}/paid-advances-derived")
-    assert derived.status_code == 200, derived.text
-    assert next(row['paid_total'] for row in derived.json() if row['owner_profile_id'] == w['successor']) == '1900.00'
     w['ledger_before'] = owner_ledger(world, w, w['successor'])
     assert {key: w['ledger_before'][key] for key in ('soll_total', 'ist_total', 'balance')} == {
         'soll_total': '2400.00', 'ist_total': '1900.00', 'balance': '500.00'}
@@ -312,16 +309,18 @@ def unchanged_owner_ledger(world, weg_balance):
     assert owner_ledger(world, w, w.get('successor', w['owners'][0])) == w['ledger_before']
 
 
-@then("the finalized statement and PDF show the successor's 1900 euro credit with unit and ownership dates")
-def successor_credit(world, weg_balance):
+@then("the finalized statement and PDF show the successor's Hausgeld gezahlt as 0 euros and her Rückstand as 2400 euros "
+      "with unit and ownership dates")
+def successor_unpaid(world, weg_balance):
     w = weg_balance
     result = world.look(world.actor, f"/api/weg-settlements/{w['run']}").json()
     owner = next((row for row in result['owner_results'] if row['owner_profile_id'] == w['successor']), None)
-    assert owner is not None, 'The finalized statement omitted the successor with a booked payment'
+    assert owner is not None, 'The finalized statement omitted the successor, who owned the unit from July'
+    # Received on 05.01.2027, the 1900 euros are not a payment of 2026, whatever month they are assigned to.
     assert {key: owner[key] for key in ('owner_cost_total', 'plan_soll', 'abrechnungsspitze',
                                       'paid', 'account_balance', 'payment_amount')} == {
         'owner_cost_total': '0.00', 'plan_soll': '2400.00', 'abrechnungsspitze': '-2400.00',
-        'paid': '1900.00', 'account_balance': '500.00', 'payment_amount': '-1900.00'}
+        'paid': '0.00', 'account_balance': '2400.00', 'payment_amount': '0.00'}
     assert owner['ownership_periods'] == [{'unit_number': '2', 'valid_from': '2026-07-01', 'valid_to': '2026-12-31'}]
     originals = {row['owner_profile_id']: row for row in result['owner_results'] if row['owner_profile_id'] != w['successor']}
     for oid, cost, plan, spitze in zip(w['owners'][:2], ('6400.00', '4266.67'), ('7200.00', '2400.00'), ('-800.00', '1866.67')):
@@ -335,8 +334,91 @@ def successor_credit(world, weg_balance):
     block = content.split('Clara Nachfolgerin', 1)[1]
     end = min((block.index(name) for name in ('Anna Berg', 'Berta Vollständig') if name in block), default=len(block))
     block = block[:end]
-    for expected in ('Hausgeld gezahlt', '1.900,00', '-1.900,00', 'Zahlbetrag', 'Einheit 2: 01.07.2026 bis 31.12.2026'):
+    for expected in ('Hausgeld gezahlt', '0,00', '2.400,00', '-2.400,00', 'Zahlbetrag', 'Einheit 2: 01.07.2026 bis 31.12.2026'):
         assert expected in block
+    assert '1.900,00' not in block
+
+
+@then('the PDF names the value date as the basis of the paid Hausgeld')
+def pdf_names_value_date(world, weg_balance):
+    response = world.look(world.actor, f"/api/weg-settlements/{weg_balance['run']}/pdf")
+    assert response.status_code == 200, response.text
+    content = pdf_text(response.content)
+    assert 'Wertstellung' in content and 'Periodenzuordnung' not in content
+
+
+@then("Clara's Einzelabrechnung shows Hausgeld gezahlt 0,00 and Rückstand 2.400,00 and names the value date "
+      "without horizontal scrolling")
+def value_date_browser(browser_world, weg_balance):
+    import os
+    import re
+    from playwright.async_api import expect
+    b = browser_world
+    # VERWALINO_CAPTURE_DESIGN=1 refreshes the "after" captures of DESIGN.md, =before the "before" ones.
+    phase = {'1': 'after', 'before': 'before'}.get(os.environ.get('VERWALINO_CAPTURE_DESIGN', ''))
+    region_name = 'Hausgeld-Abgleich · Clara Nachfolgerin'
+    async def check():
+        await b.visit(f"/weg-abrechnungen/{weg_balance['run']}")
+        for width in (1280, 360):
+            await b.page.set_viewport_size({'width': width, 'height': 1000})
+            region = b.page.get_by_role('region', name=region_name, exact=True)
+            await expect(region).to_be_visible()
+            await region.scroll_into_view_if_needed()
+            if phase:
+                directory = Path(__file__).resolve().parents[3] / 'docs/assets/design/weg-value-date'
+                directory.mkdir(parents=True, exist_ok=True)
+                await b.page.screenshot(path=str(directory / f'{phase}-{width}.png'))
+        for width in (1280, 360):
+            await b.page.set_viewport_size({'width': width, 'height': 1000})
+            region = b.page.get_by_role('region', name=region_name, exact=True)
+            for label, value in (('Hausgeld-Soll laut Wirtschaftsplan', '2.400,00'), ('Hausgeld gezahlt', '0,00'),
+                                 ('Rückstand / Guthaben aus Hausgeld', '2.400,00'), ('Zahlbetrag', '0,00')):
+                row = region.locator('dl > div').filter(has=b.page.get_by_text(label, exact=True))
+                await expect(row).to_have_text(re.compile(rf'^{re.escape(label)}\s*{re.escape(value)}\s*€\s*$'))
+                assert await row.evaluate('(el) => el.scrollWidth <= el.clientWidth')
+            await expect(region).to_contain_text('nach Wertstellung')
+            await expect(region).not_to_contain_text('Periodenzuordnung')
+            assert await b.page.locator('main').evaluate('(el) => el.scrollWidth <= el.clientWidth'), 'Main content overflows'
+    b.run(check())
+
+
+@when('I compute the 2027 WEG annual settlement of the same property')
+def compute_next_year(world, weg_balance):
+    w = weg_balance
+    values = {'planned_costs': [{'category_code': 'GARTENPFLEGE', 'label': 'Bewirtschaftung',
+        'planned_amount': '12000.00', 'cost_group': 'UMLAGEFAEHIG'}], 'reserve_contribution_total': '0.00'}
+    basis = world.data['levy_basis']
+    plan = create(world, '/api/economic-plans', {**basis, 'plan_year': 2027,
+        'period_start': '2027-01-01', 'period_end': '2027-12-31'})
+    world.run(attest_fixture(world.actor, 'economic_plan', plan['id'], values))
+    response = world.act('POST', f"/api/economic-plans/{plan['id']}/finalize", json=values)
+    assert response.status_code == 200, response.text
+    run = create(world, '/api/weg-settlements', {**basis, 'economic_plan_id': plan['id'],
+        'period_start': '2027-01-01', 'period_end': '2027-12-31'})
+    roster = world.act('POST', f"/api/weg-settlements/{run['id']}/paid-advances-derived")
+    assert roster.status_code == 200, roster.text
+    values = {'paid_advances': [{'owner_profile_id': row['owner_profile_id'], 'paid_total': '0.00'}
+                                for row in roster.json()]}
+    world.run(attest_fixture(world.actor, 'settlement', run['id'], values))
+    response = world.act('POST', f"/api/weg-settlements/{run['id']}/compute", json=values)
+    assert response.status_code == 200, response.text
+    w['statement_2027'] = response.json()
+
+
+@then("the successor's 2027 statement shows Hausgeld gezahlt 1900 euros against a plan Soll of 4800 euros")
+def successor_2027_statement(weg_balance):
+    w = weg_balance
+    owner = owner_row(w['statement_2027'], w['successor'])
+    # Unit 2 (400 of 1000 MEA) has 4800 euros of the 12000 euro plan; Clara owns it all of 2027.
+    assert (owner['plan_soll'], owner['paid'], owner['account_balance']) == ('4800.00', '1900.00', '2900.00')
+
+
+@then('the 2026 and 2027 statements together credit exactly the 1900 euros received')
+def two_years_credit_what_was_received(weg_balance):
+    w = weg_balance
+    credited = sum((Decimal(owner_row(w[key], w['successor'])['paid']) for key in ('statement', 'statement_2027')),
+                   Decimal('0.00'))
+    assert credited == Decimal('1900.00')
 
 
 @then('the Einzelabrechnung shows all four amounts and the payment without horizontal scrolling')
@@ -1092,6 +1174,13 @@ def levy_payments(world, weg_balance, anna, berta):
     for owner, amount in zip(w['owners'], (anna, berta)):
         if amount:
             book_payment(world, w, owner, f'{amount}.00', 'SONDERZAHLUNG', '2026-03-05', period_year=2026, period_month=3)
+
+
+@given(parsers.parse('Anna has paid {amount:d} euros of the levy assigned to {month} {year:d} with value date {value_date}'))
+def levy_payment_by_value_date(world, weg_balance, amount, month, year, value_date):
+    w = weg_balance
+    book_payment(world, w, w['owners'][0], f'{amount}.00', 'SONDERZAHLUNG', iso_day(value_date),
+                 period_year=year, period_month=MONTHS.index(month) + 1)
 
 
 @given("Berta's ownership entry was corrected to start on 1 June 2019")
