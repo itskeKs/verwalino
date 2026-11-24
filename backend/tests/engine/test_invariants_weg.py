@@ -18,6 +18,7 @@ from hypothesis import given, settings, strategies as st
 
 from app.engine.rounding import CENT, distribute_amount
 from app.engine.periods import build_owner_cover, time_factor
+from app.engine.snapshot import build_weg_snapshot_payload
 from app.engine.types import (
     OwnerAdvanceInput,
     OwnerLevyInput,
@@ -158,6 +159,20 @@ class TestI4C_SpitzeIstMinusSoll:
         assert sum_spitze == (r.cost_total + sum((o.plan_reserve_soll for o in r.owners), Decimal("0.00"))
                               - r.plan_advances_total - levy)
         assert r.abrechnungsspitze_total == sum_spitze
+        # The frozen payload alone rebuilds every Spitze: result cost total plus the frozen Soll
+        # inputs (planned reserve, Hausgeld, levies), to the cent (#449).
+        payload = build_weg_snapshot_payload(inp, r)
+        inputs = payload["inputs"]
+        for frozen in payload["result"]["owners"]:
+            owner = frozen["owner_profile_id"]
+            rebuilt = (Decimal(frozen["owner_cost_total"])
+                       + sum((Decimal(x["plan_reserve_total"]) for x in inputs["plan_reserve"]
+                              if x["owner_profile_id"] == owner), Decimal("0.00"))
+                       - sum((Decimal(x["plan_advance_total"]) for x in inputs["plan_advances"]
+                              if x["owner_profile_id"] == owner), Decimal("0.00"))
+                       - sum((Decimal(x["amount"]) for x in inputs.get("special_levies", [])
+                              if x["owner_profile_id"] == owner), Decimal("0.00")))
+            assert rebuilt == Decimal(frozen["abrechnungsspitze"])
 
 
 # ===========================================================================

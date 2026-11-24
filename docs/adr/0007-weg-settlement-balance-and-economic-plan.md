@@ -208,6 +208,6 @@ No cost-to-levy link exists; an excess or shortfall appears as Guthaben or Nachs
 The engine input gains the levy shares and the levy payments, the payload freezes them
 (`inputs.special_levies`, `inputs.levy_paid`, and per owner `levy_soll`, `levy_paid`,
 `levy_balance`) only for a run that has levy figures, so statements without levies keep
-their digest. `ENGINE_VERSION` is `m4.10.0`; finalized runs are never recalculated and keep
+their digest. Engine `m4.10.0` introduced them; finalized runs are never recalculated and keep
 their figures, digest and PDF bytes. Liability between seller and buyer for a levy remains out
 of scope.

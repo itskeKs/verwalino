@@ -84,7 +84,7 @@ from app.services.reserve_ledger_service import ReserveLedgerService
 from app.services.payment_service import dated_plan_soll
 from app.services.special_levy_service import SpecialLevyService
 
-ENGINE_VERSION = "m4.10.0"
+ENGINE_VERSION = "m4.11.0"
 
 DELETE_MESSAGES = {
     'SETTLEMENT_DELETE_SOURCE_ACCESS_REQUIRED': 'Zum Löschen dieses Entwurfs benötigen Sie Zugriff auf alle Finanzquellen des Objekts.',
