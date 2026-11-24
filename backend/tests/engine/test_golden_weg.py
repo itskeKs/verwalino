@@ -131,6 +131,140 @@ def test_equal_mea_keeps_canonical_reserve_cents_and_exact_aggregate_spitze():
     assert result.abrechnungsspitze_total == Decimal('0.00')
 
 
+def _spitze_from_the_frozen_payload(payload):
+    """Every owner's Abrechnungsspitze from the frozen payload alone, without the economic plan (#449).
+
+    The cost total is the result block's; the Soll positions (planned reserve, Hausgeld, levies) are
+    read from `inputs`, never from the result's own copy of them.
+    """
+    inputs = payload['inputs']
+    reserve = {row['owner_profile_id']: Decimal(row['plan_reserve_total']) for row in inputs['plan_reserve']}
+    advance = {row['owner_profile_id']: Decimal(row['plan_advance_total']) for row in inputs['plan_advances']}
+    levy = {}
+    for row in inputs.get('special_levies', []):
+        levy[row['owner_profile_id']] = levy.get(row['owner_profile_id'], Decimal('0.00')) + Decimal(row['amount'])
+    return {o['owner_profile_id']: Decimal(o['owner_cost_total'])
+            + reserve.get(o['owner_profile_id'], Decimal('0.00'))
+            - advance.get(o['owner_profile_id'], Decimal('0.00'))
+            - levy.get(o['owner_profile_id'], Decimal('0.00'))
+            for o in payload['result']['owners']}
+
+
+def _check_the_frozen_spitze(inp, expected, total):
+    """The engine, the payload's result block and the recomputation from `inputs` agree with the hand figures."""
+    result = compute_weg_jahresabrechnung(inp)
+    payload = build_weg_snapshot_payload(inp, result)
+    figures = {str(owner): Decimal(spitze) for owner, spitze in expected.items()}
+    assert {o['owner_profile_id']: Decimal(o['abrechnungsspitze']) for o in payload['result']['owners']} == figures
+    assert _spitze_from_the_frozen_payload(payload) == figures
+    # The result's planned reserve Soll is the frozen input, owner by owner.
+    assert {o['owner_profile_id']: o['plan_reserve_soll'] for o in payload['result']['owners']} == {
+        row['owner_profile_id']: row['plan_reserve_total'] for row in payload['inputs']['plan_reserve']}
+    # No drift: Σ Spitzen = costs + Σ planned reserve - Σ Hausgeld Soll, read from the inputs.
+    frozen = payload['inputs']
+    assert sum(figures.values(), Decimal('0.00')) == Decimal(total) == (
+        Decimal(payload['result']['cost_total'])
+        + sum((Decimal(r['plan_reserve_total']) for r in frozen['plan_reserve']), Decimal('0.00'))
+        - sum((Decimal(r['plan_advance_total']) for r in frozen['plan_advances']), Decimal('0.00')))
+    assert payload['result']['abrechnungsspitze_total'] == total
+
+
+def test_the_frozen_inputs_rebuild_every_owners_spitze_without_the_plan():
+    # Costs 7,000.00 by MEA 600 / 400: 4,200.00 / 2,800.00. The planned reserve 6,000.00 by the same
+    # MEA: 3,600.00 / 2,400.00. Hausgeld Soll 4,000.00 / 3,000.00.
+    # Anna: 4,200.00 + 3,600.00 - 4,000.00 = 3,800.00; Bernd: 2,800.00 + 2,400.00 - 3,000.00 = 2,200.00;
+    # Σ = 7,000.00 + 6,000.00 - 7,000.00 = 6,000.00.
+    inp = TestGolden2Abrechnungsspitze()._scenario()
+    inp = replace(inp,
+        cost_positions=(replace(inp.cost_positions[0], gross_amount=Decimal('7000.00')),),
+        plan_advances=(OwnerAdvanceInput(_U(21), Decimal('4000.00')), OwnerAdvanceInput(_U(22), Decimal('3000.00'))),
+        plan_reserve=(OwnerAdvanceInput(_U(21), Decimal('3600.00')), OwnerAdvanceInput(_U(22), Decimal('2400.00'))))
+    _check_the_frozen_spitze(inp, {_U(21): '3800.00', _U(22): '2200.00'}, '6000.00')
+    payload = build_weg_snapshot_payload(inp, compute_weg_jahresabrechnung(inp))
+    assert payload['inputs']['plan_reserve'] == [
+        {'owner_profile_id': str(_U(21)), 'plan_reserve_total': '3600.00'},
+        {'owner_profile_id': str(_U(22)), 'plan_reserve_total': '2400.00'}]
+
+
+@pytest.mark.parametrize('reserve,advance,spitze,total', [
+    # Anna owns 01.01.-30.06. (181 days), Carla from 01.07. (184 days); costs 3,650.00 = 10.00 a day:
+    # Anna 1,810.00, Carla 1,840.00. Anna: 1,810.00 + 1,200.00 - 1,800.00 = 1,210.00;
+    # Carla: 1,840.00 + 1,500.00 - 1,800.00 = 1,540.00; Σ = 3,650.00 + 2,700.00 - 3,600.00 = 2,750.00.
+    (('1200.00', '1500.00'), ('1800.00', '1800.00'), ('1210.00', '1540.00'), '2750.00'),
+    # Credits: Anna 1,810.00 + 200.00 - 2,500.00 = -490.00; Carla 1,840.00 + 100.00 - 2,400.00 = -460.00;
+    # Σ = 3,650.00 + 300.00 - 4,900.00 = -950.00.
+    (('200.00', '100.00'), ('2500.00', '2400.00'), ('-490.00', '-460.00'), '-950.00'),
+    # Cents: Anna 1,810.00 + 333.33 - 1,800.00 = 343.33; Carla 1,840.00 + 333.34 - 1,800.00 = 373.34;
+    # Σ = 3,650.00 + 666.67 - 3,600.00 = 716.67.
+    (('333.33', '333.34'), ('1800.00', '1800.00'), ('343.33', '373.34'), '716.67'),
+])
+def test_the_frozen_inputs_rebuild_both_spitzen_of_an_owner_change_inside_the_year(reserve, advance, spitze, total):
+    inp = TestGolden2Abrechnungsspitze()._scenario()
+    inp = replace(inp, units=(inp.units[0],), owner_periods=(
+        replace(inp.owner_periods[0], valid_to=date(2025, 6, 30)),
+        replace(inp.owner_periods[0], owner_profile_id=_U(22), valid_from=date(2025, 7, 1))),
+        cost_positions=(replace(inp.cost_positions[0], gross_amount=Decimal('3650.00')),),
+        plan_advances=tuple(OwnerAdvanceInput(_U(21 + i), Decimal(a)) for i, a in enumerate(advance)),
+        plan_reserve=tuple(OwnerAdvanceInput(_U(21 + i), Decimal(r)) for i, r in enumerate(reserve)))
+    _check_the_frozen_spitze(inp, {_U(21): spitze[0], _U(22): spitze[1]}, total)
+
+
+@pytest.mark.parametrize('reserve,advance,spitze,total', [
+    # One unit, costs 1,000.00 shared 50 / 50 by Bernd and Carla next to Anna: 500.00 / 250.00 / 250.00.
+    # Each co-owner has an entry of their own. Anna 500.00 + 100.00 - 400.00 = 200.00;
+    # Bernd and Carla 250.00 + 50.00 - 200.00 = 100.00 each; Σ = 1,000.00 + 200.00 - 800.00 = 400.00.
+    (('100.00', '50.00', '50.00'), ('400.00', '200.00', '200.00'), ('200.00', '100.00', '100.00'), '400.00'),
+    # Credits and a cent: Anna 500.00 + 100.01 - 700.00 = -99.99; Bernd and Carla 250.00 + 25.00 - 300.00
+    # = -25.00 each; Σ = 1,000.00 + 150.01 - 1,300.00 = -149.99.
+    (('100.01', '25.00', '25.00'), ('700.00', '300.00', '300.00'), ('-99.99', '-25.00', '-25.00'), '-149.99'),
+])
+def test_the_frozen_inputs_rebuild_the_spitze_of_every_co_owner(reserve, advance, spitze, total):
+    inp = _co_owner_scenario([_whole_year(_U(22), '50'), _whole_year(_U(23), '50')])
+    assert _owner_costs(compute_weg_jahresabrechnung(inp), _U(21), _U(22), _U(23)) == (
+        Decimal('500.00'), Decimal('250.00'), Decimal('250.00'))
+    inp = replace(inp,
+        plan_advances=tuple(OwnerAdvanceInput(_U(21 + i), Decimal(a)) for i, a in enumerate(advance)),
+        plan_reserve=tuple(OwnerAdvanceInput(_U(21 + i), Decimal(r)) for i, r in enumerate(reserve)))
+    _check_the_frozen_spitze(inp, dict(zip((_U(21), _U(22), _U(23)), spitze)), total)
+
+
+def test_the_snapshot_freezes_the_planned_reserve_input_in_owner_order_and_hashes_it_stably():
+    inp = replace(TestGolden2Abrechnungsspitze()._scenario(),
+        plan_reserve=(OwnerAdvanceInput(_U(22), Decimal('2400.00')), OwnerAdvanceInput(_U(21), Decimal('3600.00'))))
+    payload = build_weg_snapshot_payload(inp, compute_weg_jahresabrechnung(inp))
+    assert payload['inputs']['plan_reserve'] == [
+        {'owner_profile_id': str(_U(21)), 'plan_reserve_total': '3600.00'},
+        {'owner_profile_id': str(_U(22)), 'plan_reserve_total': '2400.00'}]
+    # The key sits beside plan_advances and is hashed with it: the same input twice, or in another
+    # order, gives the same digest; another amount gives another one.
+    again = build_weg_snapshot_payload(inp, compute_weg_jahresabrechnung(inp))
+    swapped = replace(inp, plan_reserve=tuple(reversed(inp.plan_reserve)))
+    assert canonical_sha256(again) == canonical_sha256(payload)
+    assert canonical_sha256(build_weg_snapshot_payload(swapped, compute_weg_jahresabrechnung(swapped))) == \
+        canonical_sha256(payload)
+    changed = replace(inp, plan_reserve=(inp.plan_reserve[0], OwnerAdvanceInput(_U(21), Decimal('3600.01'))))
+    assert canonical_sha256(build_weg_snapshot_payload(changed, compute_weg_jahresabrechnung(changed))) != \
+        canonical_sha256(payload)
+
+
+def test_the_snapshot_writes_the_engine_inputs_entries_and_an_empty_input_as_an_empty_list():
+    # This pins the writer only: one entry per entry of the engine input it is given, and `[]` for an
+    # empty input. Which owners have an entry (none for an owner without planned reserve, none at all
+    # for a plan without reserve) is decided where the service builds the input, and is pinned on the
+    # database path by `test_a_settlement_freezes_no_planned_reserve_entry_for_an_owner_without_planned_reserve`
+    # and `test_planned_reserve_sums_the_ledger_planned_rows_per_owner` in test_m4_weg.py.
+    inp = replace(TestGolden2Abrechnungsspitze()._scenario(),
+        plan_reserve=(OwnerAdvanceInput(_U(21), Decimal('3600.00')),))
+    payload = build_weg_snapshot_payload(inp, compute_weg_jahresabrechnung(inp))
+    assert [row['owner_profile_id'] for row in payload['inputs']['plan_reserve']] == [str(_U(21))]
+    assert next(o for o in payload['result']['owners'] if o['owner_profile_id'] == str(_U(22)))[
+        'plan_reserve_soll'] == '0.00'
+    # A known empty list (the engine froze the input and the plan had no reserve) differs from an
+    # absent key, which is what a payload of an older engine looks like.
+    none = replace(inp, plan_reserve=())
+    assert build_weg_snapshot_payload(none, compute_weg_jahresabrechnung(none))['inputs']['plan_reserve'] == []
+
+
 def test_owner_change_never_transfers_payments_to_the_successor():
     inp = TestGolden2Abrechnungsspitze()._scenario()
     inp = replace(inp, units=(inp.units[0],), owner_periods=(
@@ -1365,7 +1499,14 @@ class TestGolden13SpecialLevy:
         payload = build_weg_snapshot_payload(inp, result)
         assert "special_levies" not in payload["inputs"] and "levy_paid" not in payload["inputs"]
         assert all("levy_soll" not in o for o in payload["result"]["owners"])
-        assert canonical_sha256(payload) == "6ad5676f5720d1d7c6cea5008ac5b8ed9a36f8b1f2c6cb875cdf764a92ef2a13"
+        # The planned reserve input (#449) is the only key the payload has gained since: without it
+        # the digest is the one pinned for #405.
+        assert payload["inputs"]["plan_reserve"] == [
+            {"owner_profile_id": str(_U(21)), "plan_reserve_total": "100.00"}]
+        legacy = {**payload, "inputs": {k: v for k, v in payload["inputs"].items() if k != "plan_reserve"}}
+        assert canonical_sha256(legacy) == "6ad5676f5720d1d7c6cea5008ac5b8ed9a36f8b1f2c6cb875cdf764a92ef2a13"
+        # With the input, pinned from the engine as #449 shaped it.
+        assert canonical_sha256(payload) == "218cf2e999873337da598b7cebb82a50df175ce2764b0dfa2f8192956036fd1b"
         assert all(o.levy_soll == o.levy_paid == o.levy_balance == Decimal("0.00") for o in result.owners)
 
 

@@ -84,7 +84,7 @@ from app.services.reserve_ledger_service import ReserveLedgerService
 from app.services.payment_service import dated_plan_soll
 from app.services.special_levy_service import SpecialLevyService
 
-ENGINE_VERSION = "m4.10.0"
+ENGINE_VERSION = "m4.11.0"
 
 DELETE_MESSAGES = {
     'SETTLEMENT_DELETE_SOURCE_ACCESS_REQUIRED': 'Zum Löschen dieses Entwurfs benötigen Sie Zugriff auf alle Finanzquellen des Objekts.',
@@ -583,9 +583,15 @@ class WegSettlementService:
         return inp, result
 
     def _plan_reserve_per_owner(self, rows: list[dict]) -> tuple[OwnerAdvanceInput, ...]:
-        """Sum canonical reserve plan rows without another owner distribution (#401)."""
+        """Sum canonical reserve plan rows without another owner distribution (#401).
+
+        An owner whose planned reserve is 0.00 has no entry, as an owner whose dated Soll is 0.00
+        has none in the plan advances (#449): the ledger plans 0.00 rows for every owner of a plan
+        without reserve, and the engine input, the frozen payload and the plan advances agree.
+        """
         return tuple(OwnerAdvanceInput(owner_profile_id=uuid.UUID(oid), plan_advance_total=amount)
-                     for oid, amount in sorted(planned_reserve_per_owner(rows).items()))
+                     for oid, amount in sorted(planned_reserve_per_owner(rows).items())
+                     if amount != Decimal('0.00'))
 
     async def reject_paid_amount(self, run_id: uuid.UUID, owner_id: uuid.UUID, *, missing: bool, capability=ScopeCapability.PREPARE) -> NoReturn:
         """Resolve an input error only within the authorized draft and owner roster."""

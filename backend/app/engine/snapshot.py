@@ -318,6 +318,7 @@ def build_weg_snapshot_payload(
         inp.cost_positions, key=lambda p: (p.category_code, str(p.cost_entry_id))
     )
     plan_advances = sorted(inp.plan_advances, key=lambda a: str(a.owner_profile_id))
+    plan_reserve = sorted(inp.plan_reserve, key=lambda a: str(a.owner_profile_id))
     paid_advances = sorted(inp.paid_advances, key=lambda a: str(a.owner_profile_id))
 
     return {
@@ -380,6 +381,16 @@ def build_weg_snapshot_payload(
                     "plan_advance_total": _m(a.plan_advance_total),
                 }
                 for a in plan_advances
+            ],
+            # The planned reserve Soll per owner the engine consumed (#449), as the service built it:
+            # an owner without planned reserve has no entry, like plan_advances. Always present from
+            # engine m4.11.0 (an empty list is a plan without reserve), absent in older payloads.
+            "plan_reserve": [
+                {
+                    "owner_profile_id": str(a.owner_profile_id),
+                    "plan_reserve_total": _m(a.plan_advance_total),
+                }
+                for a in plan_reserve
             ],
             "paid_advances": [
                 {
