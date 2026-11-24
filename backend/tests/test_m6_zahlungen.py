@@ -856,7 +856,8 @@ class TestPaymentImmutability:
             with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
                 savepoint = db.begin_nested()
                 try:
-                    # The chain undoes 0208 and 0207 before 0192: the function 0192 made is the head's only until then.
+                    # The chain undoes 0209, 0208 and 0207 before 0192: the function 0192 made is the head's only until then.
+                    importlib.import_module(STORNO_OF_STORNO_REVISION).downgrade()
                     importlib.import_module(MIRROR_REVISION).downgrade()
                     importlib.import_module(BOOKING_REVISION).downgrade()
                     current = db.execute(function).one()
@@ -1199,7 +1200,8 @@ class TestBookedLinkRevision:
         previous = importlib.import_module(
             "migrations.versions.0192_payment_reversal_link_immutable").CURRENT_FUNCTION.split("$$")[1]
         with _rehearsal() as db:
-            # The chain undoes 0208 before 0207: the function and trigger 0207 made are the head's only until then.
+            # The chain undoes 0209 and 0208 before 0207: the function and trigger 0207 made are the head's only until then.
+            importlib.import_module(STORNO_OF_STORNO_REVISION).downgrade()
             importlib.import_module(MIRROR_REVISION).downgrade()
             head_function, head_triggers = _function(db), _payment_triggers(db)
             assert head_function[0] != previous
@@ -1230,6 +1232,7 @@ class TestBookedLinkRevision:
 # ===========================================================================
 STORNO_REFUSAL = "GoBD.*Storno must mirror"
 MIRROR_REVISION = "migrations.versions.0208_payment_storno_mirrors_original"
+STORNO_OF_STORNO_REVISION = "migrations.versions.0209_payment_storno_of_storno"
 STORNO_INDEX = "uq_payment_booked_storno"
 
 _PAYMENT_INSERT = (
@@ -1536,6 +1539,50 @@ class TestBookedStornoMirrorsItsOriginal:
         assert outcomes == [("accepted", "")] * 2
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("way", ["insert_as_booked", "book_a_draft"])
+    @pytest.mark.parametrize("original_is_linked", [True, False])
+    async def test_a_booked_storno_of_a_storno_is_refused_though_it_mirrors_its_original(
+        self, app_rw_session, m6_seed, way, original_is_linked,
+    ):
+        """The probe of #912: O, a mirrored Storno S, then SS that mirrors S and has O's direction.
+
+        SS equals S in every copied column with the opposite direction, so the mirror rule alone accepts it, and
+        `S.reversed_by_id = SS` was accepted too: the books showed O as reversed while the three rows summed to O's
+        amount. `reverse_payment` answers 409 for a Storno; the database now refuses it as well, on the insert as booked
+        and on the booking of a draft (a draft SS may exist until then), linked original or not."""
+        session = app_rw_session
+        savepoint = await session.begin_nested()
+        await _set_org(session, m6_seed["org_a_id"])
+        original = _payment_row(m6_seed)
+        await _put(session, m6_seed, original)
+        storno = _storno_row(m6_seed, original)
+        await _put(session, m6_seed, storno)  # the control: what `reverse_payment` writes passes
+        if original_is_linked:
+            await session.execute(text("UPDATE payment SET reversed_by_id = :s WHERE id = :id"),
+                                  {"s": storno["id"], "id": original["id"]})
+        of_storno = _storno_row(m6_seed, storno)
+        assert of_storno["direction"] == original["direction"] and of_storno["amount"] == original["amount"]
+        if way == "insert_as_booked":
+            saved = ("accepted", "")
+            refused = await self._try(session, m6_seed, of_storno)
+        else:
+            saved = await self._try(session, m6_seed, _draft(of_storno))
+            refused = await _outcome(session, lambda: _book(session, m6_seed, of_storno["id"]))
+        # The second statement of the probe has nothing to link to.
+        linked = await _outcome(session, lambda: session.execute(
+            text("UPDATE payment SET reversed_by_id = :ss WHERE id = :id"), {"ss": of_storno["id"], "id": storno["id"]}))
+        states = {name: await TestPaymentBecomesBooked._state(session, row["id"])
+                  for name, row in (("original", original), ("storno", storno), ("of_storno", of_storno))}
+        await savepoint.rollback()
+        assert saved == ("accepted", "")
+        assert refused[0] == "P0001" and re.search(STORNO_REFUSAL, refused[1]), refused
+        assert linked[0] == "P0001" and re.search(LINK_REFUSAL, linked[1]), linked
+        assert states == {
+            "original": ("booked", uuid.UUID(storno["id"]) if original_is_linked else None),
+            "storno": ("booked", None),
+            "of_storno": None if way == "insert_as_booked" else ("draft", None)}
+
+    @pytest.mark.asyncio
     async def test_the_database_rule_compares_exactly_the_columns_reverse_payment_copies(self, app_rw_session):
         """Drift guard: the columns the function compares are `REVERSAL_COPIED_COLUMNS`, the mandate as its exception."""
         source = (await app_rw_session.execute(text(
@@ -1562,6 +1609,8 @@ class TestStornoMirrorRevision:
         migration = importlib.import_module(MIRROR_REVISION)
         previous = importlib.import_module(BOOKING_REVISION).CURRENT_FUNCTION.split("$$")[1]
         with _rehearsal() as db:
+            # The chain undoes 0209 before 0208: the function 0208 made is the head's only until then.
+            importlib.import_module(STORNO_OF_STORNO_REVISION).downgrade()
             head_function, head_triggers, head_index = _function(db), _payment_triggers(db), _booked_storno_index(db)
             assert head_function[0] != previous
             assert len(head_index) == 1
@@ -1586,6 +1635,7 @@ class TestStornoMirrorRevision:
     def test_upgrade_refuses_a_second_booked_storno_of_an_original_and_changes_nothing(self, m6_seed):
         migration = importlib.import_module(MIRROR_REVISION)
         with _rehearsal() as db:
+            importlib.import_module(STORNO_OF_STORNO_REVISION).downgrade()
             head_function, head_triggers = _function(db), _payment_triggers(db)
             migration.downgrade()
             downgraded = _function(db)
@@ -1611,6 +1661,91 @@ class TestStornoMirrorRevision:
                            for identity in [first, second, m6_seed["org_a_id"], m6_seed["org_b_id"]])
             assert _booked_storno_index(db) == [] and _function(db) == downgraded
             assert head_function != downgraded and _payment_triggers(db) == head_triggers
+
+
+class TestStornoOfStornoRevision:
+    """Revision 0209 (#912): the original of a booked Storno is no Storno itself."""
+
+    def test_downgrade_restores_the_previous_function_exactly_and_upgrade_the_rule(self, m6_seed):
+        migration = importlib.import_module(STORNO_OF_STORNO_REVISION)
+        previous = importlib.import_module(MIRROR_REVISION).CURRENT_FUNCTION.split("$$")[1]
+        with _rehearsal() as db:
+            head_function, head_triggers, head_index = _function(db), _payment_triggers(db), _booked_storno_index(db)
+            assert head_function[0] != previous and "AND original.reverses_id IS NULL" in head_function[0]
+            original, storno = uuid.uuid4(), uuid.uuid4()
+            assert _runtime_insert(db, m6_seed, original) == "accepted"
+            assert _runtime_insert(db, m6_seed, storno, reverses=original, direction="IN") == "accepted"
+            # The Storno of the Storno has the direction of the original and mirrors the Storno: only the new rule refuses it.
+            assert _runtime_insert(db, m6_seed, uuid.uuid4(), reverses=storno) == "P0001"
+
+            migration.downgrade()
+            # 0208's function exactly (body, definer rights, settings, ACL); no trigger or index changes in either direction.
+            assert _function(db) == (previous, *head_function[1:])
+            assert _payment_triggers(db) == head_triggers and _booked_storno_index(db) == head_index
+
+            migration.upgrade()
+            assert (_function(db), _payment_triggers(db), _booked_storno_index(db)) == (
+                head_function, head_triggers, head_index)
+            # The upgrade reads the table with row security off, for this transaction; the runtime role needs it on.
+            db.execute(text("RESET row_security"))
+            assert _runtime_insert(db, m6_seed, uuid.uuid4(), reverses=storno) == "P0001"
+
+    def test_downgrade_accepts_the_storno_of_a_storno_the_issue_describes_again(self, m6_seed):
+        migration = importlib.import_module(STORNO_OF_STORNO_REVISION)
+        with _rehearsal() as db:
+            original, storno, of_storno = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+            assert _runtime_insert(db, m6_seed, original) == "accepted"
+            assert _runtime_insert(db, m6_seed, storno, reverses=original, direction="IN") == "accepted"
+            migration.downgrade()
+            assert _runtime_insert(db, m6_seed, of_storno, reverses=storno) == "accepted"
+
+    def test_upgrade_refuses_booked_payments_whose_original_is_a_storno_and_changes_nothing(self, m6_seed):
+        migration = importlib.import_module(STORNO_OF_STORNO_REVISION)
+        with _rehearsal() as db:
+            head_function, head_triggers, head_index = _function(db), _payment_triggers(db), _booked_storno_index(db)
+            migration.downgrade()
+            downgraded = _function(db)
+            # Two chains, each payment reversing the one before it: the directions alternate from OUT.
+            first = [uuid.uuid4() for _ in range(3)]       # O1, S1, SS1: one offender
+            second = [uuid.uuid4() for _ in range(4)]      # O2, S2, SS2, SSS2: two offenders
+            for chain in (first, second):
+                for position, identity in enumerate(chain):
+                    links = {} if position == 0 else {
+                        "reverses": chain[position - 1], "direction": "IN" if position % 2 else "OUT"}
+                    assert _runtime_insert(db, m6_seed, identity, **links) == "accepted"
+            # Not counted: an ordinary pair, and a draft naming a Storno (a draft is no booked evidence).
+            ordinary = uuid.uuid4()
+            assert _runtime_insert(db, m6_seed, ordinary) == "accepted"
+            assert _runtime_insert(db, m6_seed, uuid.uuid4(), reverses=ordinary, direction="IN") == "accepted"
+            assert _runtime_insert(db, m6_seed, uuid.uuid4(), status="draft", reverses=first[1]) == "accepted"
+            with pytest.raises(DBAPIError) as refused:
+                with db.begin_nested():
+                    migration.upgrade()
+            message = str(refused.value.orig)
+            assert refused.value.orig.pgcode == "P0001"
+            assert "Cannot upgrade 0209: 3 booked payment(s) name an original that is itself a Storno" in message
+            # The count is all it says: no id of a payment or of an organization. The hint names the query that lists them.
+            hint = refused.value.orig.diag.message_hint
+            assert "SELECT p.organization_id, p.id, p.reverses_id FROM public.payment p" in hint
+            assert not any(str(identity) in message + hint for identity in
+                           [*first, *second, m6_seed["org_a_id"], m6_seed["org_b_id"]])
+            assert _function(db) == downgraded and head_function != downgraded
+            assert _payment_triggers(db) == head_triggers and _booked_storno_index(db) == head_index
+
+    def test_the_listing_query_of_the_hint_names_exactly_the_counted_rows(self, m6_seed):
+        migration = importlib.import_module(STORNO_OF_STORNO_REVISION)
+        with _rehearsal() as db:
+            migration.downgrade()
+            original, storno, of_storno = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+            assert _runtime_insert(db, m6_seed, original) == "accepted"
+            assert _runtime_insert(db, m6_seed, storno, reverses=original, direction="IN") == "accepted"
+            assert _runtime_insert(db, m6_seed, of_storno, reverses=storno) == "accepted"
+            with pytest.raises(DBAPIError) as refused:
+                with db.begin_nested():
+                    migration.upgrade()
+            listing = refused.value.orig.diag.message_hint.removeprefix("List them with: ")
+            assert [tuple(row) for row in db.execute(text(listing))] == [
+                (m6_seed["org_a_id"], of_storno, storno)]
 
 
 # ===========================================================================

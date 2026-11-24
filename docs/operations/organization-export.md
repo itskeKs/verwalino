@@ -479,8 +479,9 @@ link of every row that becomes booked, also when it is inserted as booked (migra
 original is inserted without it: a booked row inserted with `reversed_by_id` set is refused, since its
 Storno would have to be booked before it. The database also refuses a booked Storno that does not mirror
 its booked original (opposite direction, the same value in every column a Storno copies, the mandate
-excepted as below) and a second booked payment that names one original (migration `0208`); the import's own
-pair validation below runs first and answers with a code before any row is written.
+excepted as below), a second booked payment that names one original (migration `0208`) and a booked Storno
+whose original is itself a Storno (migration `0209`); the import's own pair validation below runs first and
+answers with a code before any row is written.
 Every other column, including `value_date`, `booked_at` and `retention_until`, is
 the archived value. Before any row is written the archived payments must form whole
 pairs: two booked rows that name each other, with opposite `direction` and the same
