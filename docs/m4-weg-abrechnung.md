@@ -331,8 +331,18 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
   05.01.2026 counts in 2026 and not in 2025; a payment with no assigned year is read by its value
   date as before. A refund (OUT) reduces its type in the year of its value date, so a refund
   received after the year end is a negative payment of the next statement; drafts, reversed
-  originals and reversal rows do not count in any year, so two consecutive statements add up to
-  exactly what was received in both. Statements of `m4.11.0` and earlier followed the assigned
+  originals and reversal rows do not count in any year. **An owner with a counted payment belongs to
+  the statement of that period even when the owner holds no unit in it:** a seller who pays an arrear
+  after the year of the sale is credited in the year of the payment, with Soll 0,00 there, and the
+  statement of the year of the sale keeps the arrears as they stood at its end; a buyer who pays before
+  the first year of ownership is credited in the year of the payment, with Soll 0,00, and the first year
+  of ownership shows that amount as not paid in it. A Hausgeld or levy payment is therefore credited in
+  exactly one statement of the property, the one whose period contains its value date, and consecutive
+  statements of `m4.12.0` or later add up to exactly what was received in their periods. Two things
+  stay outside that sum: a separately paid reserve share counts only up to the cover above, and a year
+  finalized by `m4.11.0` or earlier keeps its assigned-month figures, so the first statement computed by
+  value date after it can count a payment around their common year end twice or not at all (the switch
+  is recorded as its own issue). Statements of `m4.11.0` and earlier followed the assigned
   month (annual amounts in calendar-month shares, monthly amounts prorated by days at period
   boundaries); finalized ones keep their figures, digest and PDF. The owner account
   (`account_statement_for_owner`), owner dunning, the Fristenmonitor and „Hausgeld buchen" keep the
@@ -342,7 +352,13 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
   of a predecessor's arrears. Manual coverage entries cannot create paid amounts.
   A successor with only booked payments is included even with no cost or plan lines:
   costs, plan Soll and Spitze remain zero, while net Hausgeld remains their own credit;
-  separate reserve payments without plan Soll do not create a credit.
+  separate reserve payments without plan Soll do not create a credit. The same holds for a payer
+  outside the period's owners: the engine lists the owner with plan Soll 0,00, Abrechnungsspitze
+  0,00 and the net Hausgeld as `paid`, so `account_balance = −paid` (page and PDF: „Hausgeld-Soll
+  laut Wirtschaftsplan“ 0,00, „Hausgeld gezahlt“ the amount, „Rückstand / Guthaben aus Hausgeld“ its
+  negative), with no cost share, no reserve share and no ownership dates; such an owner has no plan
+  Soll, so a separately paid reserve share adds nothing to `paid` (no reserve credit without a plan
+  Soll, above), and a levy payment shows as „Sonderumlage gezahlt“ against a levy Soll of 0,00.
 - **Displayed account balance:** `account_balance = plan_soll − paid` (positive arrears,
   negative credit). `payment_amount = abrechnungsspitze + account_balance + levy_balance`, so what
   an owner still owes of a levy joins the payment and an unused levy credit leaves it. These are
@@ -548,8 +564,11 @@ the start is corrected to 01.01. it is refused until the correction plan is fina
 For drafts, `GET /api/weg-settlements/{id}/input-owners` returns the complete authorized
 owner set of the settlement period, with READ scope and disclosure checks. The UI uses the
 same set as coverage validation and paid-Hausgeld derivation: owners whose ownership
-overlaps the period plus the original owners of the linked plan's OWNER_ADVANCE lines.
-The latter retain their frozen plan obligations even after a history correction. The shared
+overlaps the period plus the original owners of the linked plan's OWNER_ADVANCE lines,
+plus, from engine `m4.12.0` (#904), every owner with a booked, not reversed payment of the
+property of type `HAUSGELD_VORSCHUSS`, `RUECKLAGENANTEIL` or `SONDERZAHLUNG` whose value date lies in the
+period, also without a unit in it (a seller paying after the sale, a buyer paying before his first
+year; §2.4). The plan owners retain their frozen plan obligations even after a history correction. The shared
 roster comes from `CoverageDeclarationRepository.owner_ids`; the plan Soll allocation stays
 unchanged. Derivation returns `0.00` for an owner without booked payments and retains the
 net booked/reversed payment rules and the property's settlement period.

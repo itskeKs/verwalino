@@ -670,13 +670,15 @@ async def payment(api, w, amount, *, kind='RUECKLAGENANTEIL', direction='IN', wh
     return identifier
 
 
-def paid(w):
-    return {'paid_advances': [{'owner_profile_id': w[key], 'paid_total': '0.00'} for key in ('owner_a', 'owner_b')]}
+def paid(w, *payers):
+    """The coverage of the statement: both owners and any payer outside the period's owners (#904)."""
+    return {'paid_advances': [{'owner_profile_id': owner, 'paid_total': '0.00'}
+                              for owner in (w['owner_a'], w['owner_b'], *payers)]}
 
 
-async def finalize(api, w):
-    await attest_fixture(api, 'settlement', w['run'], paid(w))
-    response = await api.post(f"/api/weg-settlements/{w['run']}/finalize", json=paid(w))
+async def finalize(api, w, *payers):
+    await attest_fixture(api, 'settlement', w['run'], paid(w, *payers))
+    response = await api.post(f"/api/weg-settlements/{w['run']}/finalize", json=paid(w, *payers))
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -1830,7 +1832,10 @@ async def test_reserve_payer_without_cost_or_plan_lines_is_listed_with_notice(cl
     owner = await api.post('/api/owner-profiles', json={'person_id': person.json()['id']})
     outsider = owner.json()['id']
     await payment(api, {**w, 'owner_a': outsider}, '500.00')
-    result = await finalize(api, w)
+    # He paid in the period, so the statement lists him (Soll 0,00, no Hausgeld, no reserve credit without a Soll).
+    result = await finalize(api, w, outsider)
+    row = next(row for row in result['owner_results'] if row['owner_profile_id'] == outsider)
+    assert (row['plan_soll'], row['paid'], row['account_balance']) == ('0.00', '0.00', '0.00')
     reserves = [line for line in result['lines'] if line['line_type'] == 'RESERVE_CONTRIBUTION' and line['addressee_owner_profile_id']]
     assert sum(Decimal(line['amount']) for line in reserves) == Decimal('1100.00')
     line = next(line for line in reserves if line['addressee_owner_profile_id'] == outsider)

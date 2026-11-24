@@ -1631,9 +1631,9 @@ async def _book_payment(api, w, oid, amount, payment_type, value_date, *, direct
 
 
 async def _sell_unit(api, unit_id, valid_to, valid_from, first_name='Bernd', last_name='Neu'):
-    old = (await api.get('/api/ownership', params={'unit_id': unit_id})).json()[0]
-    response = await api.patch(f"/api/ownership/{old['id']}", json={'valid_to': valid_to})
-    assert response.status_code == 200, response.text
+    for old in (await api.get('/api/ownership', params={'unit_id': unit_id})).json():
+        response = await api.patch(f"/api/ownership/{old['id']}", json={'valid_to': valid_to})
+        assert response.status_code == 200, response.text
     person = await api.post('/api/persons', json={'first_name': first_name, 'last_name': last_name})
     assert person.status_code == 201, person.text
     owner = await api.post('/api/owner-profiles', json={'person_id': person.json()['id']})
@@ -2872,10 +2872,12 @@ async def _owner_payment(api, w, owner, amount, payment_type, value_date, *, dir
         body.update(period_year=assigned[0], period_month=assigned[1])
     response = await api.post('/api/payments', json=body)
     assert response.status_code == 201, response.text
-    assert (await api.post(f"/api/payments/{response.json()['id']}/book")).status_code == 200
+    payment = response.json()['id']
+    assert (await api.post(f'/api/payments/{payment}/book')).status_code == 200
     if reverse:
-        response = await api.post(f"/api/payments/{response.json()['id']}/reverse", json={'note': 'Synthetic duplicate'})
+        response = await api.post(f'/api/payments/{payment}/reverse', json={'note': 'Synthetic duplicate'})
         assert response.status_code == 201, response.text
+    return payment
 
 
 async def _draft_run(api, w, plan, year):
@@ -3054,3 +3056,189 @@ async def test_a_payment_booked_after_finalization_leaves_payload_digest_and_pdf
     assert reloaded['owner_results'] == result['owner_results']
     assert reloaded['snapshot_sha256'] == result['snapshot_sha256']
     assert (await api.get(f'/api/weg-settlements/{run}/pdf')).content == frozen_pdf
+
+
+# ---------------------------------------------------------------------------
+# #904: an owner with a counted payment belongs to the statement of the period it was received in, also without
+# a unit in that period (a seller paying after the year of the sale, a buyer paying before his first year)
+# ---------------------------------------------------------------------------
+async def _roster(api, run):
+    response = await api.get(f'/api/weg-settlements/{run}/input-owners')
+    assert response.status_code == 200, response.text
+    return sorted(response.json())
+
+
+async def _clear_unassigned_cash(api, run):
+    """The reserve ledger asks for a plan reference of a Hausgeld payment by an owner without a unit on its value date."""
+    path = f'/api/weg-settlements/{run}/reserve-ledger'
+    # One assignment covers a payment and its Storno, so the ledger is read again after each one.
+    while unlinked := (await api.get(path)).json()['unlinked_payment_ids']:
+        response = await api.post(path + '/overrides', json={'component': 'CONTRIBUTION', 'payment_id': unlinked[0],
+            'amount': '0.00', 'reason': 'Synthetic fixture: the payer holds no unit on the value date'})
+        assert response.status_code == 201, response.text
+
+
+async def _statement_values(api, run):
+    """The coverage of the page: one entry per owner of the roster; the figures come from the booked payments."""
+    await _clear_unassigned_cash(api, run)
+    values = {'paid_advances': [{'owner_profile_id': owner, 'paid_total': '0.00'} for owner in await _roster(api, run)]}
+    await attest_fixture(api, 'settlement', run, values)
+    return values
+
+
+async def _compute_statement(api, run):
+    response = await api.post(f'/api/weg-settlements/{run}/compute', json=await _statement_values(api, run))
+    assert response.status_code == 200, response.text
+    return {row['owner_profile_id']: row for row in response.json()['owner_results']}
+
+
+async def _finalize_statement(api, run):
+    response = await api.post(f'/api/weg-settlements/{run}/finalize', json=await _statement_values(api, run))
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _figures(statement, owner):
+    """Hausgeld-Soll, Hausgeld gezahlt and Rückstand / Guthaben aus Hausgeld of one owner."""
+    row = statement[owner]
+    return row['plan_soll'], row['paid'], row['account_balance']
+
+
+def _has_no_cost_share(statement, owner):
+    """An owner without a unit in the period carries no cost, so the Spitze is 0,00 whatever was paid."""
+    return (statement[owner]['owner_cost_total'], statement[owner]['abrechnungsspitze']) == ('0.00', '0.00')
+
+
+@pytest.mark.asyncio
+async def test_a_seller_is_credited_in_the_year_of_each_payment_also_after_the_year_of_the_sale(client_a_admin, seed_data):
+    from tests.test_reserve_ledger import pdf_text
+
+    # Anna's Soll in 2025 is 6.000,00 (January to June of 12.000,00). She pays 3.000,00 on 20.06.2025 and 3.000,00 on
+    # 10.01.2026, both for June 2025: each counts in the year it was received, together exactly once.
+    api = client_a_admin
+    w = await _single_unit_weg(api, seed_data)
+    anna = w['anna']
+    bernd = await _sell_unit(api, w['unit'], '2025-06-30', '2025-07-01')
+    await _owner_payment(api, w, anna, '3000.00', HV, '2025-06-20', assigned=(2025, 6))
+    await _owner_payment(api, w, anna, '3000.00', HV, '2026-01-10', assigned=(2025, 6))
+    run_2025, run_2026 = await _draft_run(api, w, w['plan'], 2025), await _next_statement_run(api, w)
+    # The page asks for the owners of the statement and prefills each one's payment from the same payments.
+    assert await _roster(api, run_2025) == await _roster(api, run_2026) == sorted([anna, bernd])
+    assert await _derived(api, run_2025) == {anna: '3000.00', bernd: '0.00'}
+    assert await _derived(api, run_2026) == {anna: '3000.00', bernd: '0.00'}
+    first, second = await _compute_statement(api, run_2025), await _compute_statement(api, run_2026)
+    # 2025: Rückstand 3.000,00 of Anna, nothing of her payments for the buyer.
+    assert _figures(first, anna) == ('6000.00', '3000.00', '3000.00')
+    assert _figures(first, bernd) == ('6000.00', '0.00', '6000.00')
+    # 2026: Anna has no unit and no Soll, her 3.000,00 are a credit of 3.000,00; Bernd owes the whole plan year.
+    assert _figures(second, anna) == ('0.00', '3000.00', '-3000.00')
+    assert second[anna]['ownership_periods'] == [] and second[anna]['payment_amount'] == '-3000.00'
+    assert _has_no_cost_share(second, anna)
+    assert _figures(second, bernd) == ('12000.00', '0.00', '12000.00')
+    assert Decimal(first[anna]['paid']) + Decimal(second[anna]['paid']) == Decimal('6000.00')
+    # The finalized page and the PDF list her too.
+    finalized = {row['owner_profile_id']: row for row in (await _finalize_statement(api, run_2026))['owner_results']}
+    assert _figures(finalized, anna) == ('0.00', '3000.00', '-3000.00')
+    assert _figures(finalized, bernd) == ('12000.00', '0.00', '12000.00')
+    text = pdf_text((await api.get(f'/api/weg-settlements/{run_2026}/pdf')).content)
+    assert 'Bernd Neu' in text and 'Anna Alt' in text
+    assert ('Hausgeld-Soll laut Wirtschaftsplan 0,00 EUR\nHausgeld gezahlt 3.000,00 EUR\n'
+            'Rückstand / Guthaben aus Hausgeld -3.000,00 EUR') in text[text.index('Anna Alt'):]
+
+
+@pytest.mark.asyncio
+async def test_a_buyer_is_credited_in_the_year_before_his_first_year_for_a_payment_made_then(client_a_admin, seed_data):
+    # Bernd owns from 01.01.2026 and pays 1.000,00 for January on 28.12.2025: the 2025 statement credits it with
+    # Soll 0,00, the 2026 statement credits him only what he paid with a value date in 2026.
+    api = client_a_admin
+    w = await _single_unit_weg(api, seed_data)
+    anna = w['anna']
+    bernd = await _sell_unit(api, w['unit'], '2025-12-31', '2026-01-01')
+    await _owner_payment(api, w, bernd, '1000.00', HV, '2025-12-28', assigned=(2026, 1))
+    await _owner_payment(api, w, bernd, '500.00', HV, '2026-02-05', assigned=(2026, 2))
+    run_2025, run_2026 = await _draft_run(api, w, w['plan'], 2025), await _next_statement_run(api, w)
+    assert await _roster(api, run_2025) == sorted([anna, bernd]) and await _roster(api, run_2026) == [bernd]
+    assert await _derived(api, run_2025) == {anna: '0.00', bernd: '1000.00'}
+    assert await _derived(api, run_2026) == {bernd: '500.00'}
+    first, second = await _compute_statement(api, run_2025), await _compute_statement(api, run_2026)
+    assert _figures(first, anna) == ('12000.00', '0.00', '12000.00')
+    assert _figures(first, bernd) == ('0.00', '1000.00', '-1000.00')
+    assert first[bernd]['ownership_periods'] == [] and _has_no_cost_share(first, bernd)
+    assert _figures(second, bernd) == ('12000.00', '500.00', '11500.00')
+
+
+# A seller (Anna sold on 30.06.2025) pays in 2026, for June 2025: (payments, Hausgeld credited to her in the 2026 statement,
+# None when she is no part of it, and her levy payments in it). A separately paid reserve share credits her nothing: the
+# cover is capped at the Soll still unpaid by Hausgeld (`covered_reserve`), and an owner without a dated Soll in the period
+# (her Soll in 2026 is 0,00, which is no entry) receives no reserve credit at all (docs/m4-weg-abrechnung.md section 2.4).
+SELLER_AFTER_THE_SALE_CASES = {
+    'hausgeld': ([('3000.00', HV, 'IN', '2026-01-10', (2025, 6), False)], '3000.00', None),
+    'refund-to-the-former-owner': ([('200.00', HV, 'OUT', '2026-02-01', (2025, 6), False)], '-200.00', None),
+    'levy-payment': ([('600.00', 'SONDERZAHLUNG', 'IN', '2026-01-15', (2025, 5), False)], '0.00', '600.00'),
+    'reserve-share': ([('1000.00', RN, 'IN', '2026-01-10', (2025, 6), False)], '0.00', None),
+    'reserve-share-beside-hausgeld': ([('500.00', HV, 'IN', '2026-01-05', (2025, 6), False),
+                                       ('1000.00', RN, 'IN', '2026-01-10', (2025, 6), False)], '500.00', None),
+    'reversed-payment-and-its-storno': ([('300.00', HV, 'IN', '2026-01-10', (2025, 6), True)], None, None),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('case', list(SELLER_AFTER_THE_SALE_CASES))
+async def test_a_former_owners_payment_after_the_sale_year_is_credited_in_the_year_it_was_received(
+        client_a_admin, seed_data, case):
+    api = client_a_admin
+    payments, hausgeld, levy = SELLER_AFTER_THE_SALE_CASES[case]
+    w = await _single_unit_weg(api, seed_data)
+    anna = w['anna']
+    bernd = await _sell_unit(api, w['unit'], '2025-06-30', '2025-07-01')
+    for amount, payment_type, direction, value_date, assigned, reverse in payments:
+        await _owner_payment(api, w, anna, amount, payment_type, value_date, direction=direction,
+                             assigned=assigned, reverse=reverse)
+    run_2025, run_2026 = await _draft_run(api, w, w['plan'], 2025), await _next_statement_run(api, w)
+    # She owned until 30.06.2025, so she belongs to 2025 with nothing received in it; the buyer is credited nothing.
+    assert await _derived(api, run_2025) == {anna: '0.00', bernd: '0.00'}
+    expected = {bernd: '0.00'} if hausgeld is None else {anna: hausgeld, bernd: '0.00'}
+    assert await _derived(api, run_2026) == expected
+    assert await _roster(api, run_2026) == sorted(expected)
+    statement = await _compute_statement(api, run_2026)
+    assert sorted(statement) == sorted(expected)
+    if hausgeld is not None:
+        # Soll 0,00: what she paid is her credit, nothing else of the statement moves.
+        assert _figures(statement, anna) == ('0.00', hausgeld, format(Decimal('0.00') - Decimal(hausgeld), '.2f'))
+        assert statement[anna].get('levy_paid') == levy and _has_no_cost_share(statement, anna)
+    assert _figures(statement, bernd) == ('12000.00', '0.00', '12000.00')
+
+
+@pytest.mark.asyncio
+async def test_a_co_owner_paying_after_the_sale_keeps_the_payment_and_the_other_co_owner_gets_none(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await _single_unit_weg(api, seed_data, co_owner=True)
+    anna, carla = w['anna'], w['carla']
+    bernd = await _sell_unit(api, w['unit'], '2025-06-30', '2025-07-01')
+    await _owner_payment(api, w, carla, '1000.00', HV, '2025-06-01', assigned=(2025, 6))
+    await _owner_payment(api, w, carla, '2000.00', HV, '2026-01-20', assigned=(2025, 6))
+    run_2025, run_2026 = await _draft_run(api, w, w['plan'], 2025), await _next_statement_run(api, w)
+    assert await _derived(api, run_2025) == {anna: '0.00', carla: '1000.00', bernd: '0.00'}
+    # Anna paid nothing and owns nothing in 2026: she is no part of it; Carla keeps her own payment.
+    assert await _derived(api, run_2026) == {carla: '2000.00', bernd: '0.00'}
+
+
+@pytest.mark.asyncio
+async def test_an_owner_without_a_counted_payment_in_the_period_is_not_added_to_the_statement(
+        client_a_admin, client_b_admin, seed_data):
+    api = client_a_admin
+    w = await _single_unit_weg(api, seed_data)
+    anna = w['anna']
+    bernd = await _sell_unit(api, w['unit'], '2025-12-31', '2026-01-01')
+    # Owners of another property of the organization and of another organization pay in the period; a draft of
+    # the buyer and a payment of his received in 2026 are no counted payment of 2025.
+    other, foreign = await _single_unit_weg(api, seed_data), await _single_unit_weg(client_b_admin, seed_data)
+    await _owner_payment(api, w, bernd, '100.00', HV, '2026-02-05', assigned=(2026, 2))
+    await _owner_payment(api, other, other['anna'], '700.00', HV, '2025-06-05', assigned=(2025, 6))
+    await _owner_payment(client_b_admin, foreign, foreign['anna'], '800.00', HV, '2025-06-05', assigned=(2025, 6))
+    draft = await api.post('/api/payments', json={'bank_account_id': w['bank'], 'owner_profile_id': bernd,
+        'direction': 'IN', 'amount': '900.00', 'value_date': '2025-06-05', 'payment_type': HV})
+    assert draft.status_code == 201, draft.text
+    run_2025 = await _draft_run(api, w, w['plan'], 2025)
+    assert await _roster(api, run_2025) == [anna]
+    assert await _derived(api, run_2025) == {anna: '0.00'}

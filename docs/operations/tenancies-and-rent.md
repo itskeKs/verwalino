@@ -158,8 +158,8 @@ selected and saved deliberately. Owner, unit, start, and co-ownership share (MEA
 of the old row are retained. Write role and existing prepare permissions
 as well as the shared financial lock apply; co-ownership remains permitted.
 The annual settlement loads its payment inputs via the authorized
-`GET /api/weg-settlements/{id}/input-owners` for all owners in the period,
-not only from the economic plan. Unknown payments are not zero values:
+`GET /api/weg-settlements/{id}/input-owners` for all owners in the period and
+every owner who paid in it, not only from the economic plan. Unknown payments are not zero values:
 even confirmed zeros must be entered and reviewed explicitly.
 Finalized results are not recalculated from today's ownership data.
 `scripts/acceptance/t26_ownership_change_browser.cjs` verifies the sale on

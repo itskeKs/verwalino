@@ -226,6 +226,18 @@ payment of December 2026 received on 05.01.2027 is no payment of 2026: the 2026 
 „Hausgeld gezahlt" 0,00 and the arrears of the whole Soll, and the 2027 statement credits it. Payments
 stay with the payer; nothing moves between owners.
 
+Because a payment stays with its payer and counts in the year it was received, an owner with a counted
+payment in the period belongs to that period's statement even when the owner holds no unit in it. A seller
+who pays an arrear after the year of the sale is credited in the year of the value date with Soll 0,00
+there, and the statement of the year of the sale keeps the arrears as they stood at its end; a buyer who
+pays before his first year of ownership is credited in the year of the value date with Soll 0,00, and the
+first year of ownership shows that amount as not paid in it. This is the picture a continuing owner already
+had for a payment around the year end. The owner roster of the statement (`owner_ids`) therefore adds the
+owners with a booked, not reversed Hausgeld, reserve-share or levy payment whose value date lies in the period;
+a Hausgeld or levy payment is credited in exactly one statement, and consecutive statements computed by
+`m4.12.0` add up to what was received. The switch from a year finalized by assigned month (`m4.11.0` and
+earlier) to the next year computed by value date is not part of this amendment.
+
 The owner account (the ledger by month), owner dunning, the Fristenmonitor and „Hausgeld buchen" are
 not part of the statement and keep the assigned month; the reserve ledger already counted cash by value
 date. Engine `m4.12.0` carries the rule, page and PDF name the basis „Wertstellung" only for a

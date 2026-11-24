@@ -25,8 +25,14 @@ ADR-0007 amendment of 2026-11-22). Hausgeld of December 2026 that arrives on 05.
 no payment of the 2026 statement („Hausgeld gezahlt“ 0,00 €, the arrears are the whole Soll) and counts in
 the 2027 statement; Hausgeld of December 2025 that arrives on 05.01.2026 counts in 2026. A refund to the
 owner reduces the payments of the year of its value date, a reversed payment and its Storno count in no
-year, so two consecutive statements add up to exactly what was received. Payments stay with the owner who
-paid. The owner account (Mietkonto), owner dunning and „Hausgeld buchen“ keep the assigned month, so the account
+year. An owner who paid in the period belongs to its statement even without a unit in it: a seller who
+pays an arrear after the year of the sale is credited in the year of the payment („Hausgeld-Soll laut
+Wirtschaftsplan“ 0,00, „Hausgeld gezahlt“ the amount), a buyer who pays before his first year is credited in
+the year of the payment, and the statement of the year of the sale or of the first year of ownership shows the
+arrears as they stood in it. Each Hausgeld and levy payment is therefore credited in exactly one statement and
+consecutive statements of engine `m4.12.0` or later add up to exactly what was received (a separately paid
+reserve share counts only up to the Soll still unpaid by Hausgeld). Payments stay with the owner who paid.
+The owner account (Mietkonto), owner dunning and „Hausgeld buchen“ keep the assigned month, so the account
 can show a payment for December that the statement counts in January. The page and PDF of a statement
 computed by engine `m4.12.0` or later say „nach Wertstellung“; a draft follows at its next calculation, a
 finalized statement and its PDF stay as they were.
