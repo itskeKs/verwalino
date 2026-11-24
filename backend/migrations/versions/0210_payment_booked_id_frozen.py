@@ -5,8 +5,10 @@ was not in it. As the runtime role, ``UPDATE payment SET id = gen_random_uuid() 
 booked payment that no other row references (the foreign keys to ``payment`` stop the change only for a referenced row,
 with SQLSTATE 23503). The row's content stays, its identity does not: the audit trail, exports and documents that name
 the old id no longer find the payment. One statement cannot swap two ids (the primary key refuses the first row, 23505),
-but one that moves a row to a free value and another row onto the first id is accepted, so a recorded id names another
-payment's content. The application never writes it: the organization import inserts payments with the archive's ids and
+but two statements could: one moved a row to a free value, the next moved another row onto the first id, so a recorded
+id names another payment's content (a single statement doing both was accepted or refused with 23505, depending on the
+order in which the rows were visited). The application never writes it: the organization import inserts payments with
+the archive's ids and
 updates only ``reversed_by_id`` afterwards; it takes raw SQL.
 
 One rule, one revision: on the UPDATE of a booked row, ``NEW.id IS DISTINCT FROM OLD.id`` is refused with the wording
