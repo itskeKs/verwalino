@@ -856,7 +856,8 @@ class TestPaymentImmutability:
             with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
                 savepoint = db.begin_nested()
                 try:
-                    # The chain undoes 0209, 0208 and 0207 before 0192: the function 0192 made is the head's only until then.
+                    # The chain undoes 0210, 0209, 0208 and 0207 before 0192: the function 0192 made is the head's only until then.
+                    importlib.import_module(BOOKED_ID_REVISION).downgrade()
                     importlib.import_module(STORNO_OF_STORNO_REVISION).downgrade()
                     importlib.import_module(MIRROR_REVISION).downgrade()
                     importlib.import_module(BOOKING_REVISION).downgrade()
@@ -1200,7 +1201,8 @@ class TestBookedLinkRevision:
         previous = importlib.import_module(
             "migrations.versions.0192_payment_reversal_link_immutable").CURRENT_FUNCTION.split("$$")[1]
         with _rehearsal() as db:
-            # The chain undoes 0209 and 0208 before 0207: the function and trigger 0207 made are the head's only until then.
+            # The chain undoes 0210, 0209 and 0208 before 0207: the function and trigger 0207 made are the head's only until then.
+            importlib.import_module(BOOKED_ID_REVISION).downgrade()
             importlib.import_module(STORNO_OF_STORNO_REVISION).downgrade()
             importlib.import_module(MIRROR_REVISION).downgrade()
             head_function, head_triggers = _function(db), _payment_triggers(db)
@@ -1609,7 +1611,8 @@ class TestStornoMirrorRevision:
         migration = importlib.import_module(MIRROR_REVISION)
         previous = importlib.import_module(BOOKING_REVISION).CURRENT_FUNCTION.split("$$")[1]
         with _rehearsal() as db:
-            # The chain undoes 0209 before 0208: the function 0208 made is the head's only until then.
+            # The chain undoes 0210 and 0209 before 0208: the function 0208 made is the head's only until then.
+            importlib.import_module(BOOKED_ID_REVISION).downgrade()
             importlib.import_module(STORNO_OF_STORNO_REVISION).downgrade()
             head_function, head_triggers, head_index = _function(db), _payment_triggers(db), _booked_storno_index(db)
             assert head_function[0] != previous
@@ -1635,6 +1638,7 @@ class TestStornoMirrorRevision:
     def test_upgrade_refuses_a_second_booked_storno_of_an_original_and_changes_nothing(self, m6_seed):
         migration = importlib.import_module(MIRROR_REVISION)
         with _rehearsal() as db:
+            importlib.import_module(BOOKED_ID_REVISION).downgrade()
             importlib.import_module(STORNO_OF_STORNO_REVISION).downgrade()
             head_function, head_triggers = _function(db), _payment_triggers(db)
             migration.downgrade()
@@ -1670,6 +1674,8 @@ class TestStornoOfStornoRevision:
         migration = importlib.import_module(STORNO_OF_STORNO_REVISION)
         previous = importlib.import_module(MIRROR_REVISION).CURRENT_FUNCTION.split("$$")[1]
         with _rehearsal() as db:
+            # The chain undoes 0210 before 0209: the function 0209 made is the head's only until then.
+            importlib.import_module(BOOKED_ID_REVISION).downgrade()
             head_function, head_triggers, head_index = _function(db), _payment_triggers(db), _booked_storno_index(db)
             assert head_function[0] != previous and "AND original.reverses_id IS NULL" in head_function[0]
             original, storno = uuid.uuid4(), uuid.uuid4()
@@ -1693,6 +1699,7 @@ class TestStornoOfStornoRevision:
     def test_downgrade_accepts_the_storno_of_a_storno_the_issue_describes_again(self, m6_seed):
         migration = importlib.import_module(STORNO_OF_STORNO_REVISION)
         with _rehearsal() as db:
+            importlib.import_module(BOOKED_ID_REVISION).downgrade()
             original, storno, of_storno = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
             assert _runtime_insert(db, m6_seed, original) == "accepted"
             assert _runtime_insert(db, m6_seed, storno, reverses=original, direction="IN") == "accepted"
@@ -1702,6 +1709,7 @@ class TestStornoOfStornoRevision:
     def test_upgrade_refuses_booked_payments_whose_original_is_a_storno_and_changes_nothing(self, m6_seed):
         migration = importlib.import_module(STORNO_OF_STORNO_REVISION)
         with _rehearsal() as db:
+            importlib.import_module(BOOKED_ID_REVISION).downgrade()
             head_function, head_triggers, head_index = _function(db), _payment_triggers(db), _booked_storno_index(db)
             migration.downgrade()
             downgraded = _function(db)
@@ -1735,6 +1743,7 @@ class TestStornoOfStornoRevision:
     def test_the_listing_query_of_the_hint_names_exactly_the_counted_rows(self, m6_seed):
         migration = importlib.import_module(STORNO_OF_STORNO_REVISION)
         with _rehearsal() as db:
+            importlib.import_module(BOOKED_ID_REVISION).downgrade()
             migration.downgrade()
             original, storno, of_storno = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
             assert _runtime_insert(db, m6_seed, original) == "accepted"
@@ -1746,6 +1755,156 @@ class TestStornoOfStornoRevision:
             listing = refused.value.orig.diag.message_hint.removeprefix("List them with: ")
             assert [tuple(row) for row in db.execute(text(listing))] == [
                 (m6_seed["org_a_id"], of_storno, storno)]
+
+
+# ===========================================================================
+# Test 2d: a booked payment keeps its id (#910, 0210).
+#   Every column of a booked payment but `updated_at` and the one-time `reversed_by_id` is frozen; `id` was not in the
+#   list the function compares. As `app_rw`, `UPDATE payment SET id = ...` was accepted for a booked payment that no row
+#   references, and a statement that moves one row to a free value and another onto the first id moved a recorded id to
+#   another payment's content. One rule in `trg_payment_immutability()`, one refusal: SQLSTATE P0001,
+#   "GoBD: Cannot change id on booked payment".
+# ===========================================================================
+BOOKED_ID_REVISION = "migrations.versions.0210_payment_booked_id_frozen"
+ID_REFUSAL = "GoBD.*Cannot change id on booked payment"
+_RENAME = "UPDATE payment SET id = :new WHERE id = :old"
+# One statement that moves `a` to the free value `t` and `b` onto `a`; a plain swap (CASE, or a CTE pair) is a duplicate key.
+_ROTATE = ("UPDATE payment p SET id = v.new FROM (VALUES (CAST(:a AS uuid), CAST(:t AS uuid)), "
+           "(CAST(:b AS uuid), CAST(:a AS uuid))) AS v(old, new) WHERE p.id = v.old")
+
+
+async def _amounts(session, *ids) -> dict:
+    """{id: amount} of the payments among `ids` that exist."""
+    rows = await session.execute(text("SELECT id, amount FROM payment WHERE id = ANY(CAST(:ids AS uuid[]))"),
+                                 {"ids": [str(identity) for identity in ids]})
+    return {str(identity): amount for identity, amount in rows}
+
+
+class TestBookedPaymentKeepsItsId:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("subject", ["unreferenced", "original_of_a_linked_storno", "linked_storno"])
+    async def test_a_booked_payment_cannot_get_a_new_id(self, app_rw_session, m6_seed, subject):
+        """The probe of #910 for a payment no row references, and for both rows of a linked pair.
+
+        The foreign keys of a referenced payment answered 23503; the refusal is the function's now, for all three."""
+        session = app_rw_session
+        savepoint = await session.begin_nested()
+        await _set_org(session, m6_seed["org_a_id"])
+        original = _payment_row(m6_seed)
+        await _put(session, m6_seed, original)
+        booked = original
+        if subject != "unreferenced":
+            storno = _storno_row(m6_seed, original)
+            await _put(session, m6_seed, storno)
+            await session.execute(text("UPDATE payment SET reversed_by_id = :s WHERE id = :id"),
+                                  {"s": storno["id"], "id": original["id"]})
+            booked = storno if subject == "linked_storno" else original
+        renamed = str(uuid.uuid4())
+        refused = await _outcome(session, lambda: session.execute(text(_RENAME), {"new": renamed, "old": booked["id"]}))
+        # What stays allowed: an UPDATE that leaves the id as it is.
+        same = await _outcome(session, lambda: session.execute(
+            text("UPDATE payment SET id = id, updated_at = now() WHERE id = :id"), {"id": booked["id"]}))
+        kept = await _amounts(session, booked["id"], renamed)
+        await savepoint.rollback()
+        assert refused[0] == "P0001" and re.search(ID_REFUSAL, refused[1]), refused
+        assert same == ("accepted", "")
+        assert kept == {booked["id"]: booked["amount"]}
+
+    @pytest.mark.asyncio
+    async def test_two_booked_payments_cannot_trade_ids_through_a_third_value(self, app_rw_session, m6_seed):
+        """One statement that rotates the ids, and the three statements of a swap by hand: no id moves."""
+        session = app_rw_session
+        savepoint = await session.begin_nested()
+        await _set_org(session, m6_seed["org_a_id"])
+        first = _payment_row(m6_seed)
+        second = _payment_row(m6_seed, amount=Decimal("222.00"))
+        await _put(session, m6_seed, first)
+        await _put(session, m6_seed, second)
+        free = str(uuid.uuid4())
+        rotated = await _outcome(session, lambda: session.execute(
+            text(_ROTATE), {"a": first["id"], "b": second["id"], "t": free}))
+        by_hand = [await _outcome(session, lambda: session.execute(text(_RENAME), {"new": new, "old": old}))
+                   for old, new in ((first["id"], free), (second["id"], first["id"]))]
+        kept = await _amounts(session, first["id"], second["id"], free)
+        await savepoint.rollback()
+        assert rotated[0] == "P0001" and re.search(ID_REFUSAL, rotated[1]), rotated
+        assert [outcome[0] for outcome in by_hand] == ["P0001", "P0001"], by_hand
+        assert kept == {first["id"]: first["amount"], second["id"]: second["amount"]}
+
+    @pytest.mark.asyncio
+    async def test_a_drafts_id_stays_changeable_until_it_is_booked(self, app_rw_session, m6_seed):
+        session = app_rw_session
+        savepoint = await session.begin_nested()
+        await _set_org(session, m6_seed["org_a_id"])
+        draft = _draft(_payment_row(m6_seed))
+        await _put(session, m6_seed, draft)
+        renamed, renamed_again = str(uuid.uuid4()), str(uuid.uuid4())
+        first = await _outcome(session, lambda: session.execute(text(_RENAME), {"new": renamed, "old": draft["id"]}))
+        second = await _outcome(session, lambda: session.execute(text(_RENAME), {"new": renamed_again, "old": renamed}))
+        await _book(session, m6_seed, renamed_again)
+        after_booking = await _outcome(session, lambda: session.execute(
+            text(_RENAME), {"new": renamed, "old": renamed_again}))
+        kept = await _amounts(session, draft["id"], renamed, renamed_again)
+        await savepoint.rollback()
+        assert first == second == ("accepted", "")
+        assert after_booking[0] == "P0001" and re.search(ID_REFUSAL, after_booking[1]), after_booking
+        assert kept == {renamed_again: draft["amount"]}
+
+
+def _runtime_id_change(db, m6_seed, old, new) -> str:
+    """SQLSTATE of renaming payment `old` to `new` as `app_rw` under organization A, "accepted" when the row moved."""
+    db.execute(text("SELECT set_config('app.current_org_id', :org, true)"), {"org": str(m6_seed["org_a_id"])})
+    try:
+        with db.begin_nested():
+            db.execute(text("SET LOCAL ROLE app_rw"))
+            moved = db.execute(text(_RENAME), {"new": str(new), "old": str(old)}).rowcount
+        return "accepted" if moved == 1 else f"{moved} rows"
+    except DBAPIError as exc:
+        return exc.orig.pgcode
+    finally:
+        db.execute(text("RESET ROLE"))
+
+
+class TestBookedIdRevision:
+    """Revision 0210 (#910): a booked payment keeps its id."""
+
+    def test_downgrade_restores_the_previous_function_exactly_and_upgrade_the_rule(self, m6_seed):
+        migration = importlib.import_module(BOOKED_ID_REVISION)
+        previous = importlib.import_module(STORNO_OF_STORNO_REVISION).CURRENT_FUNCTION.split("$$")[1]
+        with _rehearsal() as db:
+            head_function, head_triggers, head_index = _function(db), _payment_triggers(db), _booked_storno_index(db)
+            assert head_function[0] != previous and "NEW.id IS DISTINCT FROM OLD.id" in head_function[0]
+            booked, renamed = uuid.uuid4(), uuid.uuid4()
+            assert _runtime_insert(db, m6_seed, booked) == "accepted"
+            assert _runtime_id_change(db, m6_seed, booked, renamed) == "P0001"
+
+            migration.downgrade()
+            # 0209's function exactly (body, definer rights, settings, ACL); no trigger or index changes in either direction.
+            assert _function(db) == (previous, *head_function[1:])
+            assert _payment_triggers(db) == head_triggers and _booked_storno_index(db) == head_index
+            # What the issue describes is possible again.
+            assert _runtime_id_change(db, m6_seed, booked, renamed) == "accepted"
+
+            migration.upgrade()
+            assert (_function(db), _payment_triggers(db), _booked_storno_index(db)) == (
+                head_function, head_triggers, head_index)
+            assert _runtime_id_change(db, m6_seed, renamed, booked) == "P0001"
+
+    def test_downgrade_accepts_the_swap_the_issue_describes_again(self, m6_seed):
+        migration = importlib.import_module(BOOKED_ID_REVISION)
+        with _rehearsal() as db:
+            first, second, free = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+            assert _runtime_insert(db, m6_seed, first, direction="OUT") == "accepted"
+            assert _runtime_insert(db, m6_seed, second, direction="IN") == "accepted"
+            by_hand = [(first, free), (second, first), (free, second)]
+            assert [_runtime_id_change(db, m6_seed, old, new) for old, new in by_hand] == ["P0001", "P0001", "0 rows"]
+
+            migration.downgrade()
+            assert [_runtime_id_change(db, m6_seed, old, new) for old, new in by_hand] == ["accepted"] * 3
+            # The recorded ids now name each other's content.
+            directions = dict(db.execute(text("SELECT id, direction FROM payment WHERE id IN (:a, :b)"),
+                                         {"a": str(first), "b": str(second)}).all())
+            assert directions == {first: "IN", second: "OUT"}
 
 
 # ===========================================================================
