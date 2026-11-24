@@ -1,6 +1,7 @@
 ---
 import { t, type Locale } from '../i18n';
 import { draftSections, checklist } from '../content/drafts';
+import { pathFor } from '../content/routes';
 interface Props { locale: Locale; document: keyof typeof draftSections }
 const { locale, document } = Astro.props;
 const text = t(locale);
@@ -8,9 +9,12 @@ const text = t(locale);
 <article class="document wrap">
   <p class="draft-banner"><strong>{text('draft.banner')}</strong></p>
   <header class="document-head"><h1>{text(`page.${document}.title`)}</h1></header>
+  <p>{text('draft.authoritative')}</p>
+  {locale === 'en' && <p><a class="text-link" href={pathFor('de', document)}>Deutsch</a></p>}
+  {document === 'dpa' && <p><a class="text-link" href={`/legal/av-vertrag.${locale}.md`} download>{text('draft.download')}</a></p>}
   {draftSections[document].map((section, index) => <section aria-labelledby={`section-${index}`}>
     <h2 id={`section-${index}`}>{text(`${section}.title`)}</h2>
-    <p>{text(`${section}.body`)}</p>
+    <p style="overflow-wrap: anywhere">{text(`${section}.body`)}</p>
   </section>)}
   <aside class="draft-checklist" aria-labelledby="checklist">
     <h2 id="checklist">{text('draft.checklist.title')}</h2>

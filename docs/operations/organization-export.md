@@ -4,6 +4,10 @@ Organization exports are portable product data, separate from the paired
 PostgreSQL dump and document backup described in [DEPLOY.md](../../DEPLOY.md).
 They contain personal data and originals. Store and transfer them privately.
 
+The hosted operator's [draft retention and service-exit procedure](hosted-retention.md)
+distinguishes these capabilities from contractual commitments and legal retention duties.
+It requires owner and counsel approval before a public hosted launch.
+
 ## Delivery boundary
 
 Owner-administrators can export, import into an empty organization, and request
