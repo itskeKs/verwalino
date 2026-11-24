@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import re
 import uuid
 from contextlib import contextmanager
 from datetime import date
@@ -351,10 +352,13 @@ class TestVermoegensKohaerenz:
 # ===========================================================================
 class TestReversalLinksCarryTheOrganization:
     @staticmethod
-    async def _insert(session, m6_seed, org, *, reverses_id=None, reversed_by_id=None, pid=None) -> uuid.UUID:
-        """Insert one booked payment of organization `org` ("a" or "b") as `app_rw`, with its links set on insert."""
+    async def _insert(
+        session, m6_seed, org, *, reverses_id=None, reversed_by_id=None, pid=None, status="booked",
+    ) -> uuid.UUID:
+        """Insert one payment of organization `org` ("a" or "b") as `app_rw`, with its links set on insert."""
         pid = pid or uuid.uuid4()
         other = org == "b"
+        booked = status == "booked"
         await _set_org(session, m6_seed["org_b_id" if other else "org_a_id"])
         await session.execute(
             text("""
@@ -367,7 +371,7 @@ class TestReversalLinksCarryTheOrganization:
                     :id, :org, :acct, :prop,
                     'OUT', 150.00, :vdate, 'NK_VORAUSZAHLUNG',
                     :tenant, :lease, 2025, 6,
-                    'booked', :booked_at, :booked_by, :reverses, :reversed_by
+                    :status, :booked_at, :booked_by, :reverses, :reversed_by
                 )
             """),
             {
@@ -375,8 +379,9 @@ class TestReversalLinksCarryTheOrganization:
                 "acct": str(m6_seed["acct_b_org" if other else "acct_a"]),
                 "prop": str(m6_seed["prop_b_org" if other else "prop_a"]),
                 "vdate": _VDATE, "tenant": str(m6_seed["tenant_b" if other else "tenant"]),
-                "lease": None if other else str(m6_seed["lease"]), "booked_at": _BOOKED_AT,
-                "booked_by": str(m6_seed["user_b_admin_id" if other else "user_a_admin_id"]),
+                "lease": None if other else str(m6_seed["lease"]), "status": status,
+                "booked_at": _BOOKED_AT if booked else None,
+                "booked_by": str(m6_seed["user_b_admin_id" if other else "user_a_admin_id"]) if booked else None,
                 "reverses": None if reverses_id is None else str(reverses_id),
                 "reversed_by": None if reversed_by_id is None else str(reversed_by_id),
             },
@@ -398,13 +403,17 @@ class TestReversalLinksCarryTheOrganization:
     async def test_a_payment_cannot_name_a_payment_of_another_organization(
         self, app_rw_session, m6_seed, column,
     ):
-        """As organization B, the id of A's payment and an unknown id are refused alike: no existence probe."""
+        """As organization B, the id of A's payment and an unknown id are refused alike: no existence probe.
+
+        `reversed_by_id` is tried on a draft: a booked row naming a payment that is not its Storno is refused by the
+        trigger first (#720), before the key is checked at the end of the statement, so the key is what a draft shows."""
         session = app_rw_session
         savepoint = await session.begin_nested()
         foreign = await self._insert(session, m6_seed, "a")
+        status = "draft" if column == "reversed_by_id" else "booked"
         outcomes = [
-            await self._attempt(session, m6_seed, "b", **{column: foreign}),
-            await self._attempt(session, m6_seed, "b", **{column: uuid.uuid4()}),
+            await self._attempt(session, m6_seed, "b", status=status, **{column: foreign}),
+            await self._attempt(session, m6_seed, "b", status=status, **{column: uuid.uuid4()}),
         ]
         await savepoint.rollback()
         assert outcomes == ["23503", "23503"]
@@ -842,13 +851,15 @@ class TestPaymentImmutability:
         engine = create_engine(MIGRATOR_SYNC_URL)
         try:
             with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
-                current = db.execute(function).one()
-                assert current.prosecdef and "row_security=off" in current.proconfig
-                # Only the owner may execute the definer function; the runtime role may not.
-                assert db.scalar(executors) == ["app_migrator"]
-                assert not db.scalar(text("SELECT has_function_privilege('app_rw', 'trg_payment_immutability()', 'EXECUTE')"))
                 savepoint = db.begin_nested()
                 try:
+                    # The chain undoes 0207 before 0192: the function 0192 made is the head's only until then.
+                    importlib.import_module(BOOKING_REVISION).downgrade()
+                    current = db.execute(function).one()
+                    assert current.prosecdef and "row_security=off" in current.proconfig
+                    # Only the owner may execute the definer function; the runtime role may not.
+                    assert db.scalar(executors) == ["app_migrator"]
+                    assert not db.scalar(text("SELECT has_function_privilege('app_rw', 'trg_payment_immutability()', 'EXECUTE')"))
                     migration.downgrade()
                     restored = db.execute(function).one()
                     assert restored.prosrc == created
@@ -885,6 +896,309 @@ class TestPaymentImmutability:
         await session.execute(text("DELETE FROM payment WHERE id = :id"), {"id": str(pid)})
         row = await session.execute(text("SELECT id FROM payment WHERE id = :id"), {"id": str(pid)})
         assert row.first() is None
+
+
+# ===========================================================================
+# Test 2b: the reversal link of a payment that becomes booked (#720).
+#   A booked payment's `reversed_by_id` is NULL or the id of its booked Storno of the same organization (#717 made it
+#   so for the UPDATE of a booked row). The rule holds for every way a row becomes booked: the INSERT as booked, the
+#   booking of a draft that already carries the link and the booking that sets the link in the same UPDATE. One rule
+#   in `trg_payment_immutability()`, one refusal: SQLSTATE P0001, "GoBD: reversed_by_id of booked payment must ...".
+# ===========================================================================
+_LINKED_INSERT = (
+    "INSERT INTO payment (id, organization_id, bank_account_id, property_id, direction, amount, value_date, "
+    "payment_type, tenant_profile_id, lease_agreement_id, period_year, period_month, status, booked_at, booked_by, "
+    "reverses_id, reversed_by_id) VALUES ")
+BOOK_WAYS = ["insert_as_booked", "link_a_draft_then_book_it", "book_a_draft_and_link_it_in_one_update"]
+LINK_REFUSAL = "GoBD.*reversed_by_id.*booked"
+_LINK_DRAFT = "UPDATE payment SET reversed_by_id = :reversed_by WHERE id = :id"
+_BOOK = "UPDATE payment SET status = 'booked', booked_at = :booked_at, booked_by = :booked_by WHERE id = :id"
+_BOOK_AND_LINK = ("UPDATE payment SET reversed_by_id = :reversed_by, status = 'booked', booked_at = :booked_at, "
+                  "booked_by = :booked_by WHERE id = :id")
+
+
+def _linked_values(n: str = "") -> str:
+    """The VALUES tuple of one payment, its parameters suffixed with `n` so that a statement can insert several."""
+    return (f"(:id{n}, :org{n}, :acct{n}, :prop{n}, 'OUT', 150.00, :vdate{n}, 'NK_VORAUSZAHLUNG', :tenant{n}, "
+            f":lease{n}, 2025, 6, :status{n}, :booked_at{n}, :booked_by{n}, :reverses{n}, :reversed_by{n})")
+
+
+def _linked_params(m6_seed, pid, n: str = "", *, org="a", status="booked", reverses=None, reversed_by=None) -> dict:
+    other, booked = org == "b", status == "booked"
+    return {
+        f"id{n}": str(pid), f"org{n}": str(m6_seed["org_b_id" if other else "org_a_id"]),
+        f"acct{n}": str(m6_seed["acct_b_org" if other else "acct_a"]),
+        f"prop{n}": str(m6_seed["prop_b_org" if other else "prop_a"]), f"vdate{n}": _VDATE,
+        f"tenant{n}": str(m6_seed["tenant_b" if other else "tenant"]),
+        f"lease{n}": None if other else str(m6_seed["lease"]), f"status{n}": status,
+        f"booked_at{n}": _BOOKED_AT if booked else None,
+        f"booked_by{n}": str(m6_seed["user_b_admin_id" if other else "user_a_admin_id"]) if booked else None,
+        f"reverses{n}": None if reverses is None else str(reverses),
+        f"reversed_by{n}": None if reversed_by is None else str(reversed_by),
+    }
+
+
+class TestPaymentBecomesBooked:
+    @staticmethod
+    async def _insert(session, m6_seed, pid=None, *, org="a", status="booked", reverses=None, reversed_by=None):
+        """Insert one payment of organization `org` ("a" or "b") as `app_rw`, its links set on insert."""
+        pid = pid or uuid.uuid4()
+        await _set_org(session, m6_seed["org_b_id" if org == "b" else "org_a_id"])
+        await session.execute(
+            text(_LINKED_INSERT + _linked_values()),
+            _linked_params(m6_seed, pid, org=org, status=status, reverses=reverses, reversed_by=reversed_by))
+        await _set_org(session, m6_seed["org_a_id"])
+        return pid
+
+    @staticmethod
+    async def _outcome(session, work) -> tuple[str, str]:
+        """(SQLSTATE, message) of what `work` runs inside a savepoint; ("accepted", "") when it passes."""
+        try:
+            async with session.begin_nested():
+                await work()
+            return "accepted", ""
+        except DBAPIError as exc:
+            return getattr(exc.orig, "sqlstate", repr(exc)), str(exc.orig)
+
+    @staticmethod
+    async def _state(session, pid):
+        """(status, reversed_by_id) of the payment, None when there is no such row."""
+        row = (await session.execute(
+            text("SELECT status, reversed_by_id FROM payment WHERE id = :id"), {"id": str(pid)})).first()
+        return None if row is None else tuple(row)
+
+    async def _book_a_draft(self, session, m6_seed, way, pid, claimed):
+        """Book the existing draft `pid` in one of the two draft ways with `reversed_by_id` naming `claimed`.
+
+        The second way links the draft first: a draft may carry any link its keys allow until it is booked, so that
+        step must pass. Returns the outcome of the booking statement."""
+        params = {"id": str(pid), "reversed_by": str(claimed), "booked_at": _BOOKED_AT,
+                  "booked_by": str(m6_seed["user_a_admin_id"])}
+        if way == "link_a_draft_then_book_it":
+            await session.execute(text(_LINK_DRAFT), params)
+            statement = _BOOK
+        else:
+            statement = _BOOK_AND_LINK
+        return await self._outcome(session, lambda: session.execute(text(statement), params))
+
+    async def _book(self, session, m6_seed, way, pid, claimed):
+        """Make a new payment `pid` booked in one of the three ways, its `reversed_by_id` naming `claimed`."""
+        if way == "insert_as_booked":
+            params = _linked_params(m6_seed, pid, reversed_by=claimed)
+            return await self._outcome(session, lambda: session.execute(text(_LINKED_INSERT + _linked_values()), params))
+        await self._insert(session, m6_seed, pid, status="draft")
+        return await self._book_a_draft(session, m6_seed, way, pid, claimed)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("way", BOOK_WAYS)
+    @pytest.mark.parametrize("target", ["unrelated_booked_payment", "storno_of_another_payment", "itself"])
+    async def test_a_payment_cannot_become_booked_naming_a_payment_that_is_not_its_storno(
+        self, app_rw_session, m6_seed, way, target,
+    ):
+        """Each way a row becomes booked is refused like the later UPDATE of a booked row, and writes nothing booked."""
+        session = app_rw_session
+        savepoint = await session.begin_nested()
+        await _set_org(session, m6_seed["org_a_id"])
+        unrelated = await self._insert(session, m6_seed)
+        other_original = await self._insert(session, m6_seed)
+        other_storno = await self._insert(session, m6_seed, reverses=other_original)
+        subject = uuid.uuid4()
+        claimed = {"unrelated_booked_payment": unrelated, "storno_of_another_payment": other_storno,
+                   "itself": subject}[target]
+        sqlstate, message = await self._book(session, m6_seed, way, subject, claimed)
+        state = await self._state(session, subject)
+        await savepoint.rollback()
+        assert sqlstate == "P0001", message
+        assert re.search(LINK_REFUSAL, message) and f"(id={subject})" in message, message
+        if way == "insert_as_booked":
+            assert state is None
+        else:
+            # The draft is still a draft; the link of the second way was set on the draft, the third never was.
+            assert state == ("draft", claimed if way == "link_a_draft_then_book_it" else None)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("way", BOOK_WAYS[1:])
+    async def test_a_draft_storno_does_not_qualify_but_the_booked_one_does(self, app_rw_session, m6_seed, way):
+        """The Storno named at booking must itself be booked; once it is, the same booking passes."""
+        session = app_rw_session
+        savepoint = await session.begin_nested()
+        await _set_org(session, m6_seed["org_a_id"])
+        subject, storno = uuid.uuid4(), uuid.uuid4()
+        await self._insert(session, m6_seed, subject, status="draft")
+        await self._insert(session, m6_seed, storno, status="draft", reverses=subject)
+        refused = await self._book_a_draft(session, m6_seed, way, subject, storno)
+        await session.execute(text(_BOOK), {"id": str(storno), "booked_at": _BOOKED_AT,
+                                            "booked_by": str(m6_seed["user_a_admin_id"])})
+        accepted = await self._book_a_draft(session, m6_seed, way, subject, storno)
+        state = await self._state(session, subject)
+        await savepoint.rollback()
+        assert refused[0] == "P0001" and re.search(LINK_REFUSAL, refused[1]), refused
+        assert accepted == ("accepted", "")
+        assert state == ("booked", storno)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("way", BOOK_WAYS)
+    async def test_a_payment_becomes_booked_naming_its_own_booked_storno(self, app_rw_session, m6_seed, way):
+        """The rule is #717's: the booked Storno of the same organization that reverses this row qualifies.
+
+        The application never writes this (it links after the Storno exists). For the INSERT the rule allows exactly one
+        thing: a statement that inserts the Storno ahead of its original, so that the Storno is there when the original's
+        row is checked. The rows name each other and the non-deferrable keys are checked when the statement ends."""
+        session = app_rw_session
+        savepoint = await session.begin_nested()
+        await _set_org(session, m6_seed["org_a_id"])
+        subject, storno = uuid.uuid4(), uuid.uuid4()
+        if way == "insert_as_booked":
+            outcome = await self._outcome(session, lambda: session.execute(
+                text(_LINKED_INSERT + _linked_values("1") + ", " + _linked_values("2")),
+                {**_linked_params(m6_seed, storno, "1", reverses=subject),
+                 **_linked_params(m6_seed, subject, "2", reversed_by=storno)}))
+        else:
+            # A booked Storno that names a draft original is what the keys allow; the application books originals first.
+            await self._insert(session, m6_seed, subject, status="draft")
+            await self._insert(session, m6_seed, storno, reverses=subject)
+            outcome = await self._book_a_draft(session, m6_seed, way, subject, storno)
+        state = await self._state(session, subject)
+        await savepoint.rollback()
+        assert outcome == ("accepted", "")
+        assert state == ("booked", storno)
+
+    @pytest.mark.asyncio
+    async def test_an_insert_naming_a_storno_that_follows_it_in_the_statement_is_refused(self, app_rw_session, m6_seed):
+        """The same two rows in the other order: the Storno does not exist yet when the original's row is checked."""
+        session = app_rw_session
+        savepoint = await session.begin_nested()
+        await _set_org(session, m6_seed["org_a_id"])
+        subject, storno = uuid.uuid4(), uuid.uuid4()
+        sqlstate, message = await self._outcome(session, lambda: session.execute(
+            text(_LINKED_INSERT + _linked_values("1") + ", " + _linked_values("2")),
+            {**_linked_params(m6_seed, subject, "1", reversed_by=storno),
+             **_linked_params(m6_seed, storno, "2", reverses=subject)}))
+        states = [await self._state(session, identity) for identity in (subject, storno)]
+        await savepoint.rollback()
+        assert sqlstate == "P0001", message
+        assert states == [None, None]
+
+    @pytest.mark.asyncio
+    async def test_the_controls_a_null_link_and_the_application_order_stay_accepted(self, app_rw_session, m6_seed):
+        """Inserted as booked with no link, booked from a draft with no link, then reversed the way `reverse_payment` does."""
+        session = app_rw_session
+        savepoint = await session.begin_nested()
+        await _set_org(session, m6_seed["org_a_id"])
+        booked = await self._insert(session, m6_seed)
+        draft = await self._insert(session, m6_seed, status="draft")
+        await session.execute(text(_BOOK), {"id": str(draft), "booked_at": _BOOKED_AT,
+                                            "booked_by": str(m6_seed["user_a_admin_id"])})
+        for original in (booked, draft):
+            storno = await self._insert(session, m6_seed, reverses=original)
+            await session.execute(
+                text("UPDATE payment SET reversed_by_id = :s WHERE id = :id"), {"s": str(storno), "id": str(original)})
+            assert await self._state(session, original) == ("booked", storno)
+        await savepoint.rollback()
+
+    @pytest.mark.asyncio
+    async def test_a_link_to_a_payment_of_another_organization_is_refused_by_the_rule_before_the_key(
+        self, app_rw_session, m6_seed,
+    ):
+        """Naming a booked payment of organization B from organization A.
+
+        On the insert and on the booking that sets the link the rule fires first (P0001): a BEFORE trigger runs ahead of
+        the key, which is checked when the statement ends and would answer 23503. Setting the link on a draft, with no
+        booking, is the key's alone (23503)."""
+        session = app_rw_session
+        savepoint = await session.begin_nested()
+        await _set_org(session, m6_seed["org_a_id"])
+        foreign = await self._insert(session, m6_seed, org="b")
+        insert = await self._book(session, m6_seed, "insert_as_booked", uuid.uuid4(), foreign)
+        book_and_link = await self._book(
+            session, m6_seed, "book_a_draft_and_link_it_in_one_update", uuid.uuid4(), foreign)
+        draft = await self._insert(session, m6_seed, status="draft")
+        link_only = await self._outcome(session, lambda: session.execute(
+            text("UPDATE payment SET reversed_by_id = :f WHERE id = :id"), {"f": str(foreign), "id": str(draft)}))
+        await savepoint.rollback()
+        assert [insert[0], book_and_link[0], link_only[0]] == ["P0001", "P0001", "23503"], (insert, book_and_link, link_only)
+
+    @pytest.mark.asyncio
+    async def test_the_rule_refuses_a_storno_of_another_organization_without_the_foreign_keys(
+        self, migrator_session, m6_seed,
+    ):
+        """The rule's own organization comparison, with both keys dropped so that nothing but the trigger can refuse.
+
+        Organization B books a Storno that claims to reverse the payment of organization A that is about to be booked.
+        The keys are dropped inside a savepoint that is rolled back in a `finally`: the fixture commits when the test
+        ends, also when an assertion failed, and the shared database must never lose a key."""
+        session = migrator_session
+        savepoint = await session.begin_nested()
+        try:
+            await session.execute(text("ALTER TABLE payment DROP CONSTRAINT fk_payment_reverses_id_tenant"))
+            await session.execute(text("ALTER TABLE payment DROP CONSTRAINT fk_payment_reversed_by_id_tenant"))
+            await _set_org(session, m6_seed["org_a_id"])
+            await session.execute(text("SET LOCAL ROLE app_rw"))
+            outcomes = []
+            for way in ("insert_as_booked", "book_a_draft_and_link_it_in_one_update"):
+                subject = uuid.uuid4()
+                storno_of_b = await self._insert(session, m6_seed, org="b", reverses=subject)
+                outcomes.append(await self._book(session, m6_seed, way, subject, storno_of_b))
+            assert [outcome[0] for outcome in outcomes] == ["P0001", "P0001"], outcomes
+        finally:
+            await savepoint.rollback()
+
+
+# Revision 0207: the trigger on INSERT and the function that checks every way a row becomes booked.
+BOOKING_REVISION = "migrations.versions.0207_payment_reversal_link_when_booked"
+INSERT_TRIGGER = "trg_payment_immutability_insert"
+
+
+def _function(db):
+    """Body, definer rights, settings and ACL of `trg_payment_immutability()`."""
+    return tuple(db.execute(text(
+        "SELECT prosrc, prosecdef, proconfig, proacl::text FROM pg_proc WHERE oid = 'trg_payment_immutability()'::regprocedure"
+    )).one())
+
+
+def _payment_triggers(db):
+    return [tuple(row) for row in db.execute(text(
+        "SELECT tgname, pg_get_triggerdef(oid), tgenabled FROM pg_trigger "
+        "WHERE tgrelid = 'public.payment'::regclass AND NOT tgisinternal ORDER BY tgname"))]
+
+
+def _runtime_insert(db, m6_seed, pid, **links) -> str:
+    """SQLSTATE of one insert as `app_rw` under organization A inside the owner's transaction, or "accepted"."""
+    db.execute(text("SELECT set_config('app.current_org_id', :org, true)"), {"org": str(m6_seed["org_a_id"])})
+    try:
+        with db.begin_nested():
+            db.execute(text("SET LOCAL ROLE app_rw"))
+            db.execute(text(_LINKED_INSERT + _linked_values()), _linked_params(m6_seed, pid, **links))
+        return "accepted"
+    except DBAPIError as exc:
+        return exc.orig.pgcode
+    finally:
+        db.execute(text("RESET ROLE"))
+
+
+class TestBookedLinkRevision:
+    def test_the_head_schema_checks_inserts_and_downgrade_restores_the_previous_function_and_triggers(self, m6_seed):
+        migration = importlib.import_module(BOOKING_REVISION)
+        previous = importlib.import_module(
+            "migrations.versions.0192_payment_reversal_link_immutable").CURRENT_FUNCTION.split("$$")[1]
+        with _rehearsal() as db:
+            head_function, head_triggers = _function(db), _payment_triggers(db)
+            assert head_function[0] != previous
+            assert INSERT_TRIGGER in [trigger[0] for trigger in head_triggers]
+            unrelated = uuid.uuid4()
+            assert _runtime_insert(db, m6_seed, unrelated) == "accepted"
+            assert _runtime_insert(db, m6_seed, uuid.uuid4(), reversed_by=unrelated) == "P0001"
+
+            migration.downgrade()
+            # 0192's function exactly (body, definer rights, settings, ACL) and the triggers as they were before 0207.
+            assert _function(db) == (previous, *head_function[1:])
+            assert _payment_triggers(db) == [trigger for trigger in head_triggers if trigger[0] != INSERT_TRIGGER]
+            # What the issue describes is possible again: a booked insert naming an unrelated booked payment.
+            assert _runtime_insert(db, m6_seed, uuid.uuid4(), reversed_by=unrelated) == "accepted"
+
+            migration.upgrade()
+            assert (_function(db), _payment_triggers(db)) == (head_function, head_triggers)
+            assert _runtime_insert(db, m6_seed, uuid.uuid4(), reversed_by=unrelated) == "P0001"
 
 
 # ===========================================================================

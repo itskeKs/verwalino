@@ -1268,6 +1268,33 @@ async def test_import_refuses_a_forged_reversal_chain_and_writes_nothing(
     await rent_db.rollback()
 
 
+@pytest.mark.parametrize('order', ['storno_first', 'original_first'])
+async def test_import_restores_a_reversal_pair_in_whichever_order_the_archive_lists_it(
+    rent_world, import_target, rent_db, export_store, payment_clock, order,
+):
+    """The pair names itself both ways: the import inserts the original, then its Storno, then sets the link."""
+    async with api_client(rent_world) as api:
+        pairs, _ = await reversed_payment_world(api, rent_world, payment_clock, rebooked_reversal=True)
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    stornos = {storno['id'] for _, storno in pairs}
+    listed = archive_with_payments(unpack(archive.content), lambda rows: sorted(
+        rows, key=lambda row: (row['id'] in stornos) if order == 'original_first' else (row['id'] not in stornos)))
+    position = [json.loads(line)['id'] for line in unpack(listed)['entities/payment.jsonl'].splitlines()]
+    for original, storno in pairs:
+        assert (position.index(storno['id']) < position.index(original['id'])) == (order == 'storno_first')
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('listed.tar.gz', listed)})
+        assert answer.status_code == 200, answer.text
+        mapping = answer.json()['id_map']['payment']
+        restored = await payment_rows(rent_db, [mapping[p['id']] for pair in pairs for p in pair])
+        for original, storno in pairs:
+            assert restored[mapping[original['id']]]['reversed_by_id'] == mapping[storno['id']]
+            assert restored[mapping[storno['id']]]['reverses_id'] == mapping[original['id']]
+    await rent_db.rollback()
+
+
 async def test_import_refuses_a_reversal_pair_of_another_organization_and_writes_nothing(
     rent_world, import_target, rent_db, export_store, payment_clock,
 ):
