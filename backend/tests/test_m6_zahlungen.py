@@ -12,15 +12,21 @@ the full create->book->statement / DERIVED-into-abrechnung path.
 
 from __future__ import annotations
 
+import importlib
 import os
 import uuid
+from contextlib import contextmanager
 from datetime import date
 from decimal import Decimal
 
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from tests.financial_coverage_helpers import attest_fixture
+from tests.migration_rehearsal import lock_for_rehearsal
 from tests.payment_reversal_support import book_then_reverse, payment_clock as payment_clock  # noqa: F401
 import pytest
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import DBAPIError
 
 SYNC_URL = os.environ.get(
     "HV_DATABASE_URL_SYNC",
@@ -336,6 +342,218 @@ class TestVermoegensKohaerenz:
 
 
 # ===========================================================================
+# Test 1b: the reversal links carry the organization in their key (#718, 0206).
+#   `reverses_id` and `reversed_by_id` reference payment(organization_id, id). Foreign key
+#   checks run without row-level security, so a plain key on `id` let organization B name a
+#   payment of organization A: accepted when the id existed, refused when it did not (an
+#   existence probe for foreign payment ids). With the organization in the key both are
+#   refused with the same SQLSTATE.
+# ===========================================================================
+class TestReversalLinksCarryTheOrganization:
+    @staticmethod
+    async def _insert(session, m6_seed, org, *, reverses_id=None, reversed_by_id=None, pid=None) -> uuid.UUID:
+        """Insert one booked payment of organization `org` ("a" or "b") as `app_rw`, with its links set on insert."""
+        pid = pid or uuid.uuid4()
+        other = org == "b"
+        await _set_org(session, m6_seed["org_b_id" if other else "org_a_id"])
+        await session.execute(
+            text("""
+                INSERT INTO payment (
+                    id, organization_id, bank_account_id, property_id,
+                    direction, amount, value_date, payment_type,
+                    tenant_profile_id, lease_agreement_id, period_year, period_month,
+                    status, booked_at, booked_by, reverses_id, reversed_by_id
+                ) VALUES (
+                    :id, :org, :acct, :prop,
+                    'OUT', 150.00, :vdate, 'NK_VORAUSZAHLUNG',
+                    :tenant, :lease, 2025, 6,
+                    'booked', :booked_at, :booked_by, :reverses, :reversed_by
+                )
+            """),
+            {
+                "id": str(pid), "org": str(m6_seed["org_b_id" if other else "org_a_id"]),
+                "acct": str(m6_seed["acct_b_org" if other else "acct_a"]),
+                "prop": str(m6_seed["prop_b_org" if other else "prop_a"]),
+                "vdate": _VDATE, "tenant": str(m6_seed["tenant_b" if other else "tenant"]),
+                "lease": None if other else str(m6_seed["lease"]), "booked_at": _BOOKED_AT,
+                "booked_by": str(m6_seed["user_b_admin_id" if other else "user_a_admin_id"]),
+                "reverses": None if reverses_id is None else str(reverses_id),
+                "reversed_by": None if reversed_by_id is None else str(reversed_by_id),
+            },
+        )
+        return pid
+
+    @classmethod
+    async def _attempt(cls, session, m6_seed, org, **links) -> str:
+        """SQLSTATE of the insert, or "accepted"."""
+        try:
+            async with session.begin_nested():
+                await cls._insert(session, m6_seed, org, **links)
+            return "accepted"
+        except Exception as exc:  # noqa: BLE001 - the state code is the answer
+            return getattr(getattr(exc, "orig", None), "sqlstate", repr(exc))
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("column", ["reverses_id", "reversed_by_id"])
+    async def test_a_payment_cannot_name_a_payment_of_another_organization(
+        self, app_rw_session, m6_seed, column,
+    ):
+        """As organization B, the id of A's payment and an unknown id are refused alike: no existence probe."""
+        session = app_rw_session
+        savepoint = await session.begin_nested()
+        foreign = await self._insert(session, m6_seed, "a")
+        outcomes = [
+            await self._attempt(session, m6_seed, "b", **{column: foreign}),
+            await self._attempt(session, m6_seed, "b", **{column: uuid.uuid4()}),
+        ]
+        await savepoint.rollback()
+        assert outcomes == ["23503", "23503"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("org", ["a", "b"])
+    async def test_a_reversal_pair_of_one_organization_is_accepted(self, app_rw_session, m6_seed, org):
+        """The control: a payment, its Storno and the forward pointer inside one organization pass."""
+        session = app_rw_session
+        savepoint = await session.begin_nested()
+        original = await self._insert(session, m6_seed, org)
+        storno = await self._insert(session, m6_seed, org, reverses_id=original)
+        await session.execute(text("UPDATE payment SET reversed_by_id = :s WHERE id = :id"),
+                              {"s": str(storno), "id": str(original)})
+        linked = (await session.execute(text("SELECT reversed_by_id FROM payment WHERE id = :id"),
+                                        {"id": str(original)})).scalar_one()
+        await savepoint.rollback()
+        assert linked == storno
+
+
+# Revision 0206 itself: the keys it adds, the data it refuses and what its downgrade restores. Each test runs the
+# revision's functions against the head schema inside a rollback-only transaction of the owner, `payment` locked first
+# as for every revision that takes a NOWAIT lock.
+REVERSAL_REVISION = "migrations.versions.0206_payment_reversal_organization_keys"
+COMPOSITE_KEYS = [
+    ("fk_payment_reversed_by_id_tenant",
+     "FOREIGN KEY (organization_id, reversed_by_id) REFERENCES payment(organization_id, id) ON DELETE RESTRICT", True, False, "s"),
+    ("fk_payment_reverses_id_tenant",
+     "FOREIGN KEY (organization_id, reverses_id) REFERENCES payment(organization_id, id) ON DELETE RESTRICT", True, False, "s"),
+]
+SIMPLE_KEYS = [
+    ("fk_payment_reversed_by_id_payment",
+     "FOREIGN KEY (reversed_by_id) REFERENCES payment(id) ON DELETE RESTRICT", True, False, "s"),
+    ("fk_payment_reverses_id_payment",
+     "FOREIGN KEY (reverses_id) REFERENCES payment(id) ON DELETE RESTRICT", True, False, "s"),
+]
+
+
+@contextmanager
+def _rehearsal():
+    engine = create_engine(SYNC_URL)
+    try:
+        with engine.connect() as db:
+            transaction = db.begin()
+            try:
+                with Operations.context(MigrationContext.configure(db)):
+                    lock_for_rehearsal(db, "payment")
+                    yield db
+            finally:
+                transaction.rollback()
+    finally:
+        engine.dispose()
+
+
+def _reversal_keys(db):
+    """Name, definition, validated, deferrable and match type of every foreign key on the two reversal columns."""
+    return [tuple(row) for row in db.execute(text("""
+        SELECT conname, pg_get_constraintdef(oid), convalidated, condeferrable, confmatchtype
+        FROM pg_constraint WHERE conrelid = 'public.payment'::regclass AND contype = 'f' AND conname ~ '^fk_payment_reverse'
+        ORDER BY conname"""))]
+
+
+def _insert_as_runtime(db, m6_seed, org, *, status="booked", reverses_id=None, reversed_by_id=None) -> uuid.UUID:
+    """Insert one payment of organization `org` ("a" or "b") as `app_rw` inside the owner's transaction."""
+    other = org == "b"
+    pid = uuid.uuid4()
+    db.execute(text("SELECT set_config('app.current_org_id', :org, true)"),
+               {"org": str(m6_seed["org_b_id" if other else "org_a_id"])})
+    db.execute(text("SET LOCAL ROLE app_rw"))
+    try:
+        db.execute(text("""
+            INSERT INTO payment (id, organization_id, bank_account_id, property_id, direction, amount, value_date,
+                payment_type, tenant_profile_id, lease_agreement_id, period_year, period_month,
+                status, booked_at, booked_by, reverses_id, reversed_by_id)
+            VALUES (:id, :org, :acct, :prop, 'OUT', 150.00, :vdate, 'NK_VORAUSZAHLUNG', :tenant, :lease, 2025, 6,
+                :status, :booked_at, :booked_by, :reverses, :reversed_by)"""), {
+            "id": str(pid), "org": str(m6_seed["org_b_id" if other else "org_a_id"]),
+            "acct": str(m6_seed["acct_b_org" if other else "acct_a"]),
+            "prop": str(m6_seed["prop_b_org" if other else "prop_a"]), "vdate": _VDATE,
+            "tenant": str(m6_seed["tenant_b" if other else "tenant"]),
+            "lease": None if other else str(m6_seed["lease"]), "status": status,
+            "booked_at": _BOOKED_AT if status == "booked" else None,
+            "booked_by": str(m6_seed["user_b_admin_id" if other else "user_a_admin_id"]) if status == "booked" else None,
+            "reverses": None if reverses_id is None else str(reverses_id),
+            "reversed_by": None if reversed_by_id is None else str(reversed_by_id)})
+    finally:
+        db.execute(text("RESET ROLE"))
+    return pid
+
+
+class TestReversalKeyRevision:
+    def test_the_head_schema_has_the_composite_keys_and_no_simple_ones(self):
+        with _rehearsal() as db:
+            assert _reversal_keys(db) == COMPOSITE_KEYS
+
+    def test_downgrade_restores_the_simple_keys_and_upgrade_the_composite_ones_over_a_linked_pair(self, m6_seed):
+        migration = importlib.import_module(REVERSAL_REVISION)
+        with _rehearsal() as db:
+            original = _insert_as_runtime(db, m6_seed, "a")
+            storno = _insert_as_runtime(db, m6_seed, "a", reverses_id=original)
+            db.execute(text("SELECT set_config('app.current_org_id', :org, true)"), {"org": str(m6_seed["org_a_id"])})
+            db.execute(text("SET LOCAL ROLE app_rw"))
+            db.execute(text("UPDATE payment SET reversed_by_id = :s WHERE id = :id"), {"s": str(storno), "id": str(original)})
+            db.execute(text("RESET ROLE"))
+            # The inserts queued deferred checks on payment, which would block the ALTER TABLE of the downgrade.
+            db.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+            pair = text("SELECT id, reverses_id, reversed_by_id FROM payment WHERE id IN (:a, :b) ORDER BY id")
+            rows = [tuple(row) for row in db.execute(pair, {"a": str(original), "b": str(storno)})]
+            assert sorted(rows) == sorted([(original, None, storno), (storno, original, None)])
+            migration.downgrade()
+            assert _reversal_keys(db) == SIMPLE_KEYS
+            assert [tuple(row) for row in db.execute(pair, {"a": str(original), "b": str(storno)})] == rows
+            migration.upgrade()
+            assert _reversal_keys(db) == COMPOSITE_KEYS
+            assert [tuple(row) for row in db.execute(pair, {"a": str(original), "b": str(storno)})] == rows
+
+    def test_upgrade_refuses_a_payment_naming_a_payment_of_another_organization_and_changes_nothing(self, m6_seed):
+        migration = importlib.import_module(REVERSAL_REVISION)
+        with _rehearsal() as db:
+            migration.downgrade()
+            foreign = _insert_as_runtime(db, m6_seed, "a")
+            # The plain keys accept what the composite keys refuse: drafts of organization B naming A's payment on
+            # either link, and on both (one row, counted once).
+            offenders = [
+                _insert_as_runtime(db, m6_seed, "b", status="draft", reverses_id=foreign),
+                _insert_as_runtime(db, m6_seed, "b", status="draft", reversed_by_id=foreign),
+                _insert_as_runtime(db, m6_seed, "b", status="draft", reverses_id=foreign, reversed_by_id=foreign),
+            ]
+            with pytest.raises(DBAPIError) as refused:
+                with db.begin_nested():
+                    migration.upgrade()
+            message = str(refused.value.orig)
+            assert refused.value.orig.pgcode == "P0001"
+            assert "Cannot upgrade 0206: 3 payment row(s) name a payment of another organization" in message
+            # The count is all it says: no id of a payment or of an organization. The hint names the query that lists the rows.
+            hint = refused.value.orig.diag.message_hint
+            assert "SELECT p.id, p.organization_id FROM public.payment p" in hint
+            assert not any(str(identity) in message + hint
+                           for identity in [foreign, *offenders, m6_seed["org_a_id"], m6_seed["org_b_id"]])
+            assert _reversal_keys(db) == SIMPLE_KEYS
+            assert db.scalar(text("SELECT count(*) FROM payment WHERE id = ANY(CAST(:ids AS uuid[]))"),
+                             {"ids": [str(identity) for identity in offenders]}) == 3
+            # Once the rows are gone the upgrade goes through.
+            db.execute(text("DELETE FROM payment WHERE id = ANY(CAST(:ids AS uuid[]))"), {"ids": [str(identity) for identity in offenders]})
+            migration.upgrade()
+            assert _reversal_keys(db) == COMPOSITE_KEYS
+
+
+# ===========================================================================
 # Test 2: GoBD -- booked payment is immutable (m6 section 7.1 #9; ADR-0003).
 # ===========================================================================
 class TestPaymentImmutability:
@@ -469,8 +687,7 @@ class TestPaymentImmutability:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("claim", [
-        "no_reverses_id", "reverses_another_payment", "draft", "other_organization", "itself",
-        "reverses_itself",
+        "no_reverses_id", "reverses_another_payment", "draft", "itself", "reverses_itself",
     ])
     async def test_reversed_by_id_must_name_the_booked_storno_of_the_same_organization(
         self, app_rw_session, m6_seed, claim,
@@ -488,8 +705,6 @@ class TestPaymentImmutability:
             claimed = await self._insert_reversing(session, m6_seed, other)
         elif claim == "draft":
             claimed = await self._insert_reversing(session, m6_seed, original, status="draft")
-        elif claim == "other_organization":
-            claimed = await self._insert_reversing(session, m6_seed, original, org="b")
         elif claim == "reverses_itself":
             # A forged booked row whose `reverses_id` is its own id (the foreign key accepts it).
             subject = claimed = uuid.uuid4()
@@ -503,6 +718,31 @@ class TestPaymentImmutability:
         await self._link(session, original, storno)
         assert await self._reversed_by(session, original) == storno
         await savepoint.rollback()
+
+    @pytest.mark.asyncio
+    async def test_reversed_by_id_must_name_a_storno_of_the_same_organization_without_the_foreign_key(
+        self, migrator_session, m6_seed,
+    ):
+        """The trigger's own organization rule: since 0206 the key refuses to store a Storno of another organization.
+
+        The row is built with the key dropped, inside a savepoint that restores it, so the trigger is what refuses the link.
+        The fixture commits when the test ends, also when an assertion failed: the savepoint is rolled back in a `finally`
+        so that the shared database never loses the key.
+        """
+        session = migrator_session
+        savepoint = await session.begin_nested()
+        try:
+            await session.execute(text("ALTER TABLE payment DROP CONSTRAINT fk_payment_reverses_id_tenant"))
+            await _set_org(session, m6_seed["org_a_id"])
+            await session.execute(text("SET LOCAL ROLE app_rw"))
+            original = await self._insert_booked(session, m6_seed)
+            claimed = await self._insert_reversing(session, m6_seed, original, org="b")
+            with pytest.raises(Exception, match="GoBD.*reversed_by_id.*booked"):
+                async with session.begin_nested():
+                    await self._link(session, original, claimed)
+            assert await self._reversed_by(session, original) is None
+        finally:
+            await savepoint.rollback()
 
     @pytest.mark.asyncio
     async def test_reversal_link_check_does_not_depend_on_what_the_actor_can_see(

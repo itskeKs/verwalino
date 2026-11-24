@@ -472,7 +472,9 @@ A booked payment and its Storno name each other (`reverses_id` on the Storno,
 `reversed_by_id` on the original), so neither row can be inserted first. Import
 inserts the original unlinked, then its Storno, then sets `reversed_by_id` on the
 original: the one change the payment immutability trigger allows on a booked row, and only
-to the booked Storno of that original in the same organization (migration `0192`).
+to the booked Storno of that original in the same organization (migration `0192`). Both
+links are composite foreign keys with the organization (migration `0206`), not deferrable, so
+the order above is what makes each insert and the update valid when it runs.
 Every other column, including `value_date`, `booked_at` and `retention_until`, is
 the archived value. Before any row is written the archived payments must form whole
 pairs: two booked rows that name each other, with opposite `direction` and the same

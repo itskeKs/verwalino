@@ -108,18 +108,11 @@ class Payment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         nullable=True,
     )
 
-    # Storno chain (self-FK). reverses_id on the Storno row; reversed_by_id is
-    # the forward pointer on the reversed original (E-4 convention).
-    reverses_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("payment.id", ondelete="RESTRICT"),
-        nullable=True,
-    )
-    reversed_by_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("payment.id", ondelete="RESTRICT"),
-        nullable=True,
-    )
+    # Storno chain (self-FK, bound to the organization: composite keys in __table_args__,
+    # migration 0206). reverses_id on the Storno row; reversed_by_id is the forward
+    # pointer on the reversed original (E-4 convention).
+    reverses_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    reversed_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     # Aufbewahrungs-Anker (8 Jahre, architecture.md section 3.3 / ADR-0003 #3).
     retention_until: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -144,6 +137,10 @@ class Payment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             name="fk_payment_lease_agreement_id_tenant", ondelete="RESTRICT"),
         ForeignKeyConstraint(["organization_id", "settlement_run_id"], ["settlement_run.organization_id", "settlement_run.id"],
             name="fk_payment_settlement_run_id_tenant", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["organization_id", "reverses_id"], ["payment.organization_id", "payment.id"],
+            name="fk_payment_reverses_id_tenant", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["organization_id", "reversed_by_id"], ["payment.organization_id", "payment.id"],
+            name="fk_payment_reversed_by_id_tenant", ondelete="RESTRICT"),
         ForeignKeyConstraint(
             ["organization_id", "bank_account_id", "bank_transaction_id"],
             ["bank_transaction.organization_id", "bank_transaction.bank_account_id", "bank_transaction.id"],
