@@ -726,19 +726,23 @@ class TestPaymentImmutability:
         """The trigger's own organization rule: since 0206 the key refuses to store a Storno of another organization.
 
         The row is built with the key dropped, inside a savepoint that restores it, so the trigger is what refuses the link.
+        The fixture commits when the test ends, also when an assertion failed: the savepoint is rolled back in a `finally`
+        so that the shared database never loses the key.
         """
         session = migrator_session
         savepoint = await session.begin_nested()
-        await session.execute(text("ALTER TABLE payment DROP CONSTRAINT fk_payment_reverses_id_tenant"))
-        await _set_org(session, m6_seed["org_a_id"])
-        await session.execute(text("SET LOCAL ROLE app_rw"))
-        original = await self._insert_booked(session, m6_seed)
-        claimed = await self._insert_reversing(session, m6_seed, original, org="b")
-        with pytest.raises(Exception, match="GoBD.*reversed_by_id.*booked"):
-            async with session.begin_nested():
-                await self._link(session, original, claimed)
-        assert await self._reversed_by(session, original) is None
-        await savepoint.rollback()
+        try:
+            await session.execute(text("ALTER TABLE payment DROP CONSTRAINT fk_payment_reverses_id_tenant"))
+            await _set_org(session, m6_seed["org_a_id"])
+            await session.execute(text("SET LOCAL ROLE app_rw"))
+            original = await self._insert_booked(session, m6_seed)
+            claimed = await self._insert_reversing(session, m6_seed, original, org="b")
+            with pytest.raises(Exception, match="GoBD.*reversed_by_id.*booked"):
+                async with session.begin_nested():
+                    await self._link(session, original, claimed)
+            assert await self._reversed_by(session, original) is None
+        finally:
+            await savepoint.rollback()
 
     @pytest.mark.asyncio
     async def test_reversal_link_check_does_not_depend_on_what_the_actor_can_see(

@@ -1491,6 +1491,7 @@ async def test_populated_reserve_downgrade_refuses_without_losing_state(client_a
     from sqlalchemy import create_engine
     from alembic.operations import Operations
     from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
     from tests.conftest import MIGRATOR_SYNC_URL, clear_disposable_source_context
     from tests.test_session_review_access import _chain_snapshot
 
@@ -1535,6 +1536,8 @@ async def test_populated_reserve_downgrade_refuses_without_losing_state(client_a
             with connection.connection.cursor() as cursor:
                 clear_disposable_source_context(cursor)
             with Operations.context(MigrationContext.configure(connection)):
+                # The chain undoes 0206 before 0149: the reversal keys of 0206 depend on uq_reserve_payment_org, which 0149 drops.
+                ScriptDirectory('migrations').get_revision('0206').module.downgrade()
                 migration.downgrade()
             assert connection.scalar(text("SELECT to_regclass('public.reserve_ledger_entry')")) is None
             outer.rollback()
