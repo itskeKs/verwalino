@@ -474,7 +474,10 @@ inserts the original unlinked, then its Storno, then sets `reversed_by_id` on th
 original: the one change the payment immutability trigger allows on a booked row, and only
 to the booked Storno of that original in the same organization (migration `0192`). Both
 links are composite foreign keys with the organization (migration `0206`), not deferrable, so
-the order above is what makes each insert and the update valid when it runs.
+the order above is what makes each insert and the update valid when it runs. The trigger checks the
+link of every row that becomes booked, also when it is inserted as booked (migration `0207`), so the
+original is inserted without it: a booked row inserted with `reversed_by_id` set is refused unless the same
+statement inserted its Storno first.
 Every other column, including `value_date`, `booked_at` and `retention_until`, is
 the archived value. Before any row is written the archived payments must form whole
 pairs: two booked rows that name each other, with opposite `direction` and the same
