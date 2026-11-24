@@ -382,7 +382,8 @@ def build_weg_snapshot_payload(
                 }
                 for a in plan_advances
             ],
-            # The planned reserve Soll per owner the engine consumed (#449): always present from
+            # The planned reserve Soll per owner the engine consumed (#449), as the service built it:
+            # an owner without planned reserve has no entry, like plan_advances. Always present from
             # engine m4.11.0 (an empty list is a plan without reserve), absent in older payloads.
             "plan_reserve": [
                 {

@@ -415,9 +415,10 @@ chosen rows (`HAUSGELD_VORSCHUSS`, direction IN, `period_year` and `period_month
   these fields retain their original PDF path and digest; reads never backfill them.
 - Engine `m4.11.0` freezes the planned reserve the engine consumed as `inputs.plan_reserve`
   beside `inputs.plan_advances` (#449): one `{owner_profile_id, plan_reserve_total}` entry per
-  owner that has planned reserve, sorted by owner id, money as two-place strings. The key is
-  always present from that version (an empty list is a plan without reserve), so a statement's
-  Spitze can be rebuilt from the frozen payload alone: `owner_cost_total + inputs.plan_reserve
+  owner that has planned reserve, sorted by owner id, money as two-place strings. An owner whose
+  planned reserve is 0.00 has no entry, as an owner without Hausgeld Soll has none in
+  `inputs.plan_advances`. The key is always present from that version (an empty list is a plan
+  without reserve), so a statement's Spitze can be rebuilt from the frozen payload alone: `owner_cost_total + inputs.plan_reserve
   − inputs.plan_advances − Σ inputs.special_levies`, per owner and summed. A payload of an
   older engine has no `inputs.plan_reserve`; that means the value was not frozen, not that it
   was zero. Finalized runs are never rewritten or re-hashed, and no read derives the key from

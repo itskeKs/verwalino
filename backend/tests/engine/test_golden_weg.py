@@ -158,10 +158,8 @@ def _check_the_frozen_spitze(inp, expected, total):
     assert {o['owner_profile_id']: Decimal(o['abrechnungsspitze']) for o in payload['result']['owners']} == figures
     assert _spitze_from_the_frozen_payload(payload) == figures
     # The result's planned reserve Soll is the frozen input, owner by owner.
-    assert {o['owner_profile_id']: o['plan_reserve_soll'] for o in payload['result']['owners']
-            if o['plan_reserve_soll'] != '0.00'} == {
-        row['owner_profile_id']: row['plan_reserve_total'] for row in payload['inputs']['plan_reserve']
-        if row['plan_reserve_total'] != '0.00'}
+    assert {o['owner_profile_id']: o['plan_reserve_soll'] for o in payload['result']['owners']} == {
+        row['owner_profile_id']: row['plan_reserve_total'] for row in payload['inputs']['plan_reserve']}
     # No drift: Σ Spitzen = costs + Σ planned reserve - Σ Hausgeld Soll, read from the inputs.
     frozen = payload['inputs']
     assert sum(figures.values(), Decimal('0.00')) == Decimal(total) == (
@@ -249,15 +247,20 @@ def test_the_snapshot_freezes_the_planned_reserve_input_in_owner_order_and_hashe
         canonical_sha256(payload)
 
 
-def test_an_owner_without_planned_reserve_has_no_entry_and_a_plan_without_reserve_freezes_an_empty_list():
+def test_the_snapshot_writes_the_engine_inputs_entries_and_an_empty_input_as_an_empty_list():
+    # This pins the writer only: one entry per entry of the engine input it is given, and `[]` for an
+    # empty input. Which owners have an entry (none for an owner without planned reserve, none at all
+    # for a plan without reserve) is decided where the service builds the input, and is pinned on the
+    # database path by `test_a_settlement_freezes_no_planned_reserve_entry_for_an_owner_without_planned_reserve`
+    # and `test_planned_reserve_sums_the_ledger_planned_rows_per_owner` in test_m4_weg.py.
     inp = replace(TestGolden2Abrechnungsspitze()._scenario(),
         plan_reserve=(OwnerAdvanceInput(_U(21), Decimal('3600.00')),))
     payload = build_weg_snapshot_payload(inp, compute_weg_jahresabrechnung(inp))
     assert [row['owner_profile_id'] for row in payload['inputs']['plan_reserve']] == [str(_U(21))]
     assert next(o for o in payload['result']['owners'] if o['owner_profile_id'] == str(_U(22)))[
         'plan_reserve_soll'] == '0.00'
-    # A known zero (the engine froze the input and the plan had no reserve) differs from an absent
-    # key, which is what a payload of an older engine looks like.
+    # A known empty list (the engine froze the input and the plan had no reserve) differs from an
+    # absent key, which is what a payload of an older engine looks like.
     none = replace(inp, plan_reserve=())
     assert build_weg_snapshot_payload(none, compute_weg_jahresabrechnung(none))['inputs']['plan_reserve'] == []
 
